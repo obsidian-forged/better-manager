@@ -880,13 +880,46 @@ export default class Manager extends Plugin {
     }
 
     /**
-     * data.json 被外部修改（同步、手动编辑）时保持界面与样式不变。
-     * 这里不重读设置、不重绘、不重新应用外观与 Ribbon：用户正在操作时任何重建都会表现为闪烁或顺序跳动。
-     * 外部改动在下一次启动或显式重载插件时生效。
-     * External data.json writes must not rebuild the UI, reapply appearance, or replay ribbon order.
+     * data.json 被外部修改（同步、手改、另一实例）时静默吸收新数据：
+     * 只替换内存设置，不重绘界面、不重新应用外观、不重放 Ribbon 顺序，
+     * 用户正在 BPM 里修改配置时也不会看到任何重建。
+     * 本机设备记录只存在独立文件里，刷新时保留内存中的列表，不会被清空。
+     * Absorb external data.json updates quietly: update settings in memory only.
      */
     public onExternalSettingsChange(): void {
-        if (this.settings?.DEBUG) console.log("[BPM] external data.json change ignored to keep the UI stable");
+        void this.refreshSettingsQuietly();
+    }
+
+    private async refreshSettingsQuietly(): Promise<void> {
+        // 等本机正在进行的保存与 350ms 防抖落盘，避免把刚输入的值回滚。
+        await new Promise<void>(resolve => window.setTimeout(resolve, 400));
+        await this.settingsSaveQueue.catch(() => undefined);
+        try {
+            // loadData() 可能返回缓存；外部改动必须直接读磁盘。
+            const configDir = this.app.vault.configDir;
+            const path = `${configDir}/plugins/${this.manifest.id}/data.json`;
+            let data: unknown;
+            try {
+                data = JSON.parse(await this.app.vault.adapter.read(path));
+            } catch {
+                data = await this.loadData();
+            }
+            if (!data || typeof data !== "object") return;
+            const liveDevices = this.settings?.DEVICE_MANAGEMENT?.devices;
+            const next = Object.assign({}, DEFAULT_SETTINGS, data) as ManagerSettings;
+            if (next.DEVICE_MANAGEMENT) {
+                next.DEVICE_MANAGEMENT = {
+                    ...next.DEVICE_MANAGEMENT,
+                    devices: Array.isArray(liveDevices) ? liveDevices : [],
+                };
+            }
+            this.settings = next;
+            // 磁盘内容就是新的基线，避免下一次保存重复写盘。
+            this.persistedSettingsJson = JSON.stringify(this.devices?.persistedSettings() ?? next);
+            if (this.settings.DEBUG) console.log("[BPM] external data.json changes applied without redrawing");
+        } catch (error) {
+            if (this.settings?.DEBUG) console.error("[BPM] external settings refresh failed", error);
+        }
     }
 
     public async saveSettings(options: { captureDevice?: boolean } = {}) {
