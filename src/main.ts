@@ -14,6 +14,7 @@ import { RepoResolver, ensureBpmTagExists, BPM_TAG_ID } from './repo-resolver';
 import { Notice, Platform, requestUrl } from 'obsidian';
 import { BetaSource, ManagerPlugin, BPM_IGNORE_TAG, EONDR_PLUGIN_TAG_ID } from './data/types';
 import { runMigrations } from './migrations';
+import { migrateLegacyRibbonSettings } from './ribbon-migration';
 import { fetchReleaseVersions, installPluginFromGithub, installThemeFromGithub, ReleaseVersion, sanitizeRepo } from './github-install';
 import { performSelfCheck } from './self-check';
 import { SystemRibbonManager } from './manager/system-ribbon-manager';
@@ -173,6 +174,8 @@ export default class Manager extends Plugin {
         };
 
         settingsDirty = await runMigrations(this, { save: false });
+        // 旧版 Ribbon 结构一次性转换（保留显隐/顺序），随后由统一的脏标记落盘。
+        if (migrateLegacyRibbonSettings(this.settings)) markSettingsDirty();
         // 首次安装或未设置语言时，自动跟随 Obsidian 语言
         if (!this.settings.LANGUAGE_INITIALIZED || !this.settings.LANGUAGE) {
             this.settings.LANGUAGE = this.getAppLanguage();

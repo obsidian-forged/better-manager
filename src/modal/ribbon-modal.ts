@@ -3,6 +3,7 @@ import Manager from "main";
 import { RibbonItem } from "../data/types";
 import { confirmWithModal } from "../utils";
 import { RIBBON_GROUP_ITEM_PREFIX } from "../manager/ribbon-groups";
+import { DeviceScopeBar } from "../devices/device-scope-bar";
 
 class GroupIconPicker extends FuzzySuggestModal<string> {
     constructor(app: App, private readonly choose: (icon: string) => void) { super(app); }
@@ -55,6 +56,8 @@ export class RibbonModal extends Modal {
         // 移动端弹窗高度有限：压缩说明文字与分组区的留白，把空间留给列表。
         if (Platform.isMobileApp) this.modalEl.addClass("ribbon-manager-modal--compact");
         this.titleEl.setText(this.manager.translator.t("Ribbon_标题"));
+        // 弹窗同样支持按设备预设查看/编辑 Ribbon。
+        this.manager.devices?.ensureProjection("ribbon");
         await this.syncRibbonItems();
         this.display();
     }
@@ -103,6 +106,7 @@ export class RibbonModal extends Modal {
         contentEl.empty();
         if (!this.manager.isRibbonManagerEnabled()) return;
 
+        this.renderScopeBar(contentEl);
         // 手机端把「边栏编排 / Ribbon 分组」窗口化，列表占满剩余高度。
         if (showToolbar) {
             if (Platform.isMobileApp) this.renderMobileSectionsBar(contentEl);
@@ -142,6 +146,42 @@ export class RibbonModal extends Modal {
         const groupsBtn = new ButtonComponent(bar);
         groupsBtn.setIcon("folder-tree").setButtonText(t("Ribbon_分组"));
         groupsBtn.onClick(() => this.openGroupsWindow());
+    }
+
+    private scopeBar?: DeviceScopeBar;
+
+    /** 弹窗内的设备预设选择器（移动端），切换后按新预设重绘。 */
+    private renderScopeBar(containerEl: HTMLElement): void {
+        if (!Platform.isMobileApp) return;
+        const host = containerEl.createDiv("ribbon-manager-scope");
+        if (!this.scopeBar) this.scopeBar = new DeviceScopeBar(this.manager, () => this.displayWithoutSearch());
+        this.scopeBar.render(host, "ribbon");
+    }
+
+    /** 重绘后恢复滚动位置，避免移动端调整顺序时跳回顶部。 */
+    private rerenderPreservingScroll(): void {
+        const scroller = this.renderRootEl ?? this.contentEl;
+        const top = scroller?.scrollTop || 0;
+        this.displayWithoutSearch();
+        if (!scroller || top <= 0) return;
+        scroller.scrollTop = top;
+        requestAnimationFrame(() => { if (scroller.isConnected) scroller.scrollTop = top; });
+    }
+
+    /** 把条目移动到指定 0 基序号，其余条目顺延并重新编号。 */
+    private async moveItemToPosition(item: RibbonItem, targetIndex: number): Promise<void> {
+        const all = this.manager.settings.RIBBON_SETTINGS;
+        const ordered = [...all].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+        const currentIndex = ordered.findIndex(entry => entry.bpmUniqueId === item.bpmUniqueId);
+        const target = Math.max(0, Math.min(ordered.length - 1, targetIndex));
+        if (currentIndex === -1 || target === currentIndex) return;
+        const [moved] = ordered.splice(currentIndex, 1);
+        ordered.splice(target, 0, moved);
+        ordered.forEach((entry, index) => { entry.order = index; });
+        all.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+        await this.manager.saveSettings();
+        this.manager.applyRibbonSettings();
+        this.rerenderPreservingScroll();
     }
 
     private openLayoutWindow(): void {
@@ -353,6 +393,7 @@ export class RibbonModal extends Modal {
         contentEl.empty();
         if (!this.manager.isRibbonManagerEnabled()) return;
 
+        this.renderScopeBar(contentEl);
         // 手机端把「边栏编排 / Ribbon 分组」窗口化，列表占满剩余高度。
         if (showToolbar) {
             if (Platform.isMobileApp) this.renderMobileSectionsBar(contentEl);
@@ -412,7 +453,28 @@ export class RibbonModal extends Modal {
             const itemContent = setting.nameEl.createDiv({ cls: "draggable-item-content" });
 
             const orderEl = itemContent.createDiv({ cls: "ribbon-manager-item-order" });
-            orderEl.setText(`${actualOrder + 1}`.padStart(2, "0"));
+            const orderInput = orderEl.createEl("input", {
+                cls: "ribbon-manager-item-order__input",
+                attr: {
+                    type: "text",
+                    inputmode: "numeric",
+                    value: `${actualOrder + 1}`,
+                    "aria-label": t("Ribbon_序号"),
+                },
+            });
+            const commitOrder = () => {
+                const total = this.manager.settings.RIBBON_SETTINGS.length;
+                const parsed = Number.parseInt(orderInput.value, 10);
+                const target = Number.isFinite(parsed) ? Math.min(total, Math.max(1, parsed)) : actualOrder + 1;
+                orderInput.value = `${target}`;
+                void this.moveItemToPosition(item, target - 1);
+            };
+            orderInput.addEventListener("focus", () => orderInput.select());
+            orderInput.addEventListener("keydown", (event) => {
+                if (event.key === "Enter") { event.preventDefault(); orderInput.blur(); }
+                else if (event.key === "Escape") { orderInput.value = `${actualOrder + 1}`; orderInput.blur(); }
+            });
+            orderInput.addEventListener("blur", commitOrder);
 
             // 图标
             const iconEl = itemContent.createDiv({ cls: "setting-item-icon" });
@@ -651,7 +713,7 @@ export class RibbonModal extends Modal {
         this.draggedItem = null;
         this.activePointerId = null;
 
-        this.displayWithoutSearch();
+        this.rerenderPreservingScroll();
     }
 
     async moveItem(oldIndex: number, newIndex: number) {
@@ -696,5 +758,7 @@ export class RibbonModal extends Modal {
 
     onClose() {
         this.manager.ribbonModal = null;
+        // 弹窗关闭时结束设备预设投影，避免编辑值残留在内存。
+        void this.manager.devices?.flushProjection().catch(() => undefined);
     }
 }

@@ -4,7 +4,7 @@
   "description": "A more capable plugin manager for Obsidian.",
   "main": "main.js",
   "scripts": {
-    "check": "tsc -noEmit -skipLibCheck && eslint src/devices --max-warnings 0 && node --test tests/device-management.test.mjs tests/release-policy.test.mjs tests/ribbon-groups.test.mjs",
+    "check": "tsc -noEmit -skipLibCheck && eslint src/devices --max-warnings 0 && node --test tests/device-management.test.mjs tests/release-policy.test.mjs tests/ribbon-groups.test.mjs tests/ribbon-migration.test.mjs",
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "version": "node version-bump.mjs && git add manifest.json versions.json package-lock.json"

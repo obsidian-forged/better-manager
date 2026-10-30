@@ -8783,6 +8783,31 @@ body.is-tablet .manager-container--mobile .bpm-mobile-filter-fields .manager-fil
     line-height: 1;
 }
 
+/* 序号可直接点击输入：去掉原生输入框外观，保持数字徽标样式 */
+.ribbon-manager-item-order__input {
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    color: inherit;
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    cursor: text;
+}
+
+.ribbon-manager-item-order__input:focus {
+    outline: 2px solid var(--interactive-accent);
+    outline-offset: -2px;
+    border-radius: inherit;
+}
+
+.ribbon-manager-scope {
+    margin-bottom: 8px;
+}
+
 .ribbon-manager-modal .setting-item-icon {
     display: inline-flex;
     align-items: center;

@@ -1086,6 +1086,7 @@ export default {
     Ribbon_分组: 'Ribbon groups',
     Ribbon_分组说明: 'Group icons open a menu of visible actions. Grouped items appear only under their group, not in All/Visible/Hidden; the group entry itself is sortable.',
     Ribbon_添加分组: 'Add group',
+    Ribbon_序号: 'Order number',
     Ribbon_新分组: 'New group',
     Ribbon_分组项目: '{count} items',
     Ribbon_选择分组图标: 'Choose group icon',
