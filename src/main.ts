@@ -878,6 +878,17 @@ export default class Manager extends Plugin {
         this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
         this.persistedSettingsJson = JSON.stringify(this.settings);
     }
+
+    /**
+     * data.json 被外部修改（同步、手动编辑）时保持界面与样式不变。
+     * 这里不重读设置、不重绘、不重新应用外观与 Ribbon：用户正在操作时任何重建都会表现为闪烁或顺序跳动。
+     * 外部改动在下一次启动或显式重载插件时生效。
+     * External data.json writes must not rebuild the UI, reapply appearance, or replay ribbon order.
+     */
+    public onExternalSettingsChange(): void {
+        if (this.settings?.DEBUG) console.log("[BPM] external data.json change ignored to keep the UI stable");
+    }
+
     public async saveSettings(options: { captureDevice?: boolean } = {}) {
         const save = async () => {
             if (options.captureDevice !== false) this.devices?.capture();
