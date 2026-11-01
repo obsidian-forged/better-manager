@@ -16209,3 +16209,9 @@ body .manager-personalize .manager-toolbar__tab.is-active {
 .manager-setting__content .setting-item-heading {
     margin-bottom: 4px;
 }
+
+/* 设置页标题左右不留内边距 */
+.manager-setting__content .setting-item-heading {
+    padding-left: 0;
+    padding-right: 0;
+}
