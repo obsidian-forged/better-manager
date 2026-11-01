@@ -15870,7 +15870,8 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
     left: 50%;
     top: 50%;
     transform: translate(-50%, -50%);
-    justify-content: center !important;
+    /* 放得下时居中，放不下时从左起（避免居中溢出把第一个功能项裁掉） */
+    justify-content: safe center !important;
     max-width: calc(100% - 240px) !important;
 }
 
