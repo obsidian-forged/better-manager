@@ -16220,3 +16220,14 @@ body .manager-personalize .manager-toolbar__tab.is-active {
 .manager-setting__content > .setting-item-heading {
     border-top: 0;
 }
+
+/* 设置分页滚动条不占位：隐藏滚动条，仍可滚动 */
+.manager-setting__tabs {
+    scrollbar-width: none !important;
+}
+
+.manager-setting__tabs::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+}
