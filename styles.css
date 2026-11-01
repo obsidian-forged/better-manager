@@ -12779,6 +12779,12 @@ body.theme-dark .manager-transfer-segment[data-state="active"]:hover {
     scroll-padding-top: var(--bpm-content-padding);
 }
 
+/* 桌面插件列表与上方筛选块对齐：筛选块 8px 内边距 + 1px 边框 */
+.manager-container.manager-container--main:not(.manager-container--mobile) .manager-modal-page.manager-item-container.manager-plugin-overview--list,
+.manager-container.manager-container--main:not(.manager-container--mobile) .manager-modal-page.manager-item-container.manager-plugin-overview--two-column {
+    padding-inline: 9px;
+}
+
 .manager-container.manager-container--main.manager-container--mobile {
     min-height: min(420px, calc(100vh - 8vh - env(safe-area-inset-top, 0px)));
     max-height: calc(100vh - 8vh - env(safe-area-inset-top, 0px));
