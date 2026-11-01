@@ -15896,7 +15896,7 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
     display: inline;
 }
 
-/* 顶栏功能项改为在可用区域内均分填充，视觉上始终居中 */
+/* 顶栏功能项：容器与按钮都按内容宽度，并在剩余空间里居中 */
 .manager-container.manager-container--main:not(.manager-container--mobile) .manager-toolbar {
     position: static;
     padding-right: 0;
@@ -15909,15 +15909,16 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
     left: auto;
     top: auto;
     transform: none;
-    flex: 1 1 auto !important;
-    width: auto !important;
+    flex: 0 1 auto !important;
+    width: fit-content !important;
     max-width: none !important;
     min-width: 0;
-    justify-content: stretch !important;
+    margin-inline: auto !important;
+    justify-content: flex-start !important;
 }
 
 .manager-container.manager-container--main:not(.manager-container--mobile) .manager-toolbar__tabs .manager-toolbar__tab {
-    flex: 1 1 0 !important;
+    flex: 0 0 auto !important;
     width: auto !important;
     min-width: max-content !important;
 }
