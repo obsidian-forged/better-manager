@@ -606,8 +606,8 @@ export default {
     command_setting_profile_desc: 'Register direct apply commands for saved plugin state profiles.',
 
     设置_主页面功能_标题: 'Main Page Actions',
-    设置_主页面功能_描述: 'Choose whether each plugin action on the manager page is shown directly on the item or kept in the context menu.',
-    设置_主页面功能_展示在Item: 'Show on item',
+    设置_主页面功能_描述: 'Choose whether each plugin action appears in the card\'s bottom-right action row or stays in the context menu.',
+    设置_主页面功能_展示在Item: 'Show in card actions',
     设置_主页面功能_存储在右键: 'Keep in context menu',
     设置_主页面功能_检查更新_说明: 'Check whether this plugin has an available update.',
     设置_主页面功能_下载更新_说明: 'Open version selection and download when an update is available.',
