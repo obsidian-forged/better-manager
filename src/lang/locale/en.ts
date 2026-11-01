@@ -539,6 +539,13 @@ export default {
     设置_基础设置_目录样式_选项_四: 'Click to Expand',
     设置_样式设置_插件总览布局_标题: 'Plugin overview layout',
     设置_样式设置_插件总览布局_描述: 'Choose list or two-column layout for the plugin overview.',
+    设置_样式设置_功能标签显示_标题: 'Toolbar tab labels',
+    设置_样式设置_功能标签显示_描述: 'Choose whether page tabs always show their label, only the current page, or hide labels.',
+    设置_样式设置_功能标签显示_始终: 'Always show',
+    设置_样式设置_功能标签显示_当前: 'Only current page',
+    设置_样式设置_功能标签显示_不显示: 'Hide labels',
+    设置_样式设置_悬停标签_标题: 'Show label on hover',
+    设置_样式设置_悬停标签_描述: 'When labels are hidden, show the label after hovering a tab.',
     设置_样式设置_插件总览布局_选项_列表: 'List',
     设置_样式设置_插件总览布局_选项_双列: 'Two columns',
 

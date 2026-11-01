@@ -2474,6 +2474,7 @@ export class ManagerModal extends Modal {
             btn.buttonEl.addEventListener("touchcancel", clear);
         */
         const toolbar = actionContent.createDiv("manager-toolbar");
+        this.applyToolbarLabelClasses(toolbar);
         const tabs = toolbar.createDiv("manager-toolbar__tabs");
         tabs.setAttribute("role", "tablist");
         tabs.setAttribute("data-slot", "tabs-list");
@@ -2483,6 +2484,7 @@ export class ManagerModal extends Modal {
             tab.setAttribute("role", "tab");
             tab.setAttribute("data-slot", "tabs-trigger");
             tab.setAttribute("aria-label", label);
+            tab.dataset.label = label;
             if (tooltip) {
                 tab.setAttribute("title", tooltip);
                 this.bindLongPressTooltip(tab, tooltip);
@@ -2566,6 +2568,20 @@ export class ManagerModal extends Modal {
     }
 
     /** 固定全局入口：设置与原生联系方式菜单；Fixed settings and native contact menu. */
+    /** 顶栏功能项标签显示模式；Apply the label visibility classes. */
+    private applyToolbarLabelClasses(toolbar: HTMLElement): void {
+        toolbar.removeClass("manager-toolbar--labels-always", "manager-toolbar--labels-active",
+            "manager-toolbar--labels-hidden", "manager-toolbar--hover-labels");
+        const mode = this.settings.TOOLBAR_LABEL_MODE;
+        toolbar.addClass(`manager-toolbar--labels-${mode === "active" || mode === "hidden" ? mode : "always"}`);
+        if (this.settings.TOOLBAR_HOVER_LABELS !== false) toolbar.addClass("manager-toolbar--hover-labels");
+    }
+
+    public syncToolbarLabelMode(): void {
+        this.modalEl?.querySelectorAll<HTMLElement>(".manager-toolbar")
+            .forEach((el) => this.applyToolbarLabelClasses(el));
+    }
+
     private renderGlobalTools(parent: HTMLElement): void {
         const t = (key: string) => this.manager.translator.t(key);
         const createIconTool = (icon: string, label: string, onClick: (event: MouseEvent) => void) => {
@@ -8129,6 +8145,7 @@ export class ManagerModal extends Modal {
         if (this.modalContainer && !Platform.isMobile) {
             this.modalContainer.toggleClass("manager-container__top", !this.settings.CENTER);
         }
+        this.syncToolbarLabelMode();
         await this.reloadShowData();
     }
 

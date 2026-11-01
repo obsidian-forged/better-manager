@@ -15857,3 +15857,40 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
 .manager-container .manager-multiselect-filter__trigger:has(.manager-multiselect-filter__count:not(.is-empty)):focus-visible .manager-multiselect-filter__count {
     opacity: 0;
 }
+
+/* 顶栏功能项：居中 + 标签显示模式 + 悬停显示 */
+.manager-container:not(.manager-container--mobile) .manager-toolbar {
+    position: relative;
+    min-height: 36px;
+    padding-right: 128px;
+}
+
+.manager-container.manager-container--main:not(.manager-container--mobile) .manager-toolbar__tabs {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    justify-content: center !important;
+    max-width: calc(100% - 240px) !important;
+}
+
+.manager-container:not(.manager-container--mobile) .manager-toolbar .manager-global-tools {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    margin: 0;
+}
+
+.manager-toolbar--labels-hidden .manager-toolbar__tab-label {
+    display: none;
+}
+
+.manager-toolbar--labels-active .manager-toolbar__tab:not(.is-active):not([aria-selected="true"]):not([data-state="active"]) .manager-toolbar__tab-label {
+    display: none;
+}
+
+.manager-toolbar--hover-labels.manager-toolbar--labels-hidden .manager-toolbar__tab:hover .manager-toolbar__tab-label,
+.manager-toolbar--hover-labels.manager-toolbar--labels-active .manager-toolbar__tab:not(.is-active):not([aria-selected="true"]):not([data-state="active"]):hover .manager-toolbar__tab-label {
+    display: inline;
+}

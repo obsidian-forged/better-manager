@@ -1,7 +1,7 @@
 import BaseSetting from "../base-setting";
 import { DropdownComponent, Setting, ToggleComponent } from "obsidian";
 // import Commands from "src/command";
-import { PluginOverviewLayout } from "../data";
+import { PluginOverviewLayout, ToolbarLabelMode } from "../data";
 // import { GROUP_STYLE, ITEM_STYLE, TAG_STYLE } from "src/data/data";
 
 export default class ManagerBasis extends BaseSetting {
@@ -44,6 +44,38 @@ export default class ManagerBasis extends BaseSetting {
         overviewLayoutDropdown.setValue(this.settings.PLUGIN_OVERVIEW_LAYOUT || 'list');
         overviewLayoutDropdown.onChange((value) => {
             this.settings.PLUGIN_OVERVIEW_LAYOUT = value as PluginOverviewLayout;
+            void this.saveAndRefreshManager();
+        });
+
+        const t = (key: string) => this.manager.translator.t(key);
+        const toolbarLabelBar = new Setting(this.containerEl)
+            .setName(t('设置_样式设置_功能标签显示_标题'))
+            .setDesc(t('设置_样式设置_功能标签显示_描述'));
+        const toolbarLabelDropdown = new DropdownComponent(toolbarLabelBar.controlEl);
+        toolbarLabelDropdown.addOptions({
+            'always': t('设置_样式设置_功能标签显示_始终'),
+            'active': t('设置_样式设置_功能标签显示_当前'),
+            'hidden': t('设置_样式设置_功能标签显示_不显示'),
+        });
+        const currentLabelMode = this.settings.TOOLBAR_LABEL_MODE || 'always';
+        toolbarLabelDropdown.setValue(currentLabelMode);
+
+        const hoverLabelBar = new Setting(this.containerEl)
+            .setName(t('设置_样式设置_悬停标签_标题'))
+            .setDesc(t('设置_样式设置_悬停标签_描述'));
+        const hoverLabelToggle = new ToggleComponent(hoverLabelBar.controlEl);
+        hoverLabelToggle.setValue(this.settings.TOOLBAR_HOVER_LABELS !== false);
+        const syncHoverRow = (mode: string) => {
+            hoverLabelBar.settingEl.toggleClass('manager-display-none', mode === 'always');
+        };
+        syncHoverRow(currentLabelMode);
+        hoverLabelToggle.onChange((value) => {
+            this.settings.TOOLBAR_HOVER_LABELS = value;
+            void this.saveAndRefreshManager();
+        });
+        toolbarLabelDropdown.onChange((value) => {
+            this.settings.TOOLBAR_LABEL_MODE = (value === 'active' || value === 'hidden' ? value : 'always') as ToolbarLabelMode;
+            syncHoverRow(this.settings.TOOLBAR_LABEL_MODE);
             void this.saveAndRefreshManager();
         });
 

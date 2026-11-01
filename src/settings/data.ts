@@ -1,4 +1,5 @@
 import type { DeviceManagement } from '../devices/device-presets';
+import type { FeatureSettings, ToolSettings } from '../features';
 import { BetaSource, Delay, InstallHistoryItem, ManagerPlugin, PluginLayoutItem, RibbonGroup, RibbonItem, SharedVaultEntry, Tag, Type } from '../data/types';
 import { TroubleshootState } from '../troubleshoot/troubleshoot-state';
 
@@ -25,6 +26,9 @@ export type MainPageActionPlacementSettings = Partial<Record<MainPageActionId, M
 export type FilterOperator = "contains" | "not-contains";
 export type TagFilterOperator = FilterOperator;
 export type PluginOverviewLayout = "list" | "two-column";
+
+/** 顶栏功能项标签显示模式。 */
+export type ToolbarLabelMode = "always" | "active" | "hidden";
 export type PluginOverviewSort = "layout" | "name-asc" | "name-desc" | "installed-desc" | "installed-asc" | "updated-desc" | "updated-asc"; 
 export type PluginUpdateCheckMode = NonNullable<BetaSource["updateCheckMode"]>;
 export type ReleaseCompatibilityMode = NonNullable<BetaSource["compatibilityMode"]>;
@@ -76,6 +80,10 @@ export const DEFAULT_MAIN_PAGE_ACTION_PLACEMENT: Record<MainPageActionId, MainPa
 };
 
 export interface ManagerSettings {
+    /** 功能模块开关；Optional manager modules. */
+    FEATURES: FeatureSettings;
+    /** 总览独立功能开关；Optional overview capabilities. */
+    TOOLS: ToolSettings;
     /** 固定三类设备预设 / Fixed device-type presets. */
     DEVICE_MANAGEMENT?: DeviceManagement;
     // 系统 / 生命周期
@@ -165,6 +173,10 @@ export interface ManagerSettings {
     /** 插件总览的显示模式：列表或双列。 */
     PLUGIN_OVERVIEW_LAYOUT: PluginOverviewLayout;
     PLUGIN_OVERVIEW_SORT: PluginOverviewSort;
+    /** 顶栏功能项标签显示：始终 / 仅当前 / 不显示。 */
+    TOOLBAR_LABEL_MODE: ToolbarLabelMode;
+    /** 标签隐藏时，悬停按钮是否显示标签。 */
+    TOOLBAR_HOVER_LABELS: boolean;
     /** 插件卡片展开样式，控制描述、标签、备注等详情的显示策略。 */
     ITEM_STYLE: string;
     /** 分组标签的视觉样式。 */
@@ -253,6 +265,8 @@ export const DEFAULT_NOTE_TIP: NoteTipSettings = {
 };
 
 export const DEFAULT_SETTINGS: ManagerSettings = {
+    FEATURES: {},
+    TOOLS: {},
     // 系统 / 生命周期
     LANGUAGE: "",
     LANGUAGE_INITIALIZED: false,
@@ -304,6 +318,8 @@ export const DEFAULT_SETTINGS: ManagerSettings = {
     // 样式设置页
     PLUGIN_OVERVIEW_LAYOUT: "list",
     PLUGIN_OVERVIEW_SORT: "layout",
+    TOOLBAR_LABEL_MODE: "always",
+    TOOLBAR_HOVER_LABELS: true,
     ITEM_STYLE: "alwaysExpand",
     GROUP_STYLE: "a",
     TAG_STYLE: "b",
