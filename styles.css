@@ -15822,3 +15822,25 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
 .manager-container .manager-plugin-overview--two-column > .manager-plugin-card > .setting-item-info > .manager-plugin-card__body {
     margin-block-start: 6px;
 }
+
+/* 多选筛选：数量徽标覆盖右侧 chevron，把宽度留给摘要文本 */
+.manager-container .manager-multiselect-filter__trigger {
+    position: relative;
+    padding-right: 24px;
+}
+
+.manager-container .manager-multiselect-filter__trigger:has(.manager-multiselect-filter__count:not(.is-empty)) {
+    padding-right: 22px;
+}
+
+.manager-container .manager-multiselect-filter__count {
+    position: absolute;
+    top: 50%;
+    right: 3px;
+    transform: translateY(-50%);
+    margin: 0;
+}
+
+.manager-container .manager-multiselect-filter__trigger:has(.manager-multiselect-filter__count:not(.is-empty)) .manager-multiselect-filter__chevron {
+    opacity: 0;
+}
