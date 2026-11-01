@@ -15612,3 +15612,9 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
 .manager-container > .modal-header-button {
     display: none !important;
 }
+
+/* 功能区容器不再描边 */
+.manager-container .manager-toolbar__tabs {
+    border: 0 !important;
+    box-shadow: none !important;
+}
