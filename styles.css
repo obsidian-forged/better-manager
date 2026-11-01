@@ -15505,3 +15505,9 @@ body .manager-setting__tabs .manager-setting__tabs-item:hover .manager-setting__
 body .manager-setting__tabs .manager-setting__tabs-item:focus-visible .manager-setting__tabs-icon {
     color: var(--text-accent);
 }
+
+/* 选中项本身已是选中样式：hover/mouseout 不再做过渡，避免移出时慢慢褪回 */
+body .manager-setting__tabs .manager-setting__tabs-item_is-active,
+body .manager-setting__tabs .manager-setting__tabs-item[data-state="active"] {
+    transition: none;
+}
