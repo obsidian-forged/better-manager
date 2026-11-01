@@ -1,5 +1,6 @@
+import { FEATURE_IDS, TOOL_IDS, featureEnabled, toolEnabled } from '../../features';
 import BaseSetting from "../base-setting";
-import { ButtonComponent, DropdownComponent, Setting, ToggleComponent, TextComponent } from "obsidian";
+import { ButtonComponent, DropdownComponent, Setting, ToggleComponent, TextComponent, setIcon } from "obsidian";
 import Commands from "src/command";
 import { githubProxyEnabled } from "src/github-url";
 // import { GROUP_STYLE, ITEM_STYLE, TAG_STYLE } from "src/data/data";
@@ -12,6 +13,66 @@ export default class ManagerBasis extends BaseSetting {
                 .setHeading()
                 .setName(this.manager.translator.t(key));
         };
+
+        // 功能模块与独立功能合并为「个性化 BPM」，用多选高亮按钮呈现。
+        heading('功能开关_个性化');
+        const t0 = (key: string) => this.manager.translator.t(key);
+        const FEATURE_ICONS: Record<string, string> = {
+            plugins: 'blocks', themes: 'palette', devices: 'monitor-smartphone', ribbon: 'grip-vertical',
+            install: 'download', transfer: 'archive-restore', troubleshoot: 'search-check',
+        };
+        const TOOL_ICONS: Record<string, string> = {
+            updates: 'rss', bulkEdit: 'list-plus', layoutEditor: 'pen', reload: 'refresh-ccw',
+            catalog: 'compass', pluginMarket: 'store', appearanceMarket: 'store', appearanceProfiles: 'plus',
+        };
+        const personalizeEl = this.containerEl.createDiv('manager-personalize');
+        const featureBar = personalizeEl.createDiv('manager-toolbar__tabs');
+        featureBar.setAttribute('role', 'group');
+        featureBar.setAttribute('aria-label', t0('功能开关_模块'));
+        for (const id of FEATURE_IDS) {
+            const button = featureBar.createEl('button', { cls: 'manager-toolbar__tab' });
+            button.type = 'button';
+            button.setAttribute('aria-pressed', `${featureEnabled(this.settings, id)}`);
+            button.toggleClass('is-active', featureEnabled(this.settings, id));
+            setIcon(button.createSpan('manager-toolbar__tab-icon'), FEATURE_ICONS[id] || 'blocks');
+            button.createSpan({ cls: 'manager-toolbar__tab-label', text: t0('功能开关_' + id) });
+            button.addEventListener('click', () => {
+                const next = !featureEnabled(this.settings, id);
+                void (async () => {
+                    this.settings.FEATURES = { ...this.settings.FEATURES, [id]: next };
+                    if (id === 'devices' && !next && this.manager.devices.data.enabled) await this.manager.devices.setEnabled(false);
+                    if (id === 'plugins' && !next && this.settings.DELAY) {
+                        this.settings.DELAY = false;
+                        this.manager.delayWaitNotice?.stop();
+                        await this.manager.disableDelaysForAllPlugins();
+                    }
+                    await this.manager.saveSettings();
+                    if (id === 'ribbon') await this.manager.refreshRibbonManagerFeature();
+                    Commands(this.app, this.manager);
+                    this.manager.managerModal?.close();
+                    this.settingTab.basisDisplay();
+                })().catch(error => this.manager.devices.report(error));
+            });
+        }
+
+        const toolsWrap = personalizeEl.createDiv('manager-toolbar__tools manager-page-tools');
+        const toolsSetting = new Setting(toolsWrap).setClass('manager-bar__action').setName('');
+        for (const id of TOOL_IDS) {
+            const button = toolsSetting.controlEl.createEl('button', { cls: 'manager-tool manager-tool--plugin' });
+            button.type = 'button';
+            button.setAttribute('aria-label', t0('功能开关_' + id));
+            button.toggleClass('is-active', toolEnabled(this.settings, id));
+            button.setAttribute('aria-pressed', `${toolEnabled(this.settings, id)}`);
+            setIcon(button, TOOL_ICONS[id] || 'puzzle');
+            button.addEventListener('click', () => {
+                const next = !toolEnabled(this.settings, id);
+                this.settings.TOOLS = { ...this.settings.TOOLS, [id]: next };
+                button.toggleClass('is-active', next);
+                button.setAttribute('aria-pressed', `${next}`);
+                void this.manager.saveSettings().catch(error => this.manager.devices.report(error));
+                this.manager.managerModal?.close();
+            });
+        }
 
         heading("设置_基础设置_分组_常规");
 
@@ -50,6 +111,26 @@ export default class ManagerBasis extends BaseSetting {
             void this.manager.saveSettings();
         });
 
+        const recentInstallBar = new Setting(this.containerEl)
+            .setName(this.manager.translator.t("设置_基础设置_最近安装_标题"))
+            .setDesc(this.manager.translator.t("设置_基础设置_最近安装_描述"));
+        recentInstallBar.addText(text => {
+            const days = Number.isFinite(this.settings.RECENT_INSTALL_DAYS) && this.settings.RECENT_INSTALL_DAYS >= 0
+                ? Math.floor(this.settings.RECENT_INSTALL_DAYS)
+                : 7;
+            text.setValue(String(days))
+                .setPlaceholder("7")
+                .onChange(value => {
+                    const parsed = Number.parseInt(value, 10);
+                    this.settings.RECENT_INSTALL_DAYS = Number.isFinite(parsed) && parsed >= 0 ? parsed : 7;
+                    void this.manager.saveSettings();
+                    void this.manager.managerModal?.reloadShowData();
+                });
+            text.inputEl.type = "number";
+            text.inputEl.min = "0";
+            text.inputEl.step = "1";
+        });
+
         heading("设置_基础设置_分组_启动接管");
 
         const DelayBar = new Setting(this.containerEl)
@@ -57,6 +138,7 @@ export default class ManagerBasis extends BaseSetting {
             .setDesc(this.manager.translator.t("设置_基础设置_延时启动_描述"));
         const DelayToggle = new ToggleComponent(DelayBar.controlEl);
         DelayToggle.setValue(this.settings.DELAY);
+        DelayToggle.setDisabled(!featureEnabled(this.settings, 'plugins'));
         DelayToggle.onChange((value) => {
             this.settings.DELAY = value;
             void this.manager.saveSettings();

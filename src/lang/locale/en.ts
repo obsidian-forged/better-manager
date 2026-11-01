@@ -3,6 +3,7 @@ export default {
     "管理器_切换功能": "Switch feature",
     "管理器_联系方式": "Contact and links",
     "功能开关_模块": "Feature modules",
+    "功能开关_个性化": "Personalize BPM",
     "功能开关_独立": "Optional capabilities",
     "功能开关_模块说明": "Hide this module and stop its background tasks when disabled.",
     "功能开关_独立说明": "Enable this capability and its controls while keeping saved configuration.",
@@ -592,6 +593,8 @@ export default {
 
     设置_基础设置_筛选持久化_标题: 'Filter Persistence',
     设置_基础设置_筛选持久化_描述: 'After enabling, you will see the same plugin list every time you open the manager.',
+    设置_基础设置_最近安装_标题: 'Recent install window',
+    设置_基础设置_最近安装_描述: 'Show a badge for plugins installed within this many days. Set 0 to disable.',
 
     设置_基础设置_单独命令_标题: 'Control Plugin Commands Separately',
     设置_基础设置_单独命令_描述: 'Enable direct command palette toggles for individual plugins.',
@@ -890,6 +893,8 @@ export default {
     管理器_插件操作_标签: '{name} actions',
     管理器_插件分享_描述: 'Share plugin',
     管理器_状态_管理器: 'Manager',
+    管理器_最近安装: 'Recently installed',
+    管理器_最近安装_提示: 'Installed within the last {days} days',
     管理器_状态_启用中: 'Enabled',
     管理器_状态_已禁用: 'Disabled',
     管理器_状态_已隐藏: 'Hidden',

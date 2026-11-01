@@ -15360,6 +15360,18 @@ body.is-mobile .ribbon-manager-modal .ribbon-manager-item-control-root > .ribbon
     color: var(--color-orange); font-size: var(--font-ui-smaller); font-weight: var(--font-semibold); line-height: 1.2;
 }
 
+.manager-container .manager-plugin-card__recent-install {
+    display: inline-flex; align-items: center; gap: var(--size-2-2);
+    min-height: var(--bpm-chip-height); padding: var(--bpm-chip-padding);
+    border: 1px solid color-mix(in srgb, var(--interactive-accent) 38%, var(--bpm-border));
+    border-radius: var(--bpm-radius-sm); background: var(--bpm-accent-soft);
+    color: var(--text-accent); font-size: var(--font-ui-smaller); font-weight: var(--font-semibold); line-height: 1.2;
+    white-space: nowrap;
+}
+
+.manager-plugin-card__recent-install-icon { display: inline-flex; }
+.manager-plugin-card__recent-install-icon svg { width: var(--icon-xs); height: var(--icon-xs); }
+
 /* 双栏与移动列表共用图标比例；Share icon proportions across the grid and mobile list. */
 .manager-container .manager-plugin-overview--two-column > .manager-plugin-card,
 .manager-container--mobile .manager-plugin-card {
@@ -16041,4 +16053,91 @@ body.is-phone .manager-container--mobile .manager-overview-heading .manager-page
     width: 100%;
     max-width: 100%;
     min-width: 0;
+}
+
+/* 个性化 BPM：复用管理器顶栏的 tabs / tools 结构 */
+.manager-personalize {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 4px 0 12px;
+}
+
+.manager-personalize .manager-toolbar__tabs {
+    width: fit-content;
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.manager-personalize .manager-toolbar__tools {
+    width: fit-content;
+    max-width: 100%;
+}
+
+.manager-personalize .manager-bar__action {
+    width: fit-content;
+    padding: 0;
+    border: 0;
+}
+
+.manager-personalize .manager-bar__action .setting-item-info {
+    display: none;
+}
+
+.manager-personalize .manager-bar__action .setting-item-control {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 6px;
+    width: auto;
+}
+
+/* 个性化 BPM：选中项高亮（复用顶栏结构时补齐设置页的激活样式） */
+.manager-personalize .manager-toolbar__tab {
+    border: 1px solid transparent;
+}
+
+body .manager-personalize .manager-toolbar__tab.is-active {
+    border-color: color-mix(in srgb, var(--interactive-accent) 45%, var(--bpm-border)) !important;
+    background: color-mix(in srgb, var(--interactive-accent) 12%, var(--background-primary)) !important;
+    color: var(--text-accent) !important;
+}
+
+.manager-personalize .manager-tool {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+    min-height: 34px;
+    padding: 0;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--bpm-radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    box-shadow: none;
+    cursor: pointer;
+}
+
+.manager-personalize .manager-tool:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.manager-personalize .manager-tool.is-active {
+    border-color: color-mix(in srgb, var(--interactive-accent) 45%, var(--bpm-border));
+    background: color-mix(in srgb, var(--interactive-accent) 14%, var(--background-primary));
+    color: var(--text-accent);
+}
+
+.manager-personalize .manager-tool svg {
+    width: 18px;
+    height: 18px;
+}
+
+/* 设置弹窗里 BPM 变量可能未定义，为个性化区块提供回退值 */
+.manager-personalize {
+    --bpm-border: var(--background-modifier-border);
+    --bpm-radius-sm: var(--radius-s);
 }
