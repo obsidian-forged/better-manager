@@ -15547,3 +15547,31 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
     color: var(--text-accent);
     opacity: 1;
 }
+
+/* 桌面端：标题（logo）与功能项栏合并为一行，筛选块单独一行 */
+.manager-container.manager-container--main:not(.manager-container--mobile) .manager-modal-chrome {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    align-items: center;
+    column-gap: 16px;
+    row-gap: 8px;
+}
+
+.manager-container.manager-container--main:not(.manager-container--mobile) .manager-modal-chrome > .manager-header {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+}
+
+.manager-container.manager-container--main:not(.manager-container--mobile) .manager-modal-chrome > .manager-section--actions {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+}
+
+.manager-container.manager-container--main:not(.manager-container--mobile) .manager-modal-chrome > .manager-section--filters {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    min-width: 0;
+}
