@@ -15444,3 +15444,10 @@ body .manager-setting__tabs .manager-setting__tabs-item[data-state="active"] .ma
     flex: 1 1 auto;
     min-width: 0;
 }
+
+/* 管理器顶栏功能项按内容宽度排列，不平均拉伸 */
+.manager-container .manager-toolbar__tabs .manager-toolbar__tab {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: max-content !important;
+}
