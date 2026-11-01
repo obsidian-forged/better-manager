@@ -15654,16 +15654,16 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
     min-width: 0;
 }
 
-/* 关闭按钮使用警示色 */
-.manager-modal-close {
-    color: var(--text-warning) !important;
-    border-color: color-mix(in srgb, var(--color-orange) 42%, var(--background-modifier-border)) !important;
+/* 关闭按钮使用红色警示色 */
+.manager-container .manager-modal-close {
+    color: var(--text-error) !important;
+    border-color: color-mix(in srgb, var(--text-error) 55%, var(--background-modifier-border)) !important;
 }
 
-.manager-modal-close:hover {
-    background: color-mix(in srgb, var(--color-orange) 14%, transparent) !important;
-    color: var(--text-warning) !important;
-    border-color: color-mix(in srgb, var(--color-orange) 60%, var(--background-modifier-border)) !important;
+.manager-container .manager-modal-close:hover {
+    background: color-mix(in srgb, var(--text-error) 14%, transparent) !important;
+    color: var(--text-error) !important;
+    border-color: color-mix(in srgb, var(--text-error) 72%, var(--background-modifier-border)) !important;
 }
 
 /* 隐藏插件弹窗：标题栏 + 带标签的过滤区 */
