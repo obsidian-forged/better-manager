@@ -15844,3 +15844,19 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
 .manager-container .manager-multiselect-filter__trigger:has(.manager-multiselect-filter__count:not(.is-empty)) .manager-multiselect-filter__chevron {
     opacity: 0;
 }
+
+/* 有选中数量时：默认显示数量覆盖 chevron，悬停/聚焦时切回 chevron */
+.manager-container .manager-multiselect-filter__count,
+.manager-container .manager-multiselect-filter__chevron {
+    transition: opacity 0.12s ease;
+}
+
+.manager-container .manager-multiselect-filter__trigger:has(.manager-multiselect-filter__count:not(.is-empty)):hover .manager-multiselect-filter__chevron,
+.manager-container .manager-multiselect-filter__trigger:has(.manager-multiselect-filter__count:not(.is-empty)):focus-visible .manager-multiselect-filter__chevron {
+    opacity: 1;
+}
+
+.manager-container .manager-multiselect-filter__trigger:has(.manager-multiselect-filter__count:not(.is-empty)):hover .manager-multiselect-filter__count,
+.manager-container .manager-multiselect-filter__trigger:has(.manager-multiselect-filter__count:not(.is-empty)):focus-visible .manager-multiselect-filter__count {
+    opacity: 0;
+}
