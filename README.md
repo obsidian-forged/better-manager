@@ -4,9 +4,9 @@
 
 Organize your plugin workflow with delayed startup, batch controls, groups, tags, device presets and a clear management interface.
 
-[简体中文](https://github.com/lmce72/obsidian-manager-rev/blob/main/docs/README_CN.md) · [日本語](https://github.com/lmce72/obsidian-manager-rev/blob/main/docs/README_JA.md) · [한국어](https://github.com/lmce72/obsidian-manager-rev/blob/main/docs/README_KO.md) · [Español](https://github.com/lmce72/obsidian-manager-rev/blob/main/docs/README_ES.md) · [Français](https://github.com/lmce72/obsidian-manager-rev/blob/main/docs/README_FR.md) · [Русский](https://github.com/lmce72/obsidian-manager-rev/blob/main/docs/README_RU.md) · [Releases](https://github.com/lmce72/obsidian-manager-rev/releases) · [Support](https://ifdian.net/a/eondr)
+[简体中文](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_CN.md) · [日本語](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_JA.md) · [한국어](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_KO.md) · [Español](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_ES.md) · [Français](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_FR.md) · [Русский](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_RU.md) · [Releases](https://github.com/obsidian-forged/better-manager/releases) · [Support](https://ifdian.net/a/eondr)
 
-![Latest Release](https://img.shields.io/github/v/release/lmce72/obsidian-manager-rev?style=flat-square&label=release) ![GitHub Downloads](https://img.shields.io/github/downloads/lmce72/obsidian-manager-rev/total?style=flat-square&label=downloads) ![Last Commit](https://img.shields.io/github/last-commit/lmce72/obsidian-manager-rev?style=flat-square&label=last%20commit) ![Issues](https://img.shields.io/github/issues/lmce72/obsidian-manager-rev?style=flat-square&label=issues) ![Stars](https://img.shields.io/github/stars/lmce72/obsidian-manager-rev?style=flat-square&label=stars) ![License](https://img.shields.io/github/license/lmce72/obsidian-manager-rev?style=flat-square&label=license) ![Obsidian Plugin](https://img.shields.io/badge/Obsidian-plugin-7C3AED?style=flat-square&logo=obsidian&logoColor=white) ![Minimum Obsidian Version](https://img.shields.io/badge/Obsidian-%E2%89%A5%201.5.8-7C3AED?style=flat-square) ![TypeScript](https://img.shields.io/badge/TypeScript-ready-3178C6?style=flat-square&logo=typescript&logoColor=white) ![Platform](https://img.shields.io/badge/platform-desktop%20%7C%20mobile-4B5563?style=flat-square) ![i18n](https://img.shields.io/badge/i18n-7%20languages-0F766E?style=flat-square) ![GitHub Source Tracking](https://img.shields.io/badge/GitHub-source%20tracking-181717?style=flat-square&logo=github&logoColor=white) ![Sponsor on Afdian](https://img.shields.io/badge/Afdian-sponsor-946ce6?style=flat-square)
+![Latest Release](https://img.shields.io/github/v/release/obsidian-forged/better-manager?style=flat-square&label=release) ![GitHub Downloads](https://img.shields.io/github/downloads/obsidian-forged/better-manager/total?style=flat-square&label=downloads) ![Last Commit](https://img.shields.io/github/last-commit/obsidian-forged/better-manager?style=flat-square&label=last%20commit) ![Issues](https://img.shields.io/github/issues/obsidian-forged/better-manager?style=flat-square&label=issues) ![Stars](https://img.shields.io/github/stars/obsidian-forged/better-manager?style=flat-square&label=stars) ![License](https://img.shields.io/github/license/obsidian-forged/better-manager?style=flat-square&label=license) ![Obsidian Plugin](https://img.shields.io/badge/Obsidian-plugin-7C3AED?style=flat-square&logo=obsidian&logoColor=white) ![Minimum Obsidian Version](https://img.shields.io/badge/Obsidian-%E2%89%A5%201.5.8-7C3AED?style=flat-square) ![TypeScript](https://img.shields.io/badge/TypeScript-ready-3178C6?style=flat-square&logo=typescript&logoColor=white) ![Platform](https://img.shields.io/badge/platform-desktop%20%7C%20mobile-4B5563?style=flat-square) ![i18n](https://img.shields.io/badge/i18n-7%20languages-0F766E?style=flat-square) ![GitHub Source Tracking](https://img.shields.io/badge/GitHub-source%20tracking-181717?style=flat-square&logo=github&logoColor=white) ![Sponsor on Afdian](https://img.shields.io/badge/Afdian-sponsor-946ce6?style=flat-square)
 
 ![Screenshot](docs/img/1.2.0/index.png)
 
@@ -158,7 +158,7 @@ Recommended for most users.
 
 Use this when you want to install a GitHub release directly.
 
-1. Download the [latest release](https://github.com/lmce72/obsidian-manager-rev/releases).
+1. Download the [latest release](https://github.com/obsidian-forged/better-manager/releases).
 2. Copy `main.js`, `manifest.json`, and `styles.css` into `.obsidian/plugins/better-plugins-manager/`.
 3. Restart Obsidian.
 4. Enable **Better Manager** from **Settings → Community Plugins**.
@@ -304,4 +304,4 @@ Issues and PRs are welcome!
 
 ## 📄 License
 
-[MIT](https://github.com/lmce72/obsidian-manager-rev/blob/main/LICENSE)
+[MIT](https://github.com/obsidian-forged/better-manager/blob/main/LICENSE)

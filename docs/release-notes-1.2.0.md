@@ -11,7 +11,7 @@
 - 各类横向顶栏统一使用浮动滚动条，不再挤占按钮高度；滑块支持拖动，触屏保留横向滑动。
 - 升级后提供一次性的截图介绍，可逐页浏览新版界面；截图随插件离线提供，关闭后不再显示。
 
-![新版插件总览](https://raw.githubusercontent.com/lmce72/obsidian-manager-rev/1.2.0/docs/img/index.png)
+![新版插件总览](https://raw.githubusercontent.com/obsidian-forged/better-manager/1.2.0/docs/img/index.png)
 
 ## 更多改进
 
@@ -20,7 +20,7 @@
 - **Ribbon：** 迁移旧格式条目并保留顺序和显隐，改进分组选择、序号控制与手机端布局。
 - **最近安装：** 版本号旁新增时钟标签，默认显示 7 天内安装的插件；时间范围设为 **0** 可关闭。
 
-![边栏编排](https://raw.githubusercontent.com/lmce72/obsidian-manager-rev/1.2.0/docs/img/ribbonOrder.png)
+![边栏编排](https://raw.githubusercontent.com/obsidian-forged/better-manager/1.2.0/docs/img/ribbonOrder.png)
 
 ## 使用说明
 

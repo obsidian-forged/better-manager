@@ -4,9 +4,9 @@
 
 用延迟启动、批量管理、分组标签、设备预设和清晰的管理界面，整理你的插件工作流。
 
-[English](https://github.com/lmce72/obsidian-manager-rev/blob/main/README.md) · [日本語](https://github.com/lmce72/obsidian-manager-rev/blob/main/docs/README_JA.md) · [한국어](https://github.com/lmce72/obsidian-manager-rev/blob/main/docs/README_KO.md) · [Español](https://github.com/lmce72/obsidian-manager-rev/blob/main/docs/README_ES.md) · [Français](https://github.com/lmce72/obsidian-manager-rev/blob/main/docs/README_FR.md) · [Русский](https://github.com/lmce72/obsidian-manager-rev/blob/main/docs/README_RU.md) · [版本发布](https://github.com/lmce72/obsidian-manager-rev/releases) · [支持作者](https://ifdian.net/a/eondr)
+[English](https://github.com/obsidian-forged/better-manager/blob/main/README.md) · [日本語](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_JA.md) · [한국어](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_KO.md) · [Español](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_ES.md) · [Français](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_FR.md) · [Русский](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_RU.md) · [版本发布](https://github.com/obsidian-forged/better-manager/releases) · [支持作者](https://ifdian.net/a/eondr)
 
-![Latest Release](https://img.shields.io/github/v/release/lmce72/obsidian-manager-rev?style=flat-square&label=release) ![GitHub Downloads](https://img.shields.io/github/downloads/lmce72/obsidian-manager-rev/total?style=flat-square&label=downloads) ![Last Commit](https://img.shields.io/github/last-commit/lmce72/obsidian-manager-rev?style=flat-square&label=last%20commit) ![Issues](https://img.shields.io/github/issues/lmce72/obsidian-manager-rev?style=flat-square&label=issues) ![Stars](https://img.shields.io/github/stars/lmce72/obsidian-manager-rev?style=flat-square&label=stars) ![License](https://img.shields.io/github/license/lmce72/obsidian-manager-rev?style=flat-square&label=license) ![Obsidian Plugin](https://img.shields.io/badge/Obsidian-plugin-7C3AED?style=flat-square&logo=obsidian&logoColor=white) ![Minimum Obsidian Version](https://img.shields.io/badge/Obsidian-%E2%89%A5%201.5.8-7C3AED?style=flat-square) ![TypeScript](https://img.shields.io/badge/TypeScript-ready-3178C6?style=flat-square&logo=typescript&logoColor=white) ![Platform](https://img.shields.io/badge/platform-desktop%20%7C%20mobile-4B5563?style=flat-square) ![i18n](https://img.shields.io/badge/i18n-7%20languages-0F766E?style=flat-square) ![GitHub Source Tracking](https://img.shields.io/badge/GitHub-source%20tracking-181717?style=flat-square&logo=github&logoColor=white) ![Sponsor on Afdian](https://img.shields.io/badge/Afdian-sponsor-946ce6?style=flat-square)
+![Latest Release](https://img.shields.io/github/v/release/obsidian-forged/better-manager?style=flat-square&label=release) ![GitHub Downloads](https://img.shields.io/github/downloads/obsidian-forged/better-manager/total?style=flat-square&label=downloads) ![Last Commit](https://img.shields.io/github/last-commit/obsidian-forged/better-manager?style=flat-square&label=last%20commit) ![Issues](https://img.shields.io/github/issues/obsidian-forged/better-manager?style=flat-square&label=issues) ![Stars](https://img.shields.io/github/stars/obsidian-forged/better-manager?style=flat-square&label=stars) ![License](https://img.shields.io/github/license/obsidian-forged/better-manager?style=flat-square&label=license) ![Obsidian Plugin](https://img.shields.io/badge/Obsidian-plugin-7C3AED?style=flat-square&logo=obsidian&logoColor=white) ![Minimum Obsidian Version](https://img.shields.io/badge/Obsidian-%E2%89%A5%201.5.8-7C3AED?style=flat-square) ![TypeScript](https://img.shields.io/badge/TypeScript-ready-3178C6?style=flat-square&logo=typescript&logoColor=white) ![Platform](https://img.shields.io/badge/platform-desktop%20%7C%20mobile-4B5563?style=flat-square) ![i18n](https://img.shields.io/badge/i18n-7%20languages-0F766E?style=flat-square) ![GitHub Source Tracking](https://img.shields.io/badge/GitHub-source%20tracking-181717?style=flat-square&logo=github&logoColor=white) ![Sponsor on Afdian](https://img.shields.io/badge/Afdian-sponsor-946ce6?style=flat-square)
 
 ![Screenshot](img/1.2.0/index.png)
 
@@ -158,7 +158,7 @@ Conflict Diagnosis 通过步骤引导插件冲突测试，并把测试状态和�
 
 适合直接安装 GitHub Release。
 
-1. 下载 [latest release](https://github.com/lmce72/obsidian-manager-rev/releases)。
+1. 下载 [latest release](https://github.com/obsidian-forged/better-manager/releases)。
 2. 将 `main.js`、`manifest.json` 和 `styles.css` 复制到 `.obsidian/plugins/better-plugins-manager/`。
 3. 重启 Obsidian。
 4. 在 **设置 → 第三方插件** 中启用 **Better Manager**。
@@ -302,4 +302,4 @@ BPM 设置按功能拆分为多个页面：
 
 ## 📄 License
 
-[MIT](https://github.com/lmce72/obsidian-manager-rev/blob/main/LICENSE)
+[MIT](https://github.com/obsidian-forged/better-manager/blob/main/LICENSE)
