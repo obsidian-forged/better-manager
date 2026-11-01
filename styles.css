@@ -16141,3 +16141,60 @@ body .manager-personalize .manager-toolbar__tab.is-active {
     --bpm-border: var(--background-modifier-border);
     --bpm-radius-sm: var(--radius-s);
 }
+
+/* 个性化 BPM：更紧凑、靠左 */
+.manager-personalize {
+    align-items: flex-start;
+    gap: 6px;
+    padding: 2px 0 8px;
+}
+
+.manager-personalize .manager-toolbar__tabs {
+    justify-content: flex-start !important;
+    width: fit-content !important;
+    margin: 0 !important;
+    padding: 0;
+    gap: 4px;
+    border: 0;
+}
+
+.manager-personalize .manager-toolbar__tab {
+    flex: 0 0 auto !important;
+    height: 30px;
+    padding: 0 8px;
+    gap: 4px;
+    font-size: 13px;
+}
+
+.manager-personalize .manager-toolbar__tab-icon {
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+}
+
+.manager-personalize .manager-toolbar__tab-icon svg {
+    width: 16px;
+    height: 16px;
+}
+
+.manager-personalize .manager-toolbar__tools {
+    margin: 0 !important;
+    padding: 0;
+    gap: 4px;
+}
+
+.manager-personalize .manager-tool {
+    width: 30px;
+    height: 30px;
+    min-width: 30px;
+    min-height: 30px;
+}
+
+.manager-personalize .manager-tool svg {
+    width: 16px;
+    height: 16px;
+}
+
+.manager-personalize .manager-bar__action .setting-item-control {
+    gap: 4px;
+}
