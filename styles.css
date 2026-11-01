@@ -15983,3 +15983,62 @@ body.is-phone .manager-container--mobile .manager-page-tools .setting-item-contr
     width: var(--bpm-action-size) !important;
     max-width: var(--bpm-action-size) !important;
 }
+
+/* BPM 内部滚动条统一使用 Obsidian 的滚动条样式变量 */
+.manager-setting__tabs,
+.manager-toolbar__tabs,
+.manager-appearance-tabs,
+.ribbon-manager-filter-group,
+.manager-page-tools {
+    scrollbar-width: var(--scrollbar-native-width, thin);
+    scrollbar-color: var(--scrollbar-thumb-bg) var(--scrollbar-bg);
+}
+
+.manager-setting__tabs::-webkit-scrollbar,
+.manager-toolbar__tabs::-webkit-scrollbar,
+.manager-appearance-tabs::-webkit-scrollbar,
+.ribbon-manager-filter-group::-webkit-scrollbar,
+.manager-page-tools::-webkit-scrollbar {
+    display: block;
+    width: var(--scrollbar-width, 10px);
+    height: var(--scrollbar-height, 10px);
+}
+
+.manager-setting__tabs::-webkit-scrollbar-track,
+.manager-toolbar__tabs::-webkit-scrollbar-track,
+.manager-appearance-tabs::-webkit-scrollbar-track,
+.ribbon-manager-filter-group::-webkit-scrollbar-track,
+.manager-page-tools::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.manager-setting__tabs::-webkit-scrollbar-thumb,
+.manager-toolbar__tabs::-webkit-scrollbar-thumb,
+.manager-appearance-tabs::-webkit-scrollbar-thumb,
+.ribbon-manager-filter-group::-webkit-scrollbar-thumb,
+.manager-page-tools::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb-bg);
+    border-radius: var(--scrollbar-radius);
+    border: var(--scrollbar-border-width) solid transparent;
+    background-clip: padding-box;
+}
+
+/* 手机端概览工具行：压过概览专用规则，允许换行而不是滚动隐藏 */
+body.is-phone .manager-container--mobile .manager-overview-heading .manager-page-tools {
+    width: 100%;
+    overflow-x: visible;
+}
+
+body.is-phone .manager-container--mobile .manager-overview-heading .manager-page-tools .manager-bar__action {
+    width: 100%;
+    max-width: 100%;
+}
+
+body.is-phone .manager-container--mobile .manager-overview-heading .manager-page-tools .setting-item-control {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+}
