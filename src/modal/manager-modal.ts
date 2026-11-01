@@ -1,4 +1,9 @@
+import { isToolInPage, ToolScope } from '../ui/tool-visibility';
+import { featureEnabled, toolEnabled, FeatureId, ToolId } from '../features';
 import { DevicePanel } from '../devices/device-panel';
+import { CatalogModal } from '../catalog/catalog-modal';
+import { createBpmFilterField, createBpmFilterSelectField } from '../ui/filter-field';
+import { ScopeSelect } from '../ui/scope-select';
 import { DeviceScopeBar } from '../devices/device-scope-bar';
 import type { DevicePluginFilters, ScopePage } from '../devices/device-presets';
 import {
@@ -347,6 +352,7 @@ export class ManagerModal extends Modal {
     // 安装模式
     installMode = false;
     private activePage: ManagerPage = "plugins";
+    private catalogModal?: CatalogModal;
     private appearanceView: AppearanceView = "profiles";
     installType: "plugin" | "theme" = "plugin";
     installRepo = "";
@@ -378,6 +384,13 @@ export class ManagerModal extends Modal {
     private pluginManifestCache?: { source: Record<string, PluginManifest>; plugins: PluginManifest[] };
     private modalChromeEl?: HTMLElement;
     private modalPageEl?: HTMLElement;
+    private pageToolsEl?: HTMLElement;
+    private mobileScopeHost?: HTMLElement;
+    private mobileOverviewHost?: HTMLElement;
+    private mobileContentObserver?: ResizeObserver;
+    private mobileHeaderObserver?: ResizeObserver;
+    private overviewSortSelect?: ScopeSelect;
+    private nativeMobileCloseEl?: HTMLElement;
     private readonly renderBatchSize = 80;
     private readonly desktopPages: ManagerPage[] = SHARED_VAULTS_ENABLED
         ? ["plugins", "themes", "devices", "install", "sources", "transfer", "vaults", "ribbon", "troubleshoot"]
@@ -435,16 +448,38 @@ export class ManagerModal extends Modal {
     }
 
     private isRibbonManagerEnabled(): boolean {
-        return this.settings.RIBBON_MANAGER_ENABLED !== false;
+        return featureEnabled(this.settings, 'ribbon') && this.settings.RIBBON_MANAGER_ENABLED !== false;
     }
 
     private getAvailableDesktopPages(): ManagerPage[] {
-        return this.desktopPages.filter((page) => page !== "ribbon" || this.isRibbonManagerEnabled());
+        return this.desktopPages.filter(page => this.isPageEnabled(page));
+    }
+
+    private isPageEnabled(page: ManagerPage): boolean {
+        const feature: FeatureId = page === 'sources' ? 'install' : page === 'vaults' ? 'transfer' : page;
+        return featureEnabled(this.settings, feature) && (page !== 'ribbon' || this.isRibbonManagerEnabled());
+    }
+
+    /** 桌面标签与手机菜单共用栏目定义；Shared navigation preserves feature availability. */
+    private getPageNavigationItems(): Array<{ page: ManagerPage; label: string; icon: string; tooltip?: string }> {
+        const t = (key: string) => this.manager.translator.t(key);
+        const items: Array<{ page: ManagerPage; label: string; icon: string; tooltip?: string }> = [
+            { page: 'plugins', label: t('管理器_Tab_插件管理'), icon: 'blocks' },
+            { page: 'themes', label: t('外观总览_Tab_标题'), icon: 'palette' },
+            { page: 'devices', label: t('设备_标题'), icon: 'monitor-smartphone' },
+            { page: 'install', label: t('管理器_Tab_安装来源'), icon: 'download' },
+            { page: 'transfer', label: t('导入导出_Tab_标题'), icon: 'archive-restore', tooltip: t('导入导出_Tab_说明') },
+            { page: 'vaults', label: t('共享库_Tab_标题'), icon: 'folder-sync', tooltip: t('共享库_Tab_说明') },
+            { page: 'ribbon', label: t('管理器_Tab_功能编排'), icon: 'grip-vertical', tooltip: t('Ribbon_功能编排_说明') },
+            { page: 'troubleshoot', label: t('排查_Tab_短标题'), icon: 'search-check' },
+        ];
+        return items.filter(item => (item.page !== 'vaults' || SHARED_VAULTS_ENABLED) && this.isPageEnabled(item.page));
     }
 
     private normalizeManagerPage(page: ManagerPage): ManagerPage {
-        if (!SHARED_VAULTS_ENABLED && page === "vaults") return "plugins";
-        return this.getAvailableDesktopPages().includes(page) ? page : "plugins";
+        const available = this.getAvailableDesktopPages();
+        if (!SHARED_VAULTS_ENABLED && page === 'vaults') return available[0] ?? 'plugins';
+        return available.includes(page) ? page : available[0] ?? 'plugins';
     }
 
     private ensureAllowedActivePage() {
@@ -793,7 +828,7 @@ export class ManagerModal extends Modal {
         this.statusOperatorControl?.setValue("contains");
         this.syncPageChrome();
         // 移动端顶栏随页面重建：从设备页等非插件页点统计筛选时，需要补回搜索与过滤区。
-        if (Platform.isMobileApp) this.showHeadMobile();
+        if (Platform.isMobile) this.showHeadMobile();
         void this.reloadShowData();
     }
 
@@ -1089,17 +1124,11 @@ export class ManagerModal extends Modal {
 
     /** 筛选字段的共用结构：图标 + 标签 + 控件，桌面过滤行与移动端过滤面板共用。 */
     private createFilterField(parent: HTMLElement, label: string, icon: string, variant: "select" | "search" | "compound" = "select"): HTMLElement {
-        const field = parent.createDiv("manager-filter-field");
-        field.addClass(`manager-filter-field--${variant}`);
-        const labelEl = field.createDiv("manager-filter-field__label");
-        const iconEl = labelEl.createSpan({ cls: "manager-filter-field__icon" });
-        setIcon(iconEl, icon);
-        labelEl.createSpan({ cls: "manager-filter-field__text", text: label });
-        return field.createDiv("manager-filter-field__control");
+        return createBpmFilterField(parent, label, icon, variant);
     }
 
     private createFilterSelectField(parent: HTMLElement, label: string, icon: string, variant: "select" | "search" | "compound" = "select"): HTMLElement {
-        return this.createFilterField(parent, label, icon, variant).createDiv("manager-filter-select-group");
+        return createBpmFilterSelectField(parent, label, icon, variant);
     }
 
     private renderPluginFilterControls(
@@ -1196,6 +1225,7 @@ export class ManagerModal extends Modal {
     }
 
     private async runPluginUpdateCheck(trigger?: ButtonComponent | HTMLButtonElement) {
+        if (!toolEnabled(this.settings, 'updates')) return;
         if (this.isCheckingPluginUpdates) return;
 
         this.isCheckingPluginUpdates = true;
@@ -1379,7 +1409,7 @@ export class ManagerModal extends Modal {
 
         const controlEl = card.querySelector<HTMLElement>(".manager-plugin-card__actions");
         controlEl?.querySelectorAll(".manager-plugin-card__download-update").forEach((el) => el.remove());
-        if (controlEl && hasRemoteVersion && updateInfo && !this.editorMode && !Platform.isMobileApp) {
+        if (controlEl && hasRemoteVersion && updateInfo && !this.editorMode && !Platform.isMobile) {
             this.addPluginDownloadButton(controlEl, pluginId, updateInfo, true);
         }
 
@@ -1423,6 +1453,8 @@ export class ManagerModal extends Modal {
     }
 
     private isPluginEnabledForDisplay(pluginId: string, managerPlugin?: ManagerPlugin): boolean {
+        const session = this.manager.overview.pluginState(pluginId);
+        if (session) return session.enabled;
         const pluginSettings = managerPlugin ?? this.getManagerPlugin(pluginId);
         // 外域插件页只展示该作用域保存的状态，不读本机运行时。
         if (this.manager.devices?.isProjectingForeign('plugins')) return Boolean(pluginSettings?.enabled);
@@ -1523,6 +1555,8 @@ export class ManagerModal extends Modal {
         }
 
         const header = card.querySelector<HTMLElement>(".manager-plugin-card__header");
+        const titleRow = header?.querySelector<HTMLElement>('.manager-plugin-card__title-row');
+        const metadataRow = header?.querySelector<HTMLElement>('.manager-plugin-card__metadata-row');
         const groupSettingsById = new Map(this.settings.GROUPS.map((group) => [group.id, group]));
         header?.querySelectorAll(".manager-item__name-group").forEach((el) => el.remove());
         if (header && (managerPlugin.group !== "" || this.editorMode)) {
@@ -1550,19 +1584,16 @@ export class ManagerModal extends Modal {
                 tag.onclick = () => { new GroupModal(this.app, this.manager, this, managerPlugin).open(); };
                 group.appendChild(tag);
             }
-            if (cardIcon) cardIcon.insertAdjacentElement("afterend", group);
-            else header.prepend(group);
+            titleRow?.prepend(group);
         }
 
         let noteEl = card.querySelector<HTMLElement>(".manager-plugin-card__note");
         if (managerPlugin.note?.length > 0) {
             if (!noteEl) {
-                const versionWrap = card.querySelector<HTMLElement>(".manager-item__versions");
                 noteEl = createSpan({ cls: "manager-plugin-card__note" });
                 noteEl.addEventListener("click", () => { new NoteModal(this.app, this.manager, managerPlugin, this).open(); });
                 setIcon(noteEl, "notebook-pen");
-                if (versionWrap) versionWrap.insertAdjacentElement("afterend", noteEl);
-                else card.querySelector<HTMLElement>(".manager-plugin-card__header")?.appendChild(noteEl);
+                titleRow?.appendChild(noteEl);
             }
         } else {
             noteEl?.remove();
@@ -1572,14 +1603,12 @@ export class ManagerModal extends Modal {
         if (this.settings.DELAY && !this.editorMode && !isSelf && managerPlugin.delay !== "") {
             const delay = this.settings.DELAYS.find((item) => item.id === managerPlugin.delay);
             if (delay) {
-                const delayEl = createSpan({ text: `${delay.time}s`, cls: ["manager-item__name-delay"] });
-                const anchor = card.querySelector<HTMLElement>(".manager-plugin-card__note")
-                    ?? card.querySelector<HTMLElement>(".manager-item__versions")
-                    ?? cardIcon;
-                if (anchor) anchor.insertAdjacentElement("afterend", delayEl);
-                else header?.appendChild(delayEl);
+                const delayEl = this.createDelayBadge(delay.time);
+                metadataRow?.prepend(delayEl);
             }
         }
+
+        if (titleRow) this.renderPluginReleaseBadge(titleRow, manifest.version);
 
         const tagsEl = card.querySelector<HTMLElement>(".manager-plugin-card__tags");
         let visibleTagCount = 0;
@@ -1740,8 +1769,8 @@ export class ManagerModal extends Modal {
     private async restartPlugin(plugin: PluginManifest) {
         const heapBefore = readHeapMB();
         new Notice(this.manager.translator.t("管理器_重启中_提示"));
-        await this.appPlugins.disablePluginAndSave(plugin.id);
-        await this.appPlugins.enablePluginAndSave(plugin.id);
+        await this.appPlugins.disablePlugin(plugin.id);
+        await this.manager.overview.setPluginState(plugin.id, { enabled: true });
         this.singleStartedPluginIds.delete(plugin.id);
         this.refreshPluginCard(plugin.id, { allowReload: true });
         void this.reportRestartCost(plugin.id, heapBefore);
@@ -1816,7 +1845,24 @@ export class ManagerModal extends Modal {
         new Notice(this.manager.translator.t("通知_ID已复制"));
     }
 
+    private openCatalog(): void {
+        if (!toolEnabled(this.settings, 'catalog')) return;
+        this.catalogModal?.close();
+        this.catalogModal = new CatalogModal(this.app, this.manager, repo => {
+            this.installType = "plugin";
+            this.installRepo = repo;
+            this.installVersion = "";
+            this.installVersions = [];
+            this.activePage = "install";
+            this.syncPageChrome();
+            this.renderContent();
+            if (Platform.isMobile) this.showHeadMobile();
+        });
+        this.catalogModal.open();
+    }
+
     private async openPluginMarket() {
+        if (!toolEnabled(this.settings, 'pluginMarket')) return;
         await this.appSetting.open();
         await this.appSetting.openTabById("community-plugins");
         window.setTimeout(() => {
@@ -1827,6 +1873,7 @@ export class ManagerModal extends Modal {
     }
 
     private async openAppearanceMarket() {
+        if (!toolEnabled(this.settings, 'appearanceMarket')) return;
         await this.appSetting.open();
         await this.appSetting.openTabById("appearance");
         window.setTimeout(() => {
@@ -1855,7 +1902,26 @@ export class ManagerModal extends Modal {
         }
     }
 
+    /** 仅标记已安装版本的发布通道；Show the installed version channel, independently of update preferences. */
+    private renderPluginReleaseBadge(parent: HTMLElement, version: string): void {
+        parent.querySelector('.manager-plugin-card__release')?.remove();
+        const prerelease = /^v?[0-9]+[.][0-9]+[.][0-9]+-([^+]+)/i.exec(version.trim())?.[1];
+        const channel = prerelease ? /(?:^|[.-])(rc|preview)(?=[0-9]*(?:[.-]|$))/i.exec(prerelease)?.[1].toLowerCase() : undefined;
+        if (!channel) return;
+        const badge = parent.createSpan({ cls: 'manager-plugin-card__release', text: channel === 'rc' ? 'RC' : 'Preview' });
+        parent.querySelector('.manager-item__versions')?.insertAdjacentElement('afterend', badge);
+    }
+
+    private createDelayBadge(seconds: number): HTMLElement {
+        const badge = createSpan({ cls: 'manager-item__name-delay' });
+        setIcon(badge.createSpan('manager-item__delay-icon'), 'timer');
+        badge.createSpan({ text: seconds + 's' });
+        return badge;
+    }
+
     private isManagedPluginEnabled(pluginId: string): boolean {
+        const session = this.manager.overview.pluginState(pluginId);
+        if (session) return session.enabled;
         if (this.settings.DELAY) {
             return Boolean(this.settings.Plugins.find((plugin) => plugin.id === pluginId)?.enabled);
         }
@@ -1884,16 +1950,18 @@ export class ManagerModal extends Modal {
     }
 
     private setBulkEditMode(value: boolean) {
+        if (value && !toolEnabled(this.settings, 'bulkEdit')) return;
         if (value && this.activePage !== "plugins") return;
         this.bulkEditMode = value;
         if (value) this.editorMode = false;
         if (!value) this.bulkSelectedPluginIds.clear();
         this.applyEditingStyle();
         this.renderContent();
-        if (Platform.isMobileApp) this.showHeadMobile();
+        if (Platform.isMobile) this.showHeadMobile();
     }
 
     private async setEditorMode(value: boolean) {
+        if (value && !toolEnabled(this.settings, 'layoutEditor')) return;
         if (value && this.activePage !== "plugins") return;
         if (this.editorMode === value) {
             this.applyEditingStyle();
@@ -1911,7 +1979,7 @@ export class ManagerModal extends Modal {
         } else {
             this.renderContent();
         }
-        if (Platform.isMobileApp) this.showHeadMobile();
+        if (Platform.isMobile) this.showHeadMobile();
     }
 
     private toggleBulkPluginSelection(pluginId: string, selected: boolean) {
@@ -2141,9 +2209,7 @@ export class ManagerModal extends Modal {
             new Notice(this.manager.translator.t("批量编辑_无可操作插件"));
             return;
         }
-        plugins.forEach((plugin) => {
-            plugin.delay = delayId;
-        });
+        for (const plugin of plugins) await this.manager.overview.setPluginState(plugin.id, { delay: delayId });
         await this.finishBulkMetadataEdit("批量编辑_已更新延迟", plugins.length);
     }
 
@@ -2176,15 +2242,7 @@ export class ManagerModal extends Modal {
             const foreign = Boolean(this.manager.devices?.isProjectingForeign('plugins'));
             const isEnabled = foreign ? Boolean(plugin.enabled) : this.isManagedPluginEnabled(plugin.id);
             if (isEnabled !== targetEnabled) {
-                plugin.enabled = targetEnabled;
-                if (foreign) {
-                } else if (this.settings.DELAY) {
-                    if (targetEnabled) await this.appPlugins.enablePlugin(plugin.id);
-                    else await this.appPlugins.disablePlugin(plugin.id);
-                } else {
-                    if (targetEnabled) await this.appPlugins.enablePluginAndSave(plugin.id);
-                    else await this.appPlugins.disablePluginAndSave(plugin.id);
-                }
+                await this.manager.overview.setPluginState(plugin.id, { enabled: targetEnabled });
                 this.singleStartedPluginIds.delete(plugin.id);
             }
             processed++;
@@ -2334,11 +2392,16 @@ export class ManagerModal extends Modal {
         const modalEl = this.contentEl.parentElement;
         if (!modalEl) return;
         this.modalContainer = modalEl;
+        this.overviewSortSelect?.close();
+        // 保留原生关闭行为，仅移动布局；Retain native closing behavior while relocating the control.
+        if (Platform.isMobile) {
+            this.nativeMobileCloseEl = modalEl.querySelector<HTMLElement>(':scope > .modal-header-button') ?? this.nativeMobileCloseEl;
+        }
         modalEl.addClass("manager-container");
         modalEl.addClass("manager-container--main");
-        if (Platform.isMobileApp) modalEl.addClass("manager-container--mobile");
+        if (Platform.isMobile) modalEl.addClass("manager-container--mobile");
         // 靠上
-        if (!this.settings.CENTER && !Platform.isMobileApp) modalEl.addClass("manager-container__top");
+        if (!this.settings.CENTER && !Platform.isMobile) modalEl.addClass("manager-container__top");
         if (this.editorMode) modalEl.addClass("manager-container--editing");
 
         modalEl.getElementsByClassName("modal-close-button")[0]?.remove();
@@ -2353,7 +2416,8 @@ export class ManagerModal extends Modal {
         this.modalChromeEl = chromeEl;
         this.modalPageEl = shell.createDiv("manager-modal-page manager-item-container");
 
-        if (Platform.isMobileApp) {
+        if (Platform.isMobile) {
+            this.observeMobileContentGutter(this.modalPageEl, chromeEl);
             this.showHeadMobile();
             return;
         }
@@ -2371,7 +2435,7 @@ export class ManagerModal extends Modal {
             cls: "manager-header__title",
             text: this.manager.translator.t("通用_管理器_文本"),
         });
-        this.footEl = titleBar.createDiv("manager-food manager-header__stats");
+        this.footEl = createDiv("manager-food manager-header__stats");
         this.updateStats();
 
         // [操作行]
@@ -2411,26 +2475,122 @@ export class ManagerModal extends Modal {
             tab.addEventListener("click", () => this.setDesktopPage(page));
             return tab;
         };
-        this.pluginTabEl = createTab("plugins", t("管理器_Tab_插件管理"), "blocks");
-        this.themeTabEl = createTab("themes", t("外观总览_Tab_标题"), "palette");
-        this.deviceTabEl = createTab("devices", t("设备_标题"), "monitor-smartphone");
-        this.installTabEl = createTab("install", t("管理器_Tab_安装来源"), "download");
+        const pageTabs = new Map(this.getPageNavigationItems().map(item =>
+            [item.page, createTab(item.page, item.label, item.icon, item.tooltip)]));
+        this.pluginTabEl = pageTabs.get('plugins');
+        this.themeTabEl = pageTabs.get('themes');
+        this.deviceTabEl = pageTabs.get('devices');
+        this.installTabEl = pageTabs.get('install');
         this.sourcesTabEl = undefined;
-        this.transferTabEl = createTab("transfer", t("导入导出_Tab_标题"), "archive-restore", t("导入导出_Tab_说明"));
-        this.vaultsTabEl = SHARED_VAULTS_ENABLED
-            ? createTab("vaults", t("共享库_Tab_标题"), "folder-sync", t("共享库_Tab_说明"))
-            : undefined;
-        this.ribbonTabEl = this.isRibbonManagerEnabled()
-            ? createTab("ribbon", t("管理器_Tab_功能编排"), "grip-vertical", t("Ribbon_功能编排_说明"))
-            : undefined;
-        this.troubleshootTabEl = createTab("troubleshoot", t("排查_Tab_短标题"), "search-check");
+        this.transferTabEl = pageTabs.get('transfer');
+        this.vaultsTabEl = pageTabs.get('vaults');
+        this.ribbonTabEl = pageTabs.get('ribbon');
+        this.troubleshootTabEl = pageTabs.get('troubleshoot');
 
-        const tools = toolbar.createDiv("manager-toolbar__tools");
+        this.renderGlobalTools(toolbar.createDiv('manager-global-tools'));
+        this.createPageTools();
+        tabs.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(tab => {
+            tab.toggleClass('manager-feature-disabled', !this.isPageEnabled(tab.dataset.page as ManagerPage));
+        });
+
+        // [过滤行]
+        const filterWrapper = chromeEl.createDiv("manager-section manager-section--filters");
+        this.desktopFilterWrapper = filterWrapper;
+        const filterContent = filterWrapper.createDiv("manager-section__content");
+        filterContent.addClass("manager-section__content--filters");
+
+        const searchBar = new Setting(filterContent).setClass("manager-bar__search").setName("");
+        this.searchBarEl = searchBar.settingEl;
+        this.syncPageChrome();
+        const searchLine = searchBar.controlEl.createDiv("manager-search-line");
+        const filterControlGroup = searchBar.controlEl.createDiv("manager-filter-control-group");
+        const createFilterField = (label: string, icon: string, variant: "select" | "search" | "compound" = "select") =>
+            this.createFilterField(variant === "search" ? searchLine : filterControlGroup, label, icon, variant);
+        const createFilterSelectField = (label: string, icon: string, variant: "select" | "search" | "compound" = "select") =>
+            this.createFilterSelectField(variant === "search" ? searchLine : filterControlGroup, label, icon, variant);
+        // [搜索行] 搜索框
+        const searchField = createFilterField(t("通用_搜索_文本"), "search", "search");
+        this.searchEl = new SearchComponent(searchField);
+        this.searchEl.inputEl.setAttribute("aria-label", t("筛选_搜索插件_标签"));
+        if (this.settings.PERSISTENCE && typeof this.settings.FILTER_SEARCH === "string") {
+            this.searchText = this.settings.FILTER_SEARCH;
+            // 避免 setValue 触发额外渲染：先设置 input 值，再在 onChange 里统一处理
+            this.searchEl.inputEl.value = this.searchText;
+        }
+        this.searchEl.onChange((value: string) => {
+            this.handleSearchChange(value);
+        });
+        searchBar.controlEl.appendChild(filterControlGroup);
+
+        // 桌面端插件页：设备预设选择器放在搜索框右侧，搜索框相应收窄。
+        this.deviceScopeHostInline = searchLine.createDiv("manager-device-scope manager-device-scope--inline");
+        this.renderDeviceScope(this.deviceScopeHostInline, 'plugins', true);
+
+        this.renderOverviewSort(filterControlGroup);
+
+        // 过滤器控件由桌面和移动端共用，容器只决定各自的布局。
+        const statusControl = createFilterSelectField(t("通用_状态_文本"), "list-filter", "compound");
+        const groupControl = createFilterSelectField(t("通用_分组_文本"), "folder-tree", "compound");
+        const tagControl = createFilterSelectField(t("通用_标签_文本"), "tags", "compound");
+        const delayControl = this.settings.DELAY ? createFilterSelectField(t("通用_延迟_文本"), "timer", "compound") : undefined;
+        this.renderPluginFilterControls({ status: statusControl, group: groupControl, tag: tagControl, delay: delayControl }, () => undefined);
+    }
+
+    /** 各端复用 BPM 排序控件；Use the shared BPM menu on every form factor. */
+    private renderOverviewSort(parent: HTMLElement): void {
+        this.overviewSortSelect?.close();
+        this.overviewSortSelect = new ScopeSelect(parent, this.manager.translator.t('通用_排序_文本'), 'arrow-up-down',
+            this.getPluginOverviewSort(), this.getPluginOverviewSortOptions().map(([value, label]) => ({ value, label })),
+            value => { void this.setPluginOverviewSort(value); });
+        this.overviewSortSelect.field.addClass('manager-filter-field--sort');
+    }
+
+    /** 固定全局入口：设置与原生联系方式菜单；Fixed settings and native contact menu. */
+    private renderGlobalTools(parent: HTMLElement): void {
+        const t = (key: string) => this.manager.translator.t(key);
+        const settings = new ButtonComponent(parent).setIcon('settings').setTooltip(t('管理器_插件设置_描述'));
+        settings.buttonEl.setAttribute('aria-label', t('管理器_插件设置_描述'));
+        settings.onClick(() => this.openSettingsTab(this.manager.manifest.id));
+        const contacts = new ButtonComponent(parent).setIcon('message-circle').setTooltip(t('管理器_联系方式'));
+        contacts.buttonEl.setAttribute('aria-label', t('管理器_联系方式'));
+        contacts.buttonEl.setAttribute('aria-haspopup', 'menu');
+        contacts.onClick(event => {
+            const menu = new Menu();
+            menu.addItem(item => item.setTitle(t('管理器_视频教程_描述')).setIcon('book-open')
+                .onClick(() => { window.open('https://www.bilibili.com/video/BV1WyrkYMEce/'); }));
+            menu.addItem(item => item.setTitle(t('管理器_GITHUB_描述')).setIcon('github')
+                .onClick(() => { window.open('https://github.com/eondrcode/obsidian-manager'); }));
+            menu.addItem(item => item.setTitle(SUPPORT_QQ_GROUP_TOOLTIP).setIcon('message-circle')
+                .onClick(() => this.openSupportQQGroup()));
+            menu.showAtMouseEvent(event);
+        });
+        if (Platform.isMobile && this.nativeMobileCloseEl) {
+            const close = this.nativeMobileCloseEl;
+            close.addClass('manager-modal-close');
+            close.setAttribute('aria-label', t('通用_关闭窗口'));
+            close.setAttribute('role', 'button');
+            if (!close.hasAttribute('tabindex')) {
+                close.tabIndex = 0;
+                close.addEventListener('keydown', event => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return;
+                    event.preventDefault();
+                    close.click();
+                });
+            }
+            parent.appendChild(close);
+        }
+    }
+
+    private createPageTools(): void {
+        const t = (key: string) => this.manager.translator.t(key);
+        const tools = createDiv('manager-toolbar__tools manager-page-tools');
+        this.pageToolsEl = tools;
         const actionBar = new Setting(tools).setClass("manager-bar__action").setName("");
-        const markTool = (btn: ButtonComponent, scope: "plugin" | "theme" | "install" | "global" | "ribbon" | "layout" | "transfer" | "resource", order?: number) => {
+        const markTool = (btn: ButtonComponent, scope: ToolScope, order?: number) => {
             btn.buttonEl.addClass("manager-tool");
+            btn.buttonEl.dataset.scope = scope;
             btn.buttonEl.addClass(`manager-tool--${scope}`);
-            if (order !== undefined) btn.buttonEl.style.setProperty("--manager-tool-order", `${order}`);
+            if (order !== undefined) btn.buttonEl.setCssProps({ "--manager-tool-order": `${order}` });
         };
 
         const bulkEditButton = new ButtonComponent(actionBar.controlEl);
@@ -2537,26 +2697,23 @@ export class ManagerModal extends Modal {
             await this.resetPluginLayout();
         });
 
-        const githubButton = new ButtonComponent(actionBar.controlEl);
-        markTool(githubButton, "resource", 120);
-        githubButton.setIcon("github");
-        githubButton.setTooltip(this.manager.translator.t("管理器_GITHUB_描述"));
-        this.bindLongPressTooltip(githubButton.buttonEl, this.manager.translator.t("管理器_GITHUB_描述"));
-        githubButton.onClick(() => { window.open("https://github.com/eondrcode/obsidian-manager"); });
+        const hiddenPluginsButton = new ButtonComponent(actionBar.controlEl);
+        markTool(hiddenPluginsButton, 'plugin', 55);
+        hiddenPluginsButton.setIcon('eye-off').setTooltip(t('菜单_隐藏插件_标题'));
+        hiddenPluginsButton.buttonEl.setAttribute('aria-label', t('菜单_隐藏插件_标题'));
+        hiddenPluginsButton.onClick(() => {
+            const plugins = Object.values(this.appPlugins.manifests).filter(plugin => plugin.id !== this.manager.manifest.id)
+                .sort((a, b) => a.name.localeCompare(b.name));
+            new HideModal(this.app, this.manager, this, plugins).open();
+        });
 
-        const tutorialButton = new ButtonComponent(actionBar.controlEl);
-        markTool(tutorialButton, "resource", 110);
-        tutorialButton.setIcon("book-open");
-        tutorialButton.setTooltip(this.manager.translator.t("管理器_视频教程_描述"));
-        this.bindLongPressTooltip(tutorialButton.buttonEl, this.manager.translator.t("管理器_视频教程_描述"));
-        tutorialButton.onClick(() => { window.open("https://www.bilibili.com/video/BV1WyrkYMEce/"); });
-
-        const supportGroupButton = new ButtonComponent(actionBar.controlEl);
-        markTool(supportGroupButton, "resource", 130);
-        supportGroupButton.setIcon("message-circle");
-        supportGroupButton.setTooltip(SUPPORT_QQ_GROUP_TOOLTIP);
-        this.bindLongPressTooltip(supportGroupButton.buttonEl, SUPPORT_QQ_GROUP_TOOLTIP);
-        supportGroupButton.onClick(() => this.openSupportQQGroup());
+        // 独立插件源目录 / Independent plugin catalog sources.
+        const catalogButton = new ButtonComponent(actionBar.controlEl);
+        markTool(catalogButton, "plugin", 65);
+        catalogButton.setIcon("compass");
+        catalogButton.setTooltip(t("目录_标题"));
+        catalogButton.buttonEl.setAttribute("aria-label", t("目录_标题"));
+        catalogButton.onClick(() => this.openCatalog());
 
         // [操作行] 插件市场
         const marketButton = new ButtonComponent(actionBar.controlEl);
@@ -2593,18 +2750,6 @@ export class ManagerModal extends Modal {
             this.openAppearanceProfileModal(this.createCurrentAppearanceProfileDraft(snippets), themes, snippets);
         });
 
-        // [操作行] 插件设置
-        const settingsButton = new ButtonComponent(actionBar.controlEl);
-        markTool(settingsButton, "global", 80);
-        settingsButton.setIcon("settings");
-        settingsButton.setTooltip(this.manager.translator.t("管理器_插件设置_描述"));
-        this.bindLongPressTooltip(settingsButton.buttonEl, this.manager.translator.t("管理器_插件设置_描述"));
-        settingsButton.onClick(() => {
-            this.openSettingsTab(this.manager.manifest.id);
-            // this.close();
-        });
-
-
         // [测试行] 刷新插件
         if (this.developerMode) {
             const testButton = new ButtonComponent(actionBar.controlEl);
@@ -2629,245 +2774,136 @@ export class ManagerModal extends Modal {
             });
         }
 
-        // [过滤行]
-        const filterWrapper = chromeEl.createDiv("manager-section manager-section--filters");
-        this.desktopFilterWrapper = filterWrapper;
-        const filterContent = filterWrapper.createDiv("manager-section__content");
-        filterContent.addClass("manager-section__content--filters");
-
-        const searchBar = new Setting(filterContent).setClass("manager-bar__search").setName("");
-        this.searchBarEl = searchBar.settingEl;
-        this.syncPageChrome();
-        const searchLine = searchBar.controlEl.createDiv("manager-search-line");
-        const filterControlGroup = searchBar.controlEl.createDiv("manager-filter-control-group");
-        const createFilterField = (label: string, icon: string, variant: "select" | "search" | "compound" = "select") =>
-            this.createFilterField(variant === "search" ? searchLine : filterControlGroup, label, icon, variant);
-        const createFilterSelectField = (label: string, icon: string, variant: "select" | "search" | "compound" = "select") =>
-            this.createFilterSelectField(variant === "search" ? searchLine : filterControlGroup, label, icon, variant);
-        // [搜索行] 搜索框
-        const searchField = createFilterField(t("通用_搜索_文本"), "search", "search");
-        this.searchEl = new SearchComponent(searchField);
-        this.searchEl.inputEl.setAttribute("aria-label", t("筛选_搜索插件_标签"));
-        if (this.settings.PERSISTENCE && typeof this.settings.FILTER_SEARCH === "string") {
-            this.searchText = this.settings.FILTER_SEARCH;
-            // 避免 setValue 触发额外渲染：先设置 input 值，再在 onChange 里统一处理
-            this.searchEl.inputEl.value = this.searchText;
+        const toolFeatures: Array<[ButtonComponent, ToolId]> = [
+            [updateButton, 'updates'], [bulkEditButton, 'bulkEdit'], [editorButton, 'layoutEditor'],
+            [addSeparatorButton, 'layoutEditor'], [hiddenResetButton, 'layoutEditor'], [reloadButton, 'reload'],
+            [catalogButton, 'catalog'], [marketButton, 'pluginMarket'], [appearanceMarketButton, 'appearanceMarket'],
+            [saveAppearanceProfileButton, 'appearanceProfiles'],
+        ];
+        for (const [button, feature] of toolFeatures) {
+            button.buttonEl.dataset.feature = feature;
+            button.buttonEl.toggleClass('manager-feature-disabled', !toolEnabled(this.settings, feature));
         }
-        this.searchEl.onChange((value: string) => {
-            this.handleSearchChange(value);
+        this.syncToolVisibility();
+    }
+
+    /** 数据决定显隐，不依赖工具所在容器；Scope determines visibility independently of placement. */
+    private syncToolVisibility(): void {
+        this.pageToolsEl?.querySelectorAll<HTMLElement>('.manager-tool').forEach(button => {
+            const inPage = isToolInPage(button.dataset.scope ?? '', this.activePage, this.editorMode);
+            const inView = !button.hasClass('manager-tool--appearance-profile') || this.appearanceView === 'profiles';
+            button.toggleClass('manager-tool-hidden', !inPage || !inView);
         });
-        searchBar.controlEl.appendChild(filterControlGroup);
+    }
 
-        // 桌面端插件页：设备预设选择器放在搜索框右侧，搜索框相应收窄。
-        this.deviceScopeHostInline = searchLine.createDiv("manager-device-scope manager-device-scope--inline");
-        this.renderDeviceScope(this.deviceScopeHostInline, 'plugins', true);
+    private mountOverviewBar(): void {
+        const bar = this.pageEl.querySelector<HTMLElement>('.manager-overview-heading');
+        if (!bar) return;
+        bar.querySelector('.manager-food')?.remove();
+        bar.querySelector('.manager-page-tools')?.remove();
+        if (this.footEl) bar.appendChild(this.footEl);
+        if (this.pageToolsEl) bar.appendChild(this.pageToolsEl);
+        this.syncToolVisibility();
+    }
 
-        const sortControl = createFilterSelectField(t("通用_排序_文本"), "arrow-up-down", "search");
-        sortControl.closest(".manager-filter-field")?.addClass("manager-filter-field--sort");
-        const sortDropdown = new DropdownComponent(sortControl);
-        this.addOrderedOptions(sortDropdown, this.getPluginOverviewSortOptions());
-        sortDropdown.setValue(this.getPluginOverviewSort());
-        sortDropdown.onChange((value) => {
-            void this.setPluginOverviewSort(value);
+    /** 当前栏目即切换入口；A labeled current-page trigger replaces the mixed mobile menu. */
+    private renderMobilePageSwitch(parent: HTMLElement): HTMLButtonElement {
+        const items = this.getPageNavigationItems();
+        const currentPage = this.activePage === 'sources' ? 'install' : this.activePage;
+        const current = items.find(item => item.page === currentPage);
+        const label = current?.label ?? this.manager.translator.t('通用_管理器_文本');
+        const button = parent.createEl('button', { cls: 'manager-mobile-page-switch', attr: {
+            type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false',
+            'aria-label': `${this.manager.translator.t('管理器_切换功能')}: ${label}`,
+        } });
+        const icon = button.createSpan('manager-mobile-page-switch__icon manager-plugin-card__icon');
+        icon.setAttribute('aria-hidden', 'true');
+        setIcon(icon, current?.icon ?? 'blocks');
+        button.createSpan({ cls: 'manager-mobile-page-switch__label', text: label });
+        setIcon(button.createSpan('manager-mobile-page-switch__chevron'), 'chevron-down');
+        button.disabled = items.length === 0;
+        button.addEventListener('click', () => {
+            const menu = new Menu();
+            for (const item of items) {
+                menu.addItem(option => option.setTitle(item.label).setIcon(item.icon).setChecked(item.page === currentPage)
+                    .onClick(() => {
+                        if (item.page === currentPage) return;
+                        this.setDesktopPage(item.page);
+                        this.showHeadMobile();
+                    }));
+            }
+            button.setAttribute('aria-expanded', 'true');
+            menu.onHide(() => button.setAttribute('aria-expanded', 'false'));
+            const rect = button.getBoundingClientRect();
+            menu.showAtPosition({ x: rect.left, y: rect.bottom }, button.ownerDocument);
         });
+        return button;
+    }
 
-        // 过滤器控件由桌面和移动端共用，容器只决定各自的布局。
-        const statusControl = createFilterSelectField(t("通用_状态_文本"), "list-filter", "compound");
-        const groupControl = createFilterSelectField(t("通用_分组_文本"), "folder-tree", "compound");
-        const tagControl = createFilterSelectField(t("通用_标签_文本"), "tags", "compound");
-        const delayControl = this.settings.DELAY ? createFilterSelectField(t("通用_延迟_文本"), "timer", "compound") : undefined;
-        this.renderPluginFilterControls({ status: statusControl, group: groupControl, tag: tagControl, delay: delayControl }, () => undefined);
+    /** 按真实可用宽度完整显示或隐藏名称；Fit the complete label between the fixed global tools. */
+    private observeMobilePageSwitch(row: HTMLElement, button: HTMLButtonElement, actions: HTMLElement): void {
+        this.mobileHeaderObserver?.disconnect();
+        const label = button.querySelector<HTMLElement>('.manager-mobile-page-switch__label');
+        const icon = button.querySelector<HTMLElement>('.manager-mobile-page-switch__icon');
+        const chevron = button.querySelector<HTMLElement>('.manager-mobile-page-switch__chevron');
+        if (!label || !icon || !chevron) return;
+        const fit = () => {
+            const style = getComputedStyle(button);
+            const number = (value: string) => Number.parseFloat(value) || 0;
+            const available = row.clientWidth - actions.getBoundingClientRect().width - number(getComputedStyle(row).columnGap);
+            const required = label.getBoundingClientRect().width + icon.getBoundingClientRect().width + chevron.getBoundingClientRect().width
+                + number(style.columnGap) * 2 + number(style.paddingLeft) + number(style.paddingRight)
+                + number(style.borderLeftWidth) + number(style.borderRightWidth);
+            button.toggleClass('is-label-hidden', required > available + 0.5);
+        };
+        this.mobileHeaderObserver = new ResizeObserver(fit);
+        this.mobileHeaderObserver.observe(row);
+        this.mobileHeaderObserver.observe(actions);
+        this.mobileHeaderObserver.observe(label);
+        fit();
+    }
+
+    /** 顶部跟随实际滚动条占宽，菜单仍可溢出；Align chrome without clipping dropdown menus. */
+    private observeMobileContentGutter(page: HTMLElement, chrome: HTMLElement): void {
+        this.mobileContentObserver?.disconnect();
+        this.mobileContentObserver = new ResizeObserver(entries => {
+            const entry = entries[0];
+            if (!entry) return;
+            const style = getComputedStyle(page);
+            const inset = [style.paddingLeft, style.paddingRight, style.borderLeftWidth, style.borderRightWidth]
+                .reduce((sum, value) => sum + (Number.parseFloat(value) || 0), 0);
+            const gutter = Math.max(0, page.getBoundingClientRect().width - entry.contentRect.width - inset);
+            const value = `${Math.round(gutter * 100) / 100}px`;
+            if (chrome.style.getPropertyValue('--bpm-mobile-scrollbar-gutter') !== value) {
+                chrome.setCssProps({ '--bpm-mobile-scrollbar-gutter': value });
+            }
+        });
+        this.mobileContentObserver.observe(page);
     }
 
     private showHeadMobile() {
         const t = (k: string) => this.manager.translator.t(k);
         this.migratePersistedFilterValues();
         const chromeEl = this.modalChromeEl ?? this.titleEl;
+        this.mobileHeaderObserver?.disconnect();
+        this.overviewSortSelect?.close();
         chromeEl.empty();
 
         const header = chromeEl.createDiv("bpm-mobile-header");
         const topRow = header.createDiv("bpm-mobile-header__top");
 
-        const titleGroup = topRow.createDiv("bpm-mobile-header__identity");
-        const titleMain = titleGroup.createDiv("bpm-mobile-header__main");
-        const mark = titleMain.createDiv("manager-header__mark");
-        mark.setAttribute("aria-hidden", "true");
-        setIcon(mark, "blocks");
-        const titleText = titleMain.createDiv("manager-header__title-group");
-        titleText.createDiv({ cls: "manager-header__eyebrow", text: "BPM" });
-        titleText.createEl("h2", {
-            cls: "bpm-mobile-header__title",
-            text: this.manager.translator.t("通用_管理器_文本"),
-        });
-        this.footEl = titleGroup.createDiv("manager-food bpm-mobile-header__stats");
+        const pageSwitch = topRow.createDiv('bpm-mobile-header__identity');
+        const pageSwitchButton = this.renderMobilePageSwitch(pageSwitch);
+        this.footEl = createDiv("manager-food bpm-mobile-header__stats");
         this.updateStats();
 
         const topActions = topRow.createDiv("bpm-mobile-header__actions");
 
-        // 检查更新按钮
-        const updateBtn = new ButtonComponent(topActions);
-        this.preparePluginUpdateButton(updateBtn);
+        this.renderGlobalTools(topActions.createDiv('manager-global-tools manager-global-tools--mobile'));
+        this.observeMobilePageSwitch(topRow, pageSwitchButton, topActions);
+        this.createPageTools();
 
-        const bulkBtn = new ButtonComponent(topActions);
-        bulkBtn.setIcon(this.bulkEditMode ? "square-check-big" : "list-plus");
-        bulkBtn.setTooltip(t("批量编辑_入口"));
-        bulkBtn.buttonEl.toggleClass("is-active", this.bulkEditMode);
-        this.bindLongPressTooltip(bulkBtn.buttonEl, t("批量编辑_入口"));
-        bulkBtn.onClick(() => {
-            this.setBulkEditMode(!this.bulkEditMode);
-        });
-
-        // 编辑模式
-        const editorBtn = new ButtonComponent(topActions);
-        editorBtn.setIcon(this.editorMode ? "pen-off" : "pen");
-        editorBtn.setTooltip(t("管理器_编辑模式_描述"));
-        editorBtn.buttonEl.toggleClass("is-active", this.editorMode);
-        this.bindLongPressTooltip(editorBtn.buttonEl, t("管理器_编辑模式_描述"));
-        editorBtn.onClick(() => {
-            void this.setEditorMode(!this.editorMode);
-        });
-
-        // 安装/返回
-        const installBtn = new ButtonComponent(topActions);
-        installBtn.setIcon(this.installMode ? "arrow-left" : "download");
-        installBtn.setTooltip(this.installMode ? t("通用_返回_文本") : t("管理器_安装_GITHUB_描述"));
-        this.bindLongPressTooltip(installBtn.buttonEl, this.installMode ? t("通用_返回_文本") : t("管理器_安装_GITHUB_描述"));
-        installBtn.onClick(() => {
-            this.installMode = !this.installMode;
-            this.activePage = this.installMode ? "install" : "plugins";
-            this.syncPageChrome();
-            this.renderContent();
-            this.showHeadMobile();
-        });
-
-        // 更多操作菜单
-        const moreBtn = new ButtonComponent(topActions);
-        moreBtn.setIcon("more-vertical");
-        moreBtn.setTooltip(t("管理器_更多操作_描述"));
-        this.bindLongPressTooltip(moreBtn.buttonEl, t("管理器_更多操作_描述"));
-        moreBtn.buttonEl.addEventListener("click", (ev) => {
-            const menu = new Menu();
-            const isPluginPage = this.activePage === "plugins";
-            const isThemePage = this.activePage === "themes";
-            menu.addItem(item => item.setTitle(t("设备_标题")).setIcon("monitor-smartphone").onClick(() => {
-                this.activePage = "devices";
-                this.installMode = false;
-                this.syncPageChrome();
-                this.renderContent();
-                this.showHeadMobile();
-            }));
-            if (this.activePage === "devices") menu.addItem(item => item.setTitle(t("管理器_Tab_插件管理")).setIcon("blocks").onClick(() => {
-                this.activePage = "plugins";
-                this.syncPageChrome();
-                this.renderContent();
-                this.showHeadMobile();
-            }));
-            if (isPluginPage) {
-                menu.addItem((item) => item.setTitle(t("批量编辑_入口")).setIcon("list-plus").onClick(() => {
-                    this.setBulkEditMode(!this.bulkEditMode);
-                }));
-            }
-            menu.addItem((item) => item.setTitle(t("排查_按钮_描述")).setIcon("search-check").onClick(() => {
-                this.activePage = "troubleshoot";
-                this.installMode = false;
-                this.syncPageChrome();
-                this.renderContent();
-                this.showHeadMobile();
-            }));
-            menu.addItem((item) => item.setTitle(t("外观总览_Tab_标题")).setIcon("palette").onClick(() => {
-                this.activePage = "themes";
-                this.installMode = false;
-                this.syncPageChrome();
-                this.renderContent();
-                this.showHeadMobile();
-            }));
-            menu.addItem((item) => item.setTitle(t("导入导出_Tab_标题")).setIcon("archive-restore").onClick(() => {
-                this.activePage = "transfer";
-                this.installMode = false;
-                this.syncPageChrome();
-                this.renderContent();
-                this.showHeadMobile();
-            }));
-            if (SHARED_VAULTS_ENABLED) {
-                menu.addItem((item) => item.setTitle(t("共享库_Tab_标题")).setIcon("folder-sync").onClick(() => {
-                    this.activePage = "vaults";
-                    this.installMode = false;
-                    this.syncPageChrome();
-                    this.renderContent();
-                    this.showHeadMobile();
-                }));
-            }
-            menu.addSeparator();
-            if (isPluginPage) {
-                // 重载插件
-                menu.addItem((item) => item.setTitle(t("管理器_重载插件_描述")).setIcon("refresh-ccw").onClick(async () => {
-                    await this.appPlugins.loadManifests();
-                    this.invalidatePluginCaches();
-                    // 同步新发现的插件到 BPM 管理列表
-                    this.manager.synchronizePlugins(
-                        Object.values(this.appPlugins.manifests).filter(
-                            (pm: PluginManifest) => pm.id !== this.manager.manifest.id
-                        )
-                    );
-                    await this.reloadShowData();
-                }));
-                // 隐藏插件
-                menu.addItem((item) => item.setTitle(t("菜单_隐藏插件_标题")).setIcon("eye-off").onClick(async () => {
-                    const all = Object.values(this.appPlugins.manifests);
-                    const plugins: PluginManifest[] = all.filter((pm) => pm.id !== this.manager.manifest.id);
-                    plugins.sort((item1, item2) => item1.name.localeCompare(item2.name));
-                    new HideModal(this.app, this.manager, this, plugins).open();
-                }));
-                if (this.editorMode && this.shouldRenderPluginLayoutSeparators()) {
-                    menu.addItem((item) => item.setTitle(t("管理器_布局_添加分割线")).setIcon("separator-horizontal").onClick(async () => {
-                        await this.addPluginLayoutSeparator();
-                    }));
-                    menu.addItem((item) => item.setTitle(t("管理器_布局_按名称重置")).setIcon("rotate-ccw").onClick(async () => {
-                        if (!(await confirmWithModal(this.app, this.manager, t("管理器_布局_重置确认")))) return;
-                        await this.resetPluginLayout();
-                    }));
-                }
-            }
-            if (this.isRibbonManagerEnabled()) {
-                menu.addSeparator();
-                // Ribbon 管理
-                menu.addItem((item) => item.setTitle(t("管理器_Ribbon管理_描述")).setIcon("grip-vertical").onClick(() => {
-                    if (!this.isRibbonManagerEnabled()) return;
-                    new RibbonModal(this.app, this.manager).open();
-                }));
-            }
-            if (isPluginPage) {
-                // 插件市场
-                menu.addItem((item) => item.setTitle(t("管理器_插件市场_描述")).setIcon("store").onClick(() => {
-                    void this.openPluginMarket();
-                }));
-            } else if (isThemePage) {
-                menu.addItem((item) => item.setTitle(t("外观总览_方案_保存当前")).setIcon("plus").onClick(async () => {
-                    const [themes, snippets] = await Promise.all([
-                        collectInstalledThemes(this.manager, undefined, false, true),
-                        this.collectCssSnippets(),
-                    ]);
-                    this.openAppearanceProfileModal(this.createCurrentAppearanceProfileDraft(snippets), themes, snippets);
-                }));
-                // 外观市场
-                menu.addItem((item) => item.setTitle(t("管理器_外观市场_描述")).setIcon("store").onClick(() => {
-                    void this.openAppearanceMarket();
-                }));
-            }
-            // 插件设置
-            menu.addItem((item) => item.setTitle(t("管理器_插件设置_描述")).setIcon("settings").onClick(() => {
-                this.openSettingsTab(this.manager.manifest.id);
-            }));
-            menu.addItem((item) => item.setTitle(t("管理器_GITHUB_描述")).setIcon("github").onClick(() => {
-                window.open("https://github.com/eondrcode/obsidian-manager");
-            }));
-            menu.addItem((item) => item.setTitle(t("管理器_视频教程_描述")).setIcon("book-open").onClick(() => {
-                window.open("https://www.bilibili.com/video/BV1WyrkYMEce/");
-            }));
-            this.addSupportQQGroupMenuItem(menu);
-            menu.showAtMouseEvent(ev);
-        });
-
+        this.mountOverviewBar();
         if (this.activePage !== "plugins") return;
 
         const searchWrap = header.createDiv("bpm-mobile-header__search");
@@ -2883,7 +2919,7 @@ export class ManagerModal extends Modal {
         const filterHeader = header.createDiv("bpm-mobile-header__filters-toggle");
         const filterIcon = filterHeader.createSpan({ cls: "bpm-mobile-header__filters-icon" });
         setIcon(filterIcon, "filter");
-        filterHeader.createSpan({ text: t("通用_过滤_文本"), cls: "bpm-mobile-header__filters-label" });
+        filterHeader.createSpan({ text: t("通用_过滤排序_文本"), cls: "bpm-mobile-header__filters-label" });
         const arrow = filterHeader.createSpan({ cls: "bpm-mobile-header__filters-arrow" });
         setIcon(arrow, this.mobileFiltersCollapsed ? "chevron-down" : "chevron-up");
         filterHeader.toggleClass("is-open", !this.mobileFiltersCollapsed);
@@ -2965,23 +3001,20 @@ export class ManagerModal extends Modal {
         const filterPanel = header.createDiv(`bpm-mobile-header__filters${this.mobileFiltersCollapsed ? " is-collapsed" : ""}`);
         // 移动端复用桌面端的字段式过滤器：图标 + 标签 + 复合多选控件。
         const filterFields = filterPanel.createDiv("bpm-mobile-filter-fields");
-        const sortControl = this.createFilterSelectField(filterFields, t("通用_排序_文本"), "arrow-up-down");
-        sortControl.closest(".manager-filter-field")?.addClass("manager-filter-field--sort");
-        const sortDropdown = new DropdownComponent(sortControl);
-        this.addOrderedOptions(sortDropdown, this.getPluginOverviewSortOptions());
-        sortDropdown.setValue(this.getPluginOverviewSort());
-        sortDropdown.onChange((value) => {
-            void (async () => {
-                await this.setPluginOverviewSort(value);
-                this.showHeadMobile();
-            })();
-        });
+        this.renderOverviewSort(filterFields);
+        filterFields.toggleClass("has-delay-filter", this.settings.DELAY);
 
         const statusControl = this.createFilterField(filterFields, t("通用_状态_文本"), "list-filter", "compound");
         const groupControl = this.createFilterField(filterFields, t("通用_分组_文本"), "folder-tree", "compound");
         const tagControl = this.createFilterField(filterFields, t("通用_标签_文本"), "tags", "compound");
         const delayControl = this.settings.DELAY ? this.createFilterField(filterFields, t("通用_延迟_文本"), "timer", "compound") : undefined;
         this.renderPluginFilterControls({ status: statusControl, group: groupControl, tag: tagControl, delay: delayControl }, () => this.showHeadMobile());
+
+        // 平板：设备选择、统计与工具固定顶栏，列表滚动时不会带走操作按钮。
+        if (Platform.isTablet) {
+            this.mobileScopeHost = header.createDiv("bpm-mobile-header__scope");
+            this.mobileOverviewHost = header.createDiv("bpm-mobile-header__overview");
+        }
     }
 
     /** 移动端底部操作栏 */
@@ -3069,17 +3102,55 @@ export class ManagerModal extends Modal {
         this.modalEl.appendChild(footer);
     }
 
+    /** 标题、统计和当前页操作同属栏目；Page identity, counts and actions share one header. */
+    private renderOverviewHeading(): void {
+        // 平板：统计与工具固定在顶栏，列表滚动时操作按钮始终可见。
+        if (Platform.isTablet && this.activePage === 'plugins' && this.mobileOverviewHost) {
+            this.mountOverviewInline(this.mobileOverviewHost);
+            return;
+        }
+        // 桌面端插件总览：统计与工具并入上方过滤块，避免多出一条独立横栏。
+        if (!Platform.isMobileApp && this.activePage === 'plugins' && this.desktopFilterWrapper) {
+            this.mountOverviewInline(this.desktopFilterWrapper);
+            return;
+        }
+        const header = this.pageEl.createDiv('manager-overview-heading');
+        header.dataset.page = this.activePage;
+        this.mountOverviewBar();
+    }
+
+    /** 把统计与工具挂进指定容器的末行（桌面过滤块 / 平板顶栏）。 */
+    private mountOverviewInline(target?: HTMLElement): void {
+        const wrapper = target ?? this.desktopFilterWrapper;
+        if (!wrapper) return;
+        wrapper.addClass('manager-section--overview-inline');
+        let row = wrapper.querySelector<HTMLElement>('.manager-overview-inline');
+        if (!row) {
+            row = wrapper.createDiv('manager-overview-heading manager-overview-inline');
+            row.dataset.page = this.activePage;
+        }
+        row.dataset.page = this.activePage;
+        if (this.footEl && this.footEl.parentElement !== row) row.appendChild(this.footEl);
+        if (this.pageToolsEl && this.pageToolsEl.parentElement !== row) row.appendChild(this.pageToolsEl);
+        this.syncToolVisibility();
+    }
+
     public async showData(renderGeneration = this.renderGeneration) {
         this.syncPluginOverviewLayoutClass();
         const t = (k: string, vars?: Record<string, string | number | boolean | null | undefined>) => this.manager.translator.t(k, vars);
         const page: ManagerPage = "plugins";
         if (!this.isRenderCurrent(renderGeneration, page)) return;
         this.enterScopePage('plugins');
-        if (Platform.isMobileApp || !this.deviceScopeHostInline) {
+        if (Platform.isTablet && this.mobileScopeHost) {
+            // 平板：设备选择放进固定顶栏，和设备/统计/操作同处一块，不随列表滚动。
+            this.mobileScopeHost.empty();
+            this.renderDeviceScope(this.mobileScopeHost, 'plugins');
+        } else if (Platform.isMobile || !this.deviceScopeHostInline) {
             this.renderDeviceScope(this.pageEl.createDiv("manager-plugin-scope"), 'plugins');
         } else {
             this.renderDeviceScope(this.deviceScopeHostInline, 'plugins', true);
         }
+        this.renderOverviewHeading();
         if (this.settings.DEBUG) console.log("[BPM] render showData manifests size:", Object.keys(this.appPlugins.manifests).length);
         const uniquePlugins = this.getUniquePluginManifests();
         const manifestById = new Map(uniquePlugins.map((plugin) => [plugin.id, plugin]));
@@ -3464,11 +3535,15 @@ export class ManagerModal extends Modal {
             cardIcon.setAttribute("aria-hidden", "true");
             setIcon(cardIcon, isEnabled ? "plug-zap" : "plug");
             itemEl.nameEl.appendChild(cardIcon);
+            // 图标旁的双行标题，名称与运行元信息分开；Two text rows beside the plugin icon.
+            const headingText = itemEl.nameEl.createDiv('manager-plugin-card__heading-text');
+            const titleRow = headingText.createDiv('manager-plugin-card__title-row');
+            const metadataRow = headingText.createDiv('manager-plugin-card__metadata-row');
 
             // [默认] 分组
             if (ManagerPlugin.group !== "") {
                 const group = createSpan({ cls: "manager-item__name-group", });
-                itemEl.nameEl.appendChild(group);
+                titleRow.appendChild(group);
                 const item = groupSettingsById.get(ManagerPlugin.group);
                 if (item) {
                     const tag = this.manager.createTag(item.name, item.color, this.settings.GROUP_STYLE);
@@ -3492,7 +3567,7 @@ export class ManagerModal extends Modal {
             // [编辑] 分组
             if (ManagerPlugin.group === "" && this.editorMode) {
                 const group = createSpan({ cls: "manager-item__name-group", });
-                if (this.editorMode) itemEl.nameEl.appendChild(group);
+                if (this.editorMode) titleRow.appendChild(group);
                 const tag = this.manager.createTag("+", "", "");
                 if (this.editorMode) tag.onclick = () => { new GroupModal(this.app, this.manager, this, ManagerPlugin).open(); };
                 if (this.editorMode) group.appendChild(tag);
@@ -3513,7 +3588,7 @@ export class ManagerModal extends Modal {
                     })();
                 });
             }
-            itemEl.nameEl.appendChild(title);
+            titleRow.appendChild(title);
 
             const statusChip = createSpan({
                 text: isSelf
@@ -3521,7 +3596,7 @@ export class ManagerModal extends Modal {
                     : (isEnabled ? this.manager.translator.t("管理器_状态_启用中") : this.manager.translator.t("管理器_状态_已禁用")),
                 cls: `manager-plugin-card__state ${isSelf ? "is-self" : (isEnabled ? "is-enabled" : "is-disabled")}`,
             });
-            itemEl.nameEl.appendChild(statusChip);
+            metadataRow.appendChild(statusChip);
 
             // [默认] 版本
             const versionWrap = createDiv({ cls: "manager-item__versions" });
@@ -3545,14 +3620,14 @@ export class ManagerModal extends Modal {
                     this.addPluginDownloadButton(itemEl.controlEl, plugin.id, updateInfo);
                 }
             }
-            itemEl.nameEl.appendChild(versionWrap);
+            titleRow.appendChild(versionWrap);
 
             // [默认] 笔记图标
             if (ManagerPlugin.note?.length > 0) {
                 const note = createSpan();
                 note.addClass("manager-plugin-card__note");
                 note.addEventListener("click", () => { new NoteModal(this.app, this.manager, ManagerPlugin, this).open(); });
-                itemEl.nameEl.appendChild(note);
+                titleRow.appendChild(note);
                 setIcon(note, "notebook-pen");
             }
 
@@ -3560,10 +3635,11 @@ export class ManagerModal extends Modal {
             if (this.settings.DELAY && !this.editorMode && !isSelf && ManagerPlugin.delay !== "") {
                 const d = delaySettingsById.get(ManagerPlugin.delay);
                 if (d) {
-                    const delay = createSpan({ text: `${d.time}s`, cls: ["manager-item__name-delay"], });
-                    itemEl.nameEl.appendChild(delay);
+                    const delay = this.createDelayBadge(d.time);
+                    metadataRow.prepend(delay);
                 }
             }
+            this.renderPluginReleaseBadge(titleRow, plugin.version);
             // [默认] 描述
             const hasDescription = ManagerPlugin.desc.trim().length > 0;
             const desc = createDiv({ text: ManagerPlugin.desc, title: plugin.description, cls: ["manager-item__name-desc"], });
@@ -3634,7 +3710,7 @@ export class ManagerModal extends Modal {
             itemEl.descEl.toggleClass("manager-plugin-card__body--empty", !hasExpandedDetails);
 
             if (!this.editorMode) {
-                const isMobile = Platform.isMobileApp;
+                const isMobile = Platform.isMobile;
 
                 let openPluginSetting: ExtraButtonComponent | null = null;
                 let openPluginSettingEl: HTMLElement | undefined;
@@ -4034,34 +4110,14 @@ export class ManagerModal extends Modal {
                             // 更新底部统计
                             this.updateStats();
                         };
-                        if (this.manager.devices?.isProjectingForeign('plugins')) {
-                            // 外域只改存储，不动本机插件运行时。
-                            managerPluginForToggle.enabled = targetEnabled;
-                            await this.manager.saveSettings();
-                            this.singleStartedPluginIds.delete(plugin.id);
-                            updateCardUI();
-                            this.refreshPluginCard(plugin.id);
+                        try {
+                            await this.manager.overview.setPluginState(plugin.id, { enabled: targetEnabled });
+                        } catch (error) {
+                            isRestoring = true;
+                            stateToggle.setValue(!targetEnabled);
+                            isRestoring = false;
+                            this.manager.devices.report(error);
                             return;
-                        }
-                        if (this.settings.DELAY) {
-                            if (targetEnabled) {
-                                managerPluginForToggle.enabled = true;
-                                await this.manager.savePluginAndExport(plugin.id);
-                                await this.appPlugins.enablePlugin(plugin.id);
-                            } else {
-                                managerPluginForToggle.enabled = false;
-                                await this.manager.savePluginAndExport(plugin.id);
-                                await this.appPlugins.disablePlugin(plugin.id);
-                            }
-                        } else {
-                            if (targetEnabled) {
-                                managerPluginForToggle.enabled = true;
-                                await this.appPlugins.enablePluginAndSave(plugin.id);
-                            } else {
-                                managerPluginForToggle.enabled = false;
-                                await this.appPlugins.disablePluginAndSave(plugin.id);
-                            }
-                            await this.manager.savePluginAndExport(plugin.id);
                         }
                         this.singleStartedPluginIds.delete(plugin.id);
                         Commands(this.app, this.manager);
@@ -4123,7 +4179,7 @@ export class ManagerModal extends Modal {
                     ManagerPlugin.name = plugin.name;
                     ManagerPlugin.desc = plugin.description;
                     ManagerPlugin.group = "";
-                    ManagerPlugin.delay = "";
+                    await this.manager.overview.setPluginState(plugin.id, { delay: '' });
                     ManagerPlugin.tags = [];
                     this.manager.applySpecialPluginTags(ManagerPlugin);
                     await this.manager.savePluginAndExport(plugin.id);
@@ -4154,8 +4210,7 @@ export class ManagerModal extends Modal {
                             isRestoring = false;
                             return;
                         }
-                        ManagerPlugin.delay = val;
-                        await this.manager.savePluginAndExport(plugin.id);
+                        await this.manager.overview.setPluginState(plugin.id, { delay: val });
                         this.refreshPluginCard(plugin.id, { allowReload: true });
                     });
 
@@ -4269,6 +4324,7 @@ export class ManagerModal extends Modal {
 
     private syncPageChrome() {
         this.ensureAllowedActivePage();
+        this.syncToolVisibility();
         const isPlugins = this.activePage === "plugins";
         const isThemes = this.activePage === "themes";
         const isInstall = this.activePage === "install";
@@ -4300,9 +4356,11 @@ export class ManagerModal extends Modal {
         syncTabState(this.vaultsTabEl, isVaults);
         syncTabState(this.ribbonTabEl, isRibbon);
         syncTabState(this.troubleshootTabEl, isTroubleshoot);
+        this.desktopActionWrapper?.classList.toggle('has-page-tools', isPlugins || isThemes || isRibbon);
         this.desktopActionWrapper?.classList.toggle("is-plugin-page", isPlugins);
         this.desktopActionWrapper?.classList.toggle("is-theme-page", isThemes);
         this.desktopActionWrapper?.classList.toggle("is-appearance-profiles-page", isThemes && this.appearanceView === "profiles");
+        this.pageToolsEl?.querySelector(".manager-tool--appearance-profile")?.classList.toggle("manager-display-none", this.appearanceView !== "profiles");
         this.desktopActionWrapper?.classList.toggle("is-install-page", isInstall);
         this.desktopActionWrapper?.classList.toggle("is-sources-page", isSources);
         this.desktopActionWrapper?.classList.toggle("is-transfer-page", isTransfer);
@@ -5034,20 +5092,10 @@ export class ManagerModal extends Modal {
     }
     /** 主题切换按作用域分流：外域只记录，本机立即应用。 */
     private async applyThemeToScope(themeName: string): Promise<void> {
-        if (this.isForeignThemes()) {
-            await this.manager.devices.writeAppearance('themes', { theme: themeName });
-            return;
-        }
-        this.setActiveThemeName(themeName);
-        await this.manager.devices.writeAppearance('themes', {});
+        await this.manager.devices.writeAppearance('themes', { theme: themeName });
     }
     private async toggleSnippetForScope(snippetId: string, enabled: boolean): Promise<void> {
-        if (this.isForeignThemes()) {
-            await this.manager.devices.writeAppearance('themes', { snippets: { [snippetId]: enabled } });
-            return;
-        }
-        await this.setCssSnippetEnabled(snippetId, enabled);
-        await this.manager.devices.writeAppearance('themes', {});
+        await this.manager.devices.writeAppearance('themes', { snippets: { [snippetId]: enabled } });
     }
 
     private getThemeFolderPath(themeName: string): string {
@@ -5240,24 +5288,16 @@ export class ManagerModal extends Modal {
         this.normalizeSnippetIds(profile.enableSnippets || []).forEach((id) => nextEnabled.add(id));
         this.normalizeSnippetIds(profile.disableSnippets || []).forEach((id) => nextEnabled.delete(id));
 
-        if (this.isForeignThemes()) {
-            // 外域只保存快照，不触碰本机外观。
-            const patch: Record<string, boolean> = {};
-            for (const id of currentEnabled) patch[id] = nextEnabled.has(id);
-            for (const id of nextEnabled) patch[id] = true;
-            await this.manager.devices.writeAppearance('themes', { snippets: patch });
-        } else {
-            const currentSorted = [...currentEnabled].sort((a, b) => a.localeCompare(b)).join("\n");
-            const nextSorted = [...nextEnabled].sort((a, b) => a.localeCompare(b)).join("\n");
-            if (currentSorted !== nextSorted) await this.writeEnabledSnippetIds(nextEnabled);
-            await this.manager.devices.writeAppearance('themes', {});
-        }
+        const patch: Record<string, boolean> = {};
+        for (const id of currentEnabled) patch[id] = nextEnabled.has(id);
+        for (const id of nextEnabled) patch[id] = true;
+        await this.manager.devices.writeAppearance('themes', { snippets: patch });
         if (!options.quiet) new Notice(this.manager.translator.t("外观总览_方案_已应用", { name: profile.name }));
         await this.reloadShowData();
     }
 
     private async activateThemeWithBoundProfile(themeName: string): Promise<void> {
-        const boundProfile = this.getAutoAppearanceProfileForTheme(themeName);
+        const boundProfile = toolEnabled(this.settings, 'appearanceProfiles') ? this.getAutoAppearanceProfileForTheme(themeName) : undefined;
         if (boundProfile) {
             await this.applyAppearanceProfile(boundProfile);
             return;
@@ -5306,7 +5346,9 @@ export class ManagerModal extends Modal {
         if (this.manager.devices?.isProjectingForeign('themes')) {
             themes.forEach((theme) => { theme.active = theme.name === scopedTheme; });
         }
-        const profiles = this.getAppearanceProfiles();
+        if (!toolEnabled(this.settings, 'appearanceProfiles') && this.appearanceView === 'profiles') this.appearanceView = 'themes';
+        const profiles = toolEnabled(this.settings, 'appearanceProfiles') ? this.getAppearanceProfiles() : [];
+        this.renderOverviewHeading();
         this.renderAppearanceStats(themes, snippets);
 
         const lowerSearchText = this.searchText.trim().toLowerCase();
@@ -5365,7 +5407,7 @@ export class ManagerModal extends Modal {
                 this.renderContent();
             });
         };
-        createAppearanceTab("profiles", "layers-3", t("外观总览_分区_外观方案"), visibleProfiles.length);
+        if (toolEnabled(this.settings, 'appearanceProfiles')) createAppearanceTab("profiles", "layers-3", t("外观总览_分区_外观方案"), visibleProfiles.length);
         createAppearanceTab("themes", "palette", t("外观总览_分区_主题"), visibleThemes.length);
         createAppearanceTab("snippets", "file-code-2", t("外观总览_分区_CSS片段"), visibleSnippets.length);
         const body = workspace.createDiv("manager-repo-page__body manager-appearance-body");
@@ -6546,6 +6588,7 @@ export class ManagerModal extends Modal {
         this.pageEl.empty();
         const scopeHost = this.pageEl.createDiv("manager-ribbon-scope");
         this.renderDeviceScope(scopeHost, 'ribbon');
+        this.renderOverviewHeading();
         const page = this.pageEl.createDiv("manager-ribbon-page ribbon-manager-modal");
         page.createDiv({
             cls: "manager-ribbon-page__loading",
@@ -7939,7 +7982,13 @@ export class ManagerModal extends Modal {
     }
 
     private renderContent() {
+        this.ribbonPage?.closeGroupMenus();
         this.ensureAllowedActivePage();
+        if (this.getAvailableDesktopPages().length === 0) {
+            this.pageEl.empty();
+            this.pageEl.createEl('p', { cls: 'setting-item-description', text: this.manager.translator.t('功能开关_空') });
+            return;
+        }
         this.manager.devices?.noteActivePage(this.activePage);
         const renderGeneration = this.nextRenderGeneration();
         this.pageEl.empty();
@@ -7979,6 +8028,7 @@ export class ManagerModal extends Modal {
         this.ensureAllowedActivePage();
         if (this.settings.DEBUG) console.log("[BPM] reloadShowData start, children before empty:", this.pageEl.children.length);
         this.clearScheduledSearchRender();
+        if (this.getAvailableDesktopPages().length === 0) { this.renderContent(); return; }
         const renderGeneration = this.nextRenderGeneration();
         const modalElement: HTMLElement = this.pageEl;
         const scrollTop = modalElement.scrollTop;
@@ -8043,7 +8093,7 @@ export class ManagerModal extends Modal {
     }
 
     public async refreshStyleSettings() {
-        if (this.modalContainer && !Platform.isMobileApp) {
+        if (this.modalContainer && !Platform.isMobile) {
             this.modalContainer.toggleClass("manager-container__top", !this.settings.CENTER);
         }
         await this.reloadShowData();
@@ -8057,7 +8107,7 @@ export class ManagerModal extends Modal {
         await this.showHead();
         await this.showData();
         // 移动端不自动聚焦搜索框：会弹出软键盘挡住半个管理器。
-        if (!Platform.isMobileApp) this.searchEl.inputEl.focus();
+        if (!Platform.isMobile) this.searchEl.inputEl.focus();
         this.applyEditingStyle();
         // [功能] ctrl+f聚焦
         activeDocument.addEventListener("keydown", (event) => {
@@ -8070,6 +8120,15 @@ export class ManagerModal extends Modal {
     }
 
     public onClose() {
+        this.ribbonPage?.closeGroupMenus();
+        this.mobileHeaderObserver?.disconnect();
+        this.mobileHeaderObserver = undefined;
+        this.overviewSortSelect?.close();
+        this.mobileContentObserver?.disconnect();
+        this.mobileContentObserver = undefined;
+        this.deviceScopeBars.forEach(bar => bar.close());
+        this.catalogModal?.close();
+        this.catalogModal = undefined;
         this.clearScheduledSearchWork();
         // 关闭时结束外域投影，避免预览中的其他预设值留在内存里。
         void this.manager.devices?.flushProjection().catch(error => this.manager.devices?.report(error));
