@@ -15799,3 +15799,12 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
     margin: 0;
     align-self: flex-end;
 }
+
+/* 卡片底部标签容器不留外边距，首个标签与日期左对齐 */
+.manager-container .manager-plugin-card__tags {
+    margin: 0 !important;
+}
+
+.manager-plugin-card__footer .manager-plugin-card__tags > .manager-tag:first-child {
+    margin-left: 0;
+}
