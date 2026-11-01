@@ -1029,22 +1029,22 @@ export class ManagerModal extends Modal {
             activeDocument.removeEventListener("click", handleDocumentClick);
         }
 
-        /** 菜单按内容展开，但不能超出管理器；放不下时向左收并压到容器宽度。 */
+        /** 菜单与所属筛选控件左右对齐；控件比管理器宽时再压回容器内。 */
         function positionMenu() {
-            menuEl.setCssStyles({ left: "0px", width: "" });
+            const field = filterFieldEl ?? rootEl;
+            const rootRect = rootEl.getBoundingClientRect();
+            const fieldRect = field.getBoundingClientRect();
             const container = managerContainerEl?.getBoundingClientRect();
-            if (!container) return;
-            const maxWidth = Math.max(160, container.width - 16);
-            if (menuEl.getBoundingClientRect().width > maxWidth) {
-                menuEl.setCssStyles({ width: `${maxWidth}px` });
+            let left = fieldRect.left - rootRect.left;
+            let width = fieldRect.width;
+            if (container) {
+                const maxWidth = container.width - 16;
+                if (width > maxWidth) width = maxWidth;
+                if (fieldRect.left + left + width > container.right - 8) {
+                    left = Math.max(0, container.right - 8 - width - fieldRect.left);
+                }
             }
-            const overRight = menuEl.getBoundingClientRect().right - (container.right - 8);
-            if (overRight > 0) menuEl.setCssStyles({ left: `${-overRight}px` });
-            const overLeft = (container.left + 8) - menuEl.getBoundingClientRect().left;
-            if (overLeft > 0) {
-                const currentLeft = Number.parseFloat(menuEl.style.left || "0");
-                menuEl.setCssStyles({ left: `${currentLeft + overLeft}px` });
-            }
+            menuEl.setCssStyles({ left: `${left}px`, width: `${width}px`, minWidth: "0" });
         }
 
         const toggleOpen = () => {

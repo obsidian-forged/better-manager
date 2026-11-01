@@ -115,10 +115,13 @@ export class ScopeSelect {
     }
     private show(): void {
         const rect = this.trigger.getBoundingClientRect();
-        const width = Math.min(Math.max(260, rect.width), this.win.innerWidth - 16);
+        const fieldRect = this.field.getBoundingClientRect();
+        // 菜单与触发控件左右对齐；超出视口时整体收进可视区。
+        const width = Math.min(Math.max(160, fieldRect.width || rect.width), this.win.innerWidth - 16);
         const up = this.win.innerHeight - rect.bottom < 220 && rect.top > 220;
+        const left = Math.max(8, Math.min(fieldRect.left || rect.left, this.win.innerWidth - width - 8));
         this.menu.setCssStyles({ top: up ? 'auto' : `${rect.bottom + 4}px`, bottom: up ? `${this.win.innerHeight - rect.top + 4}px` : 'auto',
-            left: `${Math.max(8, Math.min(rect.left, this.win.innerWidth - width - 8))}px`, width: `${width}px`, minWidth: '0' });
+            left: `${left}px`, width: `${width}px`, minWidth: '0' });
         this.open = true;
         this.root.addClass('is-open');
         this.menu.addClass('is-fixed');
