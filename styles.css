@@ -15451,3 +15451,39 @@ body .manager-setting__tabs .manager-setting__tabs-item[data-state="active"] .ma
     width: auto !important;
     min-width: max-content !important;
 }
+
+/* 顶栏左侧功能项容器按内容收窄；右侧工具为透明底、带边框的图标按钮 */
+.manager-container .manager-toolbar__tabs {
+    flex: 0 1 auto !important;
+    width: fit-content !important;
+}
+
+.manager-container .manager-global-tools {
+    margin-inline-start: auto;
+}
+
+.manager-global-tools .manager-global-tool {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: var(--bpm-action-size);
+    height: var(--bpm-action-size);
+    padding: 0;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--bpm-radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    box-shadow: none;
+    cursor: pointer;
+}
+
+.manager-global-tools .manager-global-tool:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.manager-global-tools .manager-global-tool svg {
+    width: 18px;
+    height: 18px;
+}

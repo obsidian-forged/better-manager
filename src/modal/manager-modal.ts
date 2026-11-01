@@ -2568,13 +2568,23 @@ export class ManagerModal extends Modal {
     /** 固定全局入口：设置与原生联系方式菜单；Fixed settings and native contact menu. */
     private renderGlobalTools(parent: HTMLElement): void {
         const t = (key: string) => this.manager.translator.t(key);
-        const settings = new ButtonComponent(parent).setIcon('settings').setTooltip(t('管理器_插件设置_描述'));
-        settings.buttonEl.setAttribute('aria-label', t('管理器_插件设置_描述'));
-        settings.onClick(() => this.openSettingsTab(this.manager.manifest.id));
-        const contacts = new ButtonComponent(parent).setIcon('message-circle').setTooltip(t('管理器_联系方式'));
-        contacts.buttonEl.setAttribute('aria-label', t('管理器_联系方式'));
-        contacts.buttonEl.setAttribute('aria-haspopup', 'menu');
-        contacts.onClick(event => {
+        const createIconTool = (icon: string, label: string, onClick: (event: MouseEvent) => void) => {
+            const el = parent.createDiv({ cls: 'clickable-icon extra-setting-button manager-global-tool' });
+            el.setAttribute('tabindex', '0');
+            el.setAttribute('role', 'button');
+            el.setAttribute('aria-label', label);
+            setIcon(el, icon);
+            this.bindLongPressTooltip(el, label);
+            el.addEventListener('click', (event) => onClick(event));
+            el.addEventListener('keydown', (event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                el.click();
+            });
+            return el;
+        };
+        createIconTool('settings', t('管理器_插件设置_描述'), () => this.openSettingsTab(this.manager.manifest.id));
+        const contacts = createIconTool('message-circle', t('管理器_联系方式'), (event) => {
             const menu = new Menu();
             menu.addItem(item => item.setTitle(t('管理器_视频教程_描述')).setIcon('book-open')
                 .onClick(() => { window.open('https://www.bilibili.com/video/BV1WyrkYMEce/'); }));
@@ -2584,6 +2594,7 @@ export class ManagerModal extends Modal {
                 .onClick(() => this.openSupportQQGroup()));
             menu.showAtMouseEvent(event);
         });
+        contacts.setAttribute('aria-haspopup', 'menu');
         if (Platform.isMobile && this.nativeMobileCloseEl) {
             const close = this.nativeMobileCloseEl;
             close.addClass('manager-modal-close');
