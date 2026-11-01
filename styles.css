@@ -15770,3 +15770,32 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
     align-self: flex-end;
     margin: 0;
 }
+
+/* 插件卡片底部行：日期与标签在左，操作按钮在右 */
+.manager-container:not(.manager-container--mobile) .manager-plugin-card__footer {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+}
+
+.manager-plugin-card__footer-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+.manager-plugin-card__footer .manager-plugin-card__date-meta,
+.manager-plugin-card__footer .manager-plugin-card__tags {
+    margin: 0;
+    flex-wrap: wrap;
+}
+
+.manager-plugin-card__footer .setting-item-control {
+    flex: 0 0 auto;
+    margin: 0;
+    align-self: flex-end;
+}

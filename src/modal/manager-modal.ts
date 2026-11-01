@@ -3684,8 +3684,9 @@ export class ManagerModal extends Modal {
                 { icon: "calendar-clock", label: t("排序_更新日期_标签"), value: this.formatSourceDate(dateMeta?.updatedAt) },
             ].filter((item) => Boolean(item.value));
             const hasDateMeta = dateMetaItems.length > 0;
+            let dateMetaEl: HTMLElement | null = null;
             if (hasDateMeta) {
-                const dateMetaEl = createDiv({ cls: "manager-plugin-card__date-meta" });
+                dateMetaEl = createDiv({ cls: "manager-plugin-card__date-meta" });
                 for (const item of dateMetaItems) {
                     const metaItem = dateMetaEl.createSpan({ cls: "manager-plugin-card__date-meta-item" });
                     const icon = metaItem.createSpan({ cls: "manager-plugin-card__date-meta-icon" });
@@ -4235,6 +4236,15 @@ export class ManagerModal extends Modal {
 
                 }
             }
+            // [底部行] 日期与标签在左，操作按钮在右
+            if (!this.editorMode) {
+                const footerEl = itemEl.settingEl.createDiv("manager-plugin-card__footer");
+                const metaEl = footerEl.createDiv("manager-plugin-card__footer-meta");
+                if (dateMetaEl) metaEl.appendChild(dateMetaEl);
+                if (hasVisibleTags) metaEl.appendChild(tags);
+                footerEl.appendChild(itemEl.controlEl);
+            }
+
             if (this.settings.DEBUG) {
                 const cards = Array.from(this.pageEl.querySelectorAll(".manager-item"));
                 console.log("[BPM] render showData after loop, cards:", cards.length, "ids:", cards.map(el => el.getAttribute("data-plugin-id")).filter(Boolean).join(","));
