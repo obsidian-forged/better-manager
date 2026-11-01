@@ -15511,3 +15511,39 @@ body .manager-setting__tabs .manager-setting__tabs-item_is-active,
 body .manager-setting__tabs .manager-setting__tabs-item[data-state="active"] {
     transition: none;
 }
+
+/* 管理器顶栏分页：套用设置分页的选中/悬停样式（原生按钮底色 + 边框 + 强调色） */
+body .manager-container .manager-toolbar__tabs .manager-toolbar__tab {
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+body .manager-container .manager-toolbar__tabs .manager-toolbar__tab:hover,
+body .manager-container .manager-toolbar__tabs .manager-toolbar__tab:focus-visible {
+    border-color: var(--background-modifier-border) !important;
+    background: var(--interactive-normal) !important;
+    color: var(--text-accent) !important;
+    box-shadow: none !important;
+}
+
+body .manager-container .manager-toolbar__tabs .manager-toolbar__tab:hover .manager-toolbar__tab-icon,
+body .manager-container .manager-toolbar__tabs .manager-toolbar__tab:focus-visible .manager-toolbar__tab-icon {
+    color: var(--text-accent);
+    opacity: 1;
+}
+
+body .manager-container .manager-toolbar__tabs .manager-toolbar__tab.is-active,
+body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[aria-selected="true"],
+body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state="active"] {
+    border-color: var(--background-modifier-border) !important;
+    background: var(--interactive-normal) !important;
+    color: var(--text-accent) !important;
+    box-shadow: none !important;
+    transition: none;
+}
+
+body .manager-container .manager-toolbar__tabs .manager-toolbar__tab.is-active .manager-toolbar__tab-icon,
+body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[aria-selected="true"] .manager-toolbar__tab-icon,
+body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state="active"] .manager-toolbar__tab-icon {
+    color: var(--text-accent);
+    opacity: 1;
+}
