@@ -1020,12 +1020,31 @@ export class ManagerModal extends Modal {
         function close() {
             isOpen = false;
             rootEl.removeClass("is-open");
+            menuEl.setCssStyles({ left: "", width: "" });
             filterFieldEl?.removeClass("is-filter-menu-open");
             filterSectionEl?.removeClass("is-filter-menu-open");
             mobileFilterPanelEl?.removeClass("is-filter-menu-open");
             managerContainerEl?.removeClass("has-open-filter-menu");
             buttonEl.setAttribute("aria-expanded", "false");
             activeDocument.removeEventListener("click", handleDocumentClick);
+        }
+
+        /** 菜单按内容展开，但不能超出管理器；放不下时向左收并压到容器宽度。 */
+        function positionMenu() {
+            menuEl.setCssStyles({ left: "0px", width: "" });
+            const container = managerContainerEl?.getBoundingClientRect();
+            if (!container) return;
+            const maxWidth = Math.max(160, container.width - 16);
+            if (menuEl.getBoundingClientRect().width > maxWidth) {
+                menuEl.setCssStyles({ width: `${maxWidth}px` });
+            }
+            const overRight = menuEl.getBoundingClientRect().right - (container.right - 8);
+            if (overRight > 0) menuEl.setCssStyles({ left: `${-overRight}px` });
+            const overLeft = (container.left + 8) - menuEl.getBoundingClientRect().left;
+            if (overLeft > 0) {
+                const currentLeft = Number.parseFloat(menuEl.style.left || "0");
+                menuEl.setCssStyles({ left: `${currentLeft + overLeft}px` });
+            }
         }
 
         const toggleOpen = () => {
@@ -1040,6 +1059,7 @@ export class ManagerModal extends Modal {
             mobileFilterPanelEl?.addClass("is-filter-menu-open");
             managerContainerEl?.addClass("has-open-filter-menu");
             buttonEl.setAttribute("aria-expanded", "true");
+            positionMenu();
             window.setTimeout(() => activeDocument.addEventListener("click", handleDocumentClick), 0);
         };
 

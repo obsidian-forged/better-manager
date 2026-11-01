@@ -3219,7 +3219,11 @@ body.is-tablet .manager-container--mobile .bpm-mobile-filter-fields .manager-fil
     z-index: 1000;
     top: calc(100% + 4px);
     left: 0;
-    right: 0;
+    right: auto;
+    /* 窄触发按钮不再决定菜单宽度：按内容展开，最多 340px 或视口宽度 */
+    width: max-content;
+    min-width: 100%;
+    max-width: min(340px, calc(100vw - 24px));
     display: none;
     max-height: min(280px, 48vh);
     overflow-y: auto;
