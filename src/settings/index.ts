@@ -1,3 +1,4 @@
+import { FloatingScrollbars } from '../ui/floating-scrollbars';
 import { App, PluginSettingTab, setIcon } from 'obsidian';
 import Manager from "../main";
 
@@ -13,6 +14,9 @@ class ManagerSettingTab extends PluginSettingTab {
     manager: Manager;
     app: App;
     contentEl!: HTMLDivElement;
+    private scrollbars?: FloatingScrollbars;
+
+    hide(): void { this.scrollbars?.destroy(); this.scrollbars = undefined; }
 
     constructor(app: App, manager: Manager) {
         super(app, manager);
@@ -54,6 +58,7 @@ class ManagerSettingTab extends PluginSettingTab {
                 requestAnimationFrame(() => { if (content.isConnected) content.scrollTop = contentTop; });
             }
         };
+        this.scrollbars?.destroy();
         containerEl.empty();
         containerEl.addClass('manager-setting__container');
         const topbar = this.containerEl.createEl('div');
@@ -67,34 +72,6 @@ class ManagerSettingTab extends PluginSettingTab {
         tabsEl.addClass('manager-setting__tabs');
         tabsEl.setAttribute('role', 'tablist');
         tabsEl.setAttribute('data-slot', 'tabs-list');
-        // 浮动滚动条：不占布局，悬停/滚动时显示在分页栏底部。
-        const scrollbarEl = tabsWrap.createEl('div');
-        scrollbarEl.addClass('manager-setting__tabs-scrollbar');
-        const thumbEl = scrollbarEl.createEl('div');
-        thumbEl.addClass('manager-setting__tabs-scrollbar-thumb');
-        let scrollHideTimer: number | undefined;
-        const updateTabsScrollbar = () => {
-            const scrollable = tabsEl.scrollWidth - tabsEl.clientWidth;
-            if (scrollable <= 1) {
-                scrollbarEl.addClass('is-hidden');
-                return;
-            }
-            scrollbarEl.removeClass('is-hidden');
-            const ratio = tabsEl.clientWidth / tabsEl.scrollWidth;
-            const thumbWidth = Math.max(18, Math.round(tabsEl.clientWidth * ratio));
-            thumbEl.setCssStyles({
-                width: `${thumbWidth}px`,
-                transform: `translateX(${Math.round((tabsEl.scrollLeft / scrollable) * (tabsEl.clientWidth - thumbWidth))}px)`,
-            });
-        };
-        tabsEl.addEventListener('scroll', () => {
-            updateTabsScrollbar();
-            tabsWrap.addClass('is-scrolling');
-            if (scrollHideTimer !== undefined) window.clearTimeout(scrollHideTimer);
-            scrollHideTimer = window.setTimeout(() => tabsWrap.removeClass('is-scrolling'), 900);
-        });
-        new ResizeObserver(updateTabsScrollbar).observe(tabsEl);
-        updateTabsScrollbar();
         this.contentEl = this.containerEl.createEl('div');
         this.contentEl.addClass('manager-setting__content');
 
@@ -144,6 +121,7 @@ class ManagerSettingTab extends PluginSettingTab {
                 activate();
             });
         });
+        this.scrollbars = new FloatingScrollbars(containerEl);
         restore();
     }
     basisDisplay() { this.contentEl.empty(); new ManagerBasis(this).render(); }

@@ -1,4 +1,4 @@
-import { FEATURE_IDS, TOOL_IDS, featureEnabled, toolEnabled } from '../../features';
+import { FEATURE_IDS, TOOL_IDS, featureEnabled, toolAvailable, toolEnabled } from '../../features';
 import BaseSetting from "../base-setting";
 import { ButtonComponent, DropdownComponent, Setting, ToggleComponent, TextComponent, setIcon } from "obsidian";
 import Commands from "src/command";
@@ -57,7 +57,7 @@ export default class ManagerBasis extends BaseSetting {
 
         const toolsWrap = personalizeEl.createDiv('manager-toolbar__tools manager-page-tools');
         const toolsSetting = new Setting(toolsWrap).setClass('manager-bar__action').setName('');
-        for (const id of TOOL_IDS) {
+        for (const id of TOOL_IDS.filter(toolAvailable)) {
             const button = toolsSetting.controlEl.createEl('button', { cls: 'manager-tool manager-tool--plugin' });
             button.type = 'button';
             button.setAttribute('aria-label', t0('功能开关_' + id));

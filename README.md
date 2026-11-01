@@ -1,61 +1,20 @@
-﻿<div align="center">
-
-# Better Add-on Manager
+# Better Manager
 
 **A more capable plugin manager for Obsidian.**
 
-Keep plugin-heavy Obsidian vaults fast and manageable with delayed startup, batch controls, groups and tags, GitHub installs, and guided conflict diagnosis.
+Organize your plugin workflow with delayed startup, batch controls, groups, tags, device presets and a clear management interface.
 
-<p>
-  <a href="docs/README_CN.md">简体中文</a>
-  ·
-  <a href="docs/README_JA.md">日本語</a>
-  ·
-  <a href="docs/README_KO.md">한국어</a>
-  ·
-  <a href="docs/README_ES.md">Español</a>
-  ·
-  <a href="docs/README_FR.md">Français</a>
-  ·
-  <a href="docs/README_RU.md">Русский</a>
-  ·
-  <a href="https://github.com/eondrcode/obsidian-manager/releases">Releases</a>
-  ·
-  <a href="https://ifdian.net/a/eondr">Support</a>
-</p>
+[简体中文](https://github.com/lmce72/obsidian-manager-rev/blob/main/docs/README_CN.md) · [日本語](https://github.com/lmce72/obsidian-manager-rev/blob/main/docs/README_JA.md) · [한국어](https://github.com/lmce72/obsidian-manager-rev/blob/main/docs/README_KO.md) · [Español](https://github.com/lmce72/obsidian-manager-rev/blob/main/docs/README_ES.md) · [Français](https://github.com/lmce72/obsidian-manager-rev/blob/main/docs/README_FR.md) · [Русский](https://github.com/lmce72/obsidian-manager-rev/blob/main/docs/README_RU.md) · [Releases](https://github.com/lmce72/obsidian-manager-rev/releases) · [Support](https://ifdian.net/a/eondr)
 
-<p>
-  <a href="https://github.com/eondrcode/obsidian-manager/releases">
-    <img alt="Latest Release" src="https://img.shields.io/github/v/release/eondrcode/obsidian-manager?style=flat-square&label=release">
-  </a>
-  <img alt="GitHub Downloads" src="https://img.shields.io/github/downloads/eondrcode/obsidian-manager/total?style=flat-square&label=downloads">
-  <img alt="Last Commit" src="https://img.shields.io/github/last-commit/eondrcode/obsidian-manager?style=flat-square&label=last%20commit">
-  <img alt="Issues" src="https://img.shields.io/github/issues/eondrcode/obsidian-manager?style=flat-square&label=issues">
-  <img alt="Stars" src="https://img.shields.io/github/stars/eondrcode/obsidian-manager?style=flat-square&label=stars">
-  <img alt="License" src="https://img.shields.io/github/license/eondrcode/obsidian-manager?style=flat-square&label=license">
-</p>
+![Latest Release](https://img.shields.io/github/v/release/lmce72/obsidian-manager-rev?style=flat-square&label=release) ![GitHub Downloads](https://img.shields.io/github/downloads/lmce72/obsidian-manager-rev/total?style=flat-square&label=downloads) ![Last Commit](https://img.shields.io/github/last-commit/lmce72/obsidian-manager-rev?style=flat-square&label=last%20commit) ![Issues](https://img.shields.io/github/issues/lmce72/obsidian-manager-rev?style=flat-square&label=issues) ![Stars](https://img.shields.io/github/stars/lmce72/obsidian-manager-rev?style=flat-square&label=stars) ![License](https://img.shields.io/github/license/lmce72/obsidian-manager-rev?style=flat-square&label=license) ![Obsidian Plugin](https://img.shields.io/badge/Obsidian-plugin-7C3AED?style=flat-square&logo=obsidian&logoColor=white) ![Minimum Obsidian Version](https://img.shields.io/badge/Obsidian-%E2%89%A5%201.5.8-7C3AED?style=flat-square) ![TypeScript](https://img.shields.io/badge/TypeScript-ready-3178C6?style=flat-square&logo=typescript&logoColor=white) ![Platform](https://img.shields.io/badge/platform-desktop%20%7C%20mobile-4B5563?style=flat-square) ![i18n](https://img.shields.io/badge/i18n-7%20languages-0F766E?style=flat-square) ![GitHub Source Tracking](https://img.shields.io/badge/GitHub-source%20tracking-181717?style=flat-square&logo=github&logoColor=white) ![Sponsor on Afdian](https://img.shields.io/badge/Afdian-sponsor-946ce6?style=flat-square)
 
-<p>
-  <img alt="Obsidian Plugin" src="https://img.shields.io/badge/Obsidian-plugin-7C3AED?style=flat-square&logo=obsidian&logoColor=white">
-  <img alt="Minimum Obsidian Version" src="https://img.shields.io/badge/Obsidian-%E2%89%A5%201.5.8-7C3AED?style=flat-square">
-  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-ready-3178C6?style=flat-square&logo=typescript&logoColor=white">
-  <img alt="Platform" src="https://img.shields.io/badge/platform-desktop%20%7C%20mobile-4B5563?style=flat-square">
-  <img alt="i18n" src="https://img.shields.io/badge/i18n-7%20languages-0F766E?style=flat-square">
-  <img alt="GitHub Source Tracking" src="https://img.shields.io/badge/GitHub-source%20tracking-181717?style=flat-square&logo=github&logoColor=white">
-  <a href="https://ifdian.net/a/eondr">
-    <img alt="Sponsor on Afdian" src="https://img.shields.io/badge/Afdian-sponsor-946ce6?style=flat-square">
-  </a>
-</p>
-
-</div>
-
-![Screenshot](docs/img/index.png)
+![Screenshot](docs/img/1.2.0/index.png)
 
 ---
 
 ## 🎯 What is BPM?
 
-**Better Add-on Manager (BPM)** is a control center for Obsidian community plugins, designed for vaults that rely on many plugins and need more than simple enable/disable toggles.
+**Better Manager (BPM)** is a control center for Obsidian community plugins, designed for vaults that rely on many plugins and need more than simple enable/disable toggles.
 
 It helps you keep startup responsive, organize plugins by workflow, install plugins from GitHub releases, and isolate conflicts when something breaks.
 
@@ -67,11 +26,13 @@ It helps you keep startup responsive, organize plugins by workflow, install plug
 
 ## ✨ Core Features
 
-BPM is organized around five focused tabs. Each tab owns one workflow, so related controls stay together and the manager remains easy to scan across desktop and mobile.
+BPM separates plugin management, appearance, devices, installation, transfer and diagnosis into focused tabs. Ribbon Order appears when Ribbon management is enabled; feature and tool visibility can be configured in settings.
 
 | Tab | Workflow |
 |-----|----------|
 | 🧩 Plugin View | Manage installed plugins, metadata, filters, startup behavior, and per-plugin actions |
+| 🎨 Appearance overview | Manage themes, CSS snippets and appearance presets |
+| 📱 Devices | Choose device types, defaults and named presets |
 | 📥 Install Hub | Install plugins or themes from GitHub and manage tracked sources |
 | 📦 Transfer Pack | Export, import, and restore plugin/theme packs across vaults |
 | 🎛️ Ribbon Order | Control Obsidian ribbon icon order and visibility |
@@ -81,7 +42,7 @@ BPM is organized around five focused tabs. Each tab owns one workflow, so relate
 
 The main tab for day-to-day plugin management.
 
-![Download function panel](docs/img/PluginView.png)
+![Download function panel](docs/img/1.2.0/PluginView.png)
 
 | Area | What it does |
 |------|--------------|
@@ -93,11 +54,37 @@ The main tab for day-to-day plugin management.
 | **Plugin actions** | Check updates, download updates, restart a plugin, temporarily start a plugin, open settings, open folders, copy IDs, open repositories, clear config, hide, or delete |
 | **BPM tags** | Automatically marks BPM-installed plugins with `bpm-install` and supports ignored plugins with `bpm-ignore` |
 
+### 🎨 Appearance overview
+
+Manage themes, CSS snippets and appearance presets together. Choose a device preset and apply appearance changes for the current session or save them permanently.
+
+### 📱 Device management
+
+Open **Devices** in the manager (on mobile: **More → Devices**). Enable **Manage by device type**, then check this device's type. Device types are fixed to **Computer**, **Tablet** and **Phone**; each type can hold several named presets and starts with one that inherits your current settings. Enabling this feature is optional.
+
+Each preset stores plugin enabled states, assigned delay groups, appearance, and Ribbon visibility/order. The **Devices** page manages this device's type, preset creation/duplication/renaming/deletion, and which preset this device uses; any preset can reuse another preset's settings. When a type has not been configured yet and exactly one configured preset exists in another type, it is adopted automatically; with several candidates nothing is chosen for you — use **Reuse another preset's settings** on the Devices page. The device list is informational. The manager itself and BPM-ignored plugins are excluded from device-specific plugin switching. Group/tag metadata and delay definitions stay global. Desktop-only plugins are never started by the device manager on mobile.
+
+The three scoped tabs — **Plugins**, **Appearance** and **Ribbon** — carry the same **Configure for device** selector, listing named presets grouped by device type. Editing the preset this device uses applies immediately; editing another preset only saves it, and the device using it picks the change up on its next start or reload. Plugin enable/delay, appearance (theme and CSS snippet states), and Ribbon visibility/order are stored per preset; install sources, import/export, troubleshoot, groups, tags and delay definitions stay global.
+
+Device records are kept in one small file per device under the vault's config directory, so every device sees the others after syncing; the preset this device uses stays local. Names default to the desktop hostname or the mobile model and can be edited. The local identity stays in Obsidian's device-local storage. The device type is detected from Obsidian's platform information and can be corrected manually or with **Detect again from platform**. When the platform identifier refreshes (sync system or software update), the old device record is migrated to the new identifier and the locally stored preset choice is kept; if that preset was deleted elsewhere, the device falls back to the default preset of its type and says so. There is no per-device configuration: mobile has no stable long-lived device identifier, so per-device forks cannot be reconciled after syncing. To tell two devices of the same type apart, create multiple named presets and pick one on each device. Reinstalling or clearing local data can create a new device record; just pick a preset again. Other devices apply synced changes after reloading the plugin. Concurrent edits follow your sync provider's conflict handling; there is no live cross-device merge.
+
+#### Why a mobile device can appear more than once
+
+Mobile platforms do not give web or plugin code a stable hardware identifier:
+
+- Obsidian may not expose Capacitor's Device bridge at all. When it does, `getId()` is an app/vendor-scoped value, not a physical-device serial; it can change after clearing app data, reinstalling the app, moving to a new WebView data directory, or an OS/vendor migration.
+- The fallback is a UUID kept in Obsidian's device-local storage. It survives normal restarts, reloads and software updates, but not clearing app storage or reinstalling the app.
+- Device-local storage belongs to one installation, not to the physical device, and is never synced.
+- BPM stores only a hash of the platform identifier, uses it for the device list and to remember this installation's preset choice, and never keys configuration by device id. A duplicate or removed record therefore does not change presets, their contents, or which preset another installation uses.
+- To treat two installations as the same device, rename or remove the stale record manually and pick the same named preset on each installation. Per-device configuration is intentionally absent because it cannot be reconciled reliably after syncing.
+
+Native Obsidian plugins can start before the manager applies a preset. Use the existing delayed-start mode and startup takeover if you need the manager to control startup ordering. Missing plugins and unavailable Ribbon icons retain their saved choices. Reorder Ribbon items using the up/down buttons on touch devices.
+
 ### 📥 Install Hub
 
 The Install Hub handles GitHub-based installation and the sources BPM can track after installation.
 
-![Download function panel](docs/img/installHub.png)
+![Download function panel](docs/img/1.2.0/installHub.png)
 
 | Area | What it does |
 |------|--------------|
@@ -113,7 +100,7 @@ The Install Hub handles GitHub-based installation and the sources BPM can track 
 
 The Transfer Pack tab moves plugin setups between vaults without turning the README into a manual checklist.
 
-![Transfer Pack](docs/img/transferPack.png)
+![Transfer Pack](docs/img/1.2.0/transferPack.png)
 
 | Area | What it does |
 |------|--------------|
@@ -130,7 +117,7 @@ The Transfer Pack tab moves plugin setups between vaults without turning the REA
 
 The Ribbon Order tab keeps Obsidian's left ribbon predictable, especially when delayed plugins register icons after startup.
 
-![Ribbon Sort Function Panel](docs/img/ribbonOrder.png)
+![Ribbon Sort Function Panel](docs/img/1.2.0/ribbonOrder.png)
 
 | Area | What it does |
 |------|--------------|
@@ -144,7 +131,7 @@ The Ribbon Order tab keeps Obsidian's left ribbon predictable, especially when d
 
 The Conflict Diagnosis tab guides plugin conflict testing step by step, keeping the tested state and result in one place.
 
-![Conflict Troubleshooter](docs/img/conflictScan.png)
+![Conflict Troubleshooter](docs/img/1.2.0/conflictScan.png)
 
 | Area | What it does |
 |------|--------------|
@@ -164,17 +151,17 @@ The Conflict Diagnosis tab guides plugin conflict testing step by step, keeping 
 Recommended for most users.
 
 1. Open **Obsidian Settings → Community Plugins**.
-2. Search for **Better Add-on Manager**.
+2. Search for **Better Manager**.
 3. Install and enable the plugin.
 
 ### Manual Install
 
 Use this when you want to install a GitHub release directly.
 
-1. Download the [latest release](https://github.com/eondrcode/obsidian-manager/releases).
+1. Download the [latest release](https://github.com/lmce72/obsidian-manager-rev/releases).
 2. Copy `main.js`, `manifest.json`, and `styles.css` into `.obsidian/plugins/better-plugins-manager/`.
 3. Restart Obsidian.
-4. Enable **Better Add-on Manager** from **Settings → Community Plugins**.
+4. Enable **Better Manager** from **Settings → Community Plugins**.
 
 ---
 
@@ -199,44 +186,20 @@ After enabling the plugin, open BPM in either way:
 - **Left-click** primary controls to toggle, edit, install, import, or run an action.
 - **Right-click** a plugin item to open its context menu.
 - **Hover** toolbar buttons to see tooltips; on touch devices, use long press where supported.
+- **Toolbar labels** show the current page by default; hover reveals the other labels. Change this behavior in **Settings → Style**.
 
 ---
 
-
-## Device management
-
-Open **Devices** in the manager (on mobile: **More → Devices**). Enable **Manage by device type**, then check this device's type. Device types are fixed to **Computer**, **Tablet** and **Phone**; each type can hold several named presets and starts with one that inherits your current settings. Enabling this feature is optional.
-
-Each preset stores plugin enabled states, assigned delay groups, appearance, and Ribbon visibility/order. The **Devices** page manages this device's type, preset creation/duplication/renaming/deletion, and which preset this device uses; any preset can reuse another preset's settings. When a type has not been configured yet and exactly one configured preset exists in another type, it is adopted automatically; with several candidates nothing is chosen for you — use **Reuse another preset's settings** on the Devices page. The device list is informational. The manager itself and BPM-ignored plugins are excluded from device-specific plugin switching. Group/tag metadata and delay definitions stay global. Desktop-only plugins are never started by the device manager on mobile.
-
-The three scoped tabs — **Plugins**, **Appearance** and **Ribbon** — carry the same **Configure for device** selector, listing named presets grouped by device type. Editing the preset this device uses applies immediately; editing another preset only saves it, and the device using it picks the change up on its next start or reload. Plugin enable/delay, appearance (theme and CSS snippet states), and Ribbon visibility/order are stored per preset; install sources, import/export, troubleshoot, groups, tags and delay definitions stay global.
-
-Device records are kept in one small file per device under the vault's config directory, so every device sees the others after syncing; the preset this device uses stays local. Names default to the desktop hostname or the mobile model and can be edited. The local identity stays in Obsidian's device-local storage. The device type is detected from Obsidian's platform information and can be corrected manually or with **Detect again from platform**. When the platform identifier refreshes (sync system or software update), the old device record is migrated to the new identifier and the locally stored preset choice is kept; if that preset was deleted elsewhere, the device falls back to the first preset of its type and says so. There is no per-device configuration: mobile has no stable long-lived device identifier, so per-device forks cannot be reconciled after syncing. To tell two devices of the same type apart, create multiple named presets and pick one on each device. Reinstalling or clearing local data can create a new device record; just pick a preset again. Other devices apply synced changes after reloading the plugin. Concurrent edits follow your sync provider's conflict handling; there is no live cross-device merge.
-
-### Why a mobile device can appear more than once
-
-Mobile platforms do not give web or plugin code a stable hardware identifier:
-
-- Obsidian may not expose Capacitor's Device bridge at all. When it does, `getId()` is an app/vendor-scoped value, not a physical-device serial; it can change after clearing app data, reinstalling the app, moving to a new WebView data directory, or an OS/vendor migration.
-- The fallback is a UUID kept in Obsidian's device-local storage. It survives normal restarts, reloads and software updates, but not clearing app storage or reinstalling the app.
-- Device-local storage belongs to one installation, not to the physical device, and is never synced.
-- BPM stores only a hash of the platform identifier, uses it for the device list and to remember this installation's preset choice, and never keys configuration by device id. A duplicate or removed record therefore does not change presets, their contents, or which preset another installation uses.
-- To treat two installations as the same device, rename or remove the stale record manually and pick the same named preset on each installation. Per-device configuration is intentionally absent because it cannot be reconciled reliably after syncing.
-
-Native Obsidian plugins can start before the manager applies a preset. Use the existing delayed-start mode and startup takeover if you need the manager to control startup ordering. Missing plugins and unavailable Ribbon icons retain their saved choices. Reorder Ribbon items using the up/down buttons on touch devices.
-
-Validation: `bun run build`, `node --test tests/device-management.test.mjs`. UI validation uses an isolated empty vault; physical touch scrolling still requires mobile-device testing.
 
 ## Security and Disclosure
 
 BPM is a local Obsidian plugin manager, but some features intentionally use external services or browser APIs:
 
-- **External network requests**: BPM contacts GitHub only for user-visible plugin management features such as fetching community plugin metadata, resolving repositories, checking releases, and installing or updating plugins/themes from GitHub. These requests may use `github.com`, `api.github.com`, and `raw.githubusercontent.com`. BPM also opens `github.com` repository pages and the project tutorial link on `www.bilibili.com` only when the user clicks the related buttons.
+- **External network requests**: BPM contacts GitHub for user-visible plugin management features such as fetching community plugin metadata, resolving repositories, checking releases, and installing or updating plugins/themes. These requests may use `github.com`, `api.github.com`, and `raw.githubusercontent.com`. Repository, homepage and release links open only when clicked. The project tutorial on `www.bilibili.com` also opens only when clicked.
 - **Clipboard access**: BPM writes to the system clipboard only when the user clicks **Copy ID** for a plugin.
 - **Vault file access**: BPM reads plugin/theme metadata, selected plugin configuration files, transfer packages, and legacy export folders for management, migration, backup, import/export, and troubleshooting features. It does not upload vault notes to a remote service.
 - **Device records**: When device management is used, BPM writes one small JSON file per device into the vault's config directory (`.obsidian/better-plugins-manager-device-<id>.json`) so devices can list each other after syncing. These files contain only a device id, display name, device type, and last-seen timestamp — no notes, plugin settings, or credentials. They are written with Obsidian's vault adapter, never outside the vault, and removed when the device is removed from the list.
 - **Base64 encoding/decoding**: BPM uses runtime `btoa`/`atob` only to pack and restore binary/text files inside local Transfer Pack JSON data. It is not used to hide API keys, URLs, remote code, or executable payloads.
-- **Scanning limitations**: If a plugin catalog or marketplace reports that malware, obfuscation, or network scanning is unavailable, review the source code in this repository and the release assets before installing. BPM does not intentionally obfuscate its source.
 
 ---
 
@@ -341,4 +304,4 @@ Issues and PRs are welcome!
 
 ## 📄 License
 
-[MIT](LICENSE)
+[MIT](https://github.com/lmce72/obsidian-manager-rev/blob/main/LICENSE)

@@ -1,3 +1,4 @@
+import { FloatingScrollbars } from '../ui/floating-scrollbars';
 import { App, Modal, Platform, Setting, setIcon, getIconIds, FuzzySuggestModal, ButtonComponent, ExtraButtonComponent, TextComponent, ToggleComponent } from "obsidian";
 import Manager from "main";
 import { RibbonItem } from "../data/types";
@@ -20,6 +21,7 @@ class GroupIconPicker extends FuzzySuggestModal<string> {
 }
 
 export class RibbonModal extends Modal {
+    private scrollbars?: FloatingScrollbars;
     manager: Manager;
     private renderRootEl?: HTMLElement;
     private renderToolbarInRoot = true;
@@ -60,6 +62,8 @@ export class RibbonModal extends Modal {
     mountFilterBar(containerEl: HTMLElement): void { this.buildFilterBar(containerEl, () => this.displayWithoutSearch()); }
 
     async onOpen() {
+        this.scrollbars?.destroy();
+        this.scrollbars = new FloatingScrollbars(this.modalEl);
         if (!this.manager.isRibbonManagerEnabled()) {
             this.close();
             return;
@@ -779,6 +783,8 @@ export class RibbonModal extends Modal {
     }
 
     onClose() {
+        this.scrollbars?.destroy();
+        this.scrollbars = undefined;
         this.closeGroupMenus();
         this.scopeBar?.close();
         this.manager.ribbonModal = null;

@@ -13,7 +13,7 @@ const obsidian = { Platform: platform, Plugin: NativeBase, Modal: NativeBase, Su
     Notice: class { constructor(message) { notices.push(message); } } };
 async function load(entry) {
     const result = await build({ entryPoints: [entry], bundle: true, platform: 'node', format: 'cjs',
-        write: false, external: ['obsidian', 'electron'], logLevel: 'silent' });
+        write: false, external: ['obsidian', 'electron'], loader: { '.webp': 'dataurl' }, logLevel: 'silent' });
     const module = { exports: {} };
     new Function('require', 'module', 'exports', 'crypto', result.outputFiles[0].text)(name => {
         if (name === 'obsidian') return obsidian;
@@ -61,6 +61,8 @@ async function fixture(options = {}) {
         manifests: Object.fromEntries(settings.Plugins.map(plugin => [plugin.id, { id: plugin.id, name: plugin.name }])),
         enabledPlugins: new Set(['self', 'a', 'ignored']),
         plugins: { self: {}, a: {}, ignored: {} },
+        async enablePlugin(id) { calls.push(['runtime-enable', id]); this.plugins[id] = {}; },
+        async disablePlugin(id) { calls.push(['runtime-disable', id]); delete this.plugins[id]; },
         async enablePluginAndSave(id) { calls.push(['enable', id]); this.enabledPlugins.add(id); this.plugins[id] = {}; },
         async disablePluginAndSave(id) { calls.push(['disable', id]); this.enabledPlugins.delete(id); delete this.plugins[id]; },
     };
@@ -86,6 +88,98 @@ test('three types migrate into at least one independent named preset each', asyn
     assert.equal(firstOf(settings, 'computer').plugins.a.enabled, true);
     assert.equal(settings.RIBBON_SETTINGS[0].ribbonIdMap.en, 'a');
     assert.equal(firstOf(settings, 'phone').ribbon[0].ribbonIdMap.en, 'a');
+});
+
+test('default presets survive normalization and control missing bindings without changing explicit bindings', async () => {
+    const { manager, settings, setLocal, getLocal } = await fixture();
+    const original = manager.devices.boundPresetId;
+    const next = await manager.devices.createPreset('computer');
+    await manager.devices.setDefaultPreset(next);
+    assert.equal(manager.devices.boundPresetId, original);
+    let restarted = new DeviceManager(manager);
+    await restarted.initialize();
+    assert.equal(restarted.boundPresetId, original);
+    setLocal({ ...getLocal(), presetId: 'missing' });
+    restarted = new DeviceManager(manager);
+    await restarted.initialize();
+    assert.equal(restarted.boundPresetId, next);
+    assert.equal(settings.DEVICE_MANAGEMENT.defaultPresets.computer, next);
+    await manager.devices.deletePreset(next);
+    assert.equal(settings.DEVICE_MANAGEMENT.defaultPresets.computer, original);
+});
+
+test('session plugin state changes runtime without leaking into either native autostart or BPM saves', async () => {
+    const { manager, settings, calls } = await fixture();
+    await manager.devices.setEnabled(true);
+    manager.overview.setMode('plugins', 'session');
+    await manager.overview.setPluginState('a', { enabled: false, delay: 'later' });
+    assert.equal(manager.appPlugins.enabledPlugins.has('a'), true);
+    assert.equal(Boolean(manager.appPlugins.plugins.a), false);
+    assert.equal(settings.Plugins.find(plugin => plugin.id === 'a').enabled, false);
+    assert.ok(calls.some(call => call[0] === 'runtime-disable'));
+    await manager.saveSettings();
+    const saved = manager.devices.persistedSettings();
+    assert.equal(saved.Plugins.find(plugin => plugin.id === 'a').enabled, true);
+    assert.equal(saved.Plugins.find(plugin => plugin.id === 'a').delay, '');
+    assert.equal(firstOf(settings, 'computer').plugins.a.enabled, true);
+    assert.equal(firstOf(settings, 'computer').plugins.a.delay, '');
+    manager.overview.setMode('plugins', 'persistent');
+    await manager.overview.setPluginState('a', { enabled: false });
+    assert.equal(manager.devices.persistedSettings().Plugins.find(plugin => plugin.id === 'a').enabled, false);
+    assert.equal(manager.appPlugins.enabledPlugins.has('a'), false);
+});
+
+test('foreign session changes survive scope switches but never change persisted presets or local runtime', async () => {
+    const { manager, settings, calls } = await fixture();
+    await manager.devices.setEnabled(true);
+    await manager.devices.selectScope('plugins', keyOf(settings, 'phone'));
+    const before = calls.filter(call => call[0] === 'runtime-disable').length;
+    manager.overview.setMode('plugins', 'session');
+    await manager.overview.setPluginState('a', { enabled: false });
+    await manager.devices.closeProjection();
+    assert.equal(firstOf(settings, 'phone').plugins.a.enabled, true);
+    assert.equal(calls.filter(call => call[0] === 'runtime-disable').length, before);
+    await manager.devices.selectScope('plugins', keyOf(settings, 'phone'));
+    assert.equal(settings.Plugins.find(plugin => plugin.id === 'a').enabled, false);
+    await manager.saveSettings();
+    assert.equal(firstOf(settings, 'phone').plugins.a.enabled, true);
+});
+
+test('failed native session operations keep state and baseline unchanged', async () => {
+    const { manager, settings } = await fixture();
+    manager.overview.setMode('plugins', 'session');
+    manager.appPlugins.disablePlugin = async () => { throw new Error('native failure'); };
+    await assert.rejects(manager.overview.setPluginState('a', { enabled: false }), /native failure/);
+    assert.equal(settings.Plugins.find(plugin => plugin.id === 'a').enabled, true);
+    assert.equal(manager.overview.pluginState('a'), undefined);
+});
+
+test('session appearance uses native loaders and excludes unrelated session snippets from permanent saves', async () => {
+    const { manager, settings } = await fixture();
+    const writes = [];
+    const css = { theme: 'Original', enabledSnippets: new Set(['base']),
+        async loadTheme() {}, async loadSnippets() {},
+        setTheme(theme) { this.theme = theme; writes.push(['theme', theme]); },
+        setCssEnabledStatus(id, enabled) { if (enabled) this.enabledSnippets.add(id); else this.enabledSnippets.delete(id); writes.push(['snippets', [...this.enabledSnippets].sort()]); },
+    };
+    manager.app.customCss = css;
+    await manager.devices.setEnabled(true);
+    css.theme = 'Original'; css.enabledSnippets = new Set(['base']);
+    writes.length = 0;
+    manager.overview.setMode('themes', 'session');
+    await manager.devices.writeAppearance('themes', { theme: 'Temporary', snippets: { temporary: true } });
+    assert.equal(css.theme, 'Temporary');
+    assert.equal(css.enabledSnippets.has('temporary'), true);
+    assert.equal(writes.length, 0);
+    await manager.saveSettings();
+    assert.equal(firstOf(settings, 'computer').appearance.theme, 'Original');
+    assert.equal(firstOf(settings, 'computer').appearance.snippets.temporary, undefined);
+    manager.overview.setMode('themes', 'persistent');
+    await manager.devices.writeAppearance('themes', { snippets: { saved: true } });
+    assert.deepEqual(writes, [['snippets', ['base', 'saved']]]);
+    assert.equal(css.enabledSnippets.has('temporary'), true);
+    assert.equal(firstOf(settings, 'computer').appearance.snippets.saved, true);
+    assert.equal(firstOf(settings, 'computer').appearance.theme, 'Original');
 });
 
 test('ribbon groups remain independent when device presets are copied and applied', async () => {

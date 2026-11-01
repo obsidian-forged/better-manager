@@ -12,7 +12,7 @@ import { normalizePath, parseYaml, stringifyYaml } from "obsidian";
  */
 type Migration = {
 	version: string;
-	run: (manager: Manager) => Promise<boolean | void> | boolean | void;
+	run: (manager: Manager, context: { fromVersion: string }) => Promise<boolean | void> | boolean | void;
 };
 
 /** Markdown frontmatter 的解析结果。 */
@@ -209,6 +209,17 @@ const migrations: Migration[] = [
 		version: "0.3.2",
 		run: migrate032,
 	},
+	{
+		version: "1.2.0",
+		// 升级仅统一一次，随后尊重用户选择；Apply new defaults once, preserving later user choices.
+		run: (manager, context) => {
+			manager.settings.TOOLBAR_LABEL_MODE = "active";
+			manager.settings.TOOLBAR_HOVER_LABELS = true;
+			// 新安装不弹窗；Only existing installations receive the upgrade tour.
+			if (context.fromVersion) manager.settings.RELEASE_HIGHLIGHTS_PENDING = "1.2.0";
+			return true;
+		},
+	},
 ];
 
 /**
@@ -233,7 +244,7 @@ export const runMigrations = async (manager: Manager, options: { save?: boolean 
 		}
 
 		const previousMigrationVersion = manager.settings.MIGRATION_VERSION || "";
-		const settingsChanged = await migration.run(manager);
+		const settingsChanged = await migration.run(manager, { fromVersion: lastMigrationVersion });
 		manager.settings.MIGRATION_VERSION = migration.version;
 
 		/**

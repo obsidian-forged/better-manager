@@ -1,3 +1,4 @@
+import { featureEnabled } from './features';
 import ShareMyPlugin from "main";
 import { Notice, ObsidianProtocolData, debounce, requestUrl } from "obsidian";
 import { resolveGithubUrl } from "./github-url";
@@ -146,6 +147,7 @@ export default class Agreement {
      * @param params - 包含插件安装参数的对象
      */
     public async parsePluginInstall(params: ObsidianProtocolData) {
+        if (!featureEnabled(this.plugin.settings, 'install')) return;
         // 解析参数，设置默认值
         const args = {
             id: params.id,
@@ -163,6 +165,7 @@ export default class Agreement {
      * @return - 返回解析后的插件信息对象，如果解析失败则返回 null
      */
     public async parsePluginGithub(params: ObsidianProtocolData) {
+        if (!featureEnabled(this.plugin.settings, 'install')) return;
         // 解析参数，设置默认值
         const args = { id: params.id };
         await this.pluginGithub(args.id);

@@ -1,3 +1,4 @@
+import { FloatingScrollbars } from '../ui/floating-scrollbars';
 import { isToolInPage, ToolScope } from '../ui/tool-visibility';
 import { featureEnabled, toolEnabled, FeatureId, ToolId } from '../features';
 import { DevicePanel } from '../devices/device-panel';
@@ -317,6 +318,7 @@ class AppearanceProfileModal extends Modal {
 //          侧边栏 对话框 翻译
 // ==============================
 export class ManagerModal extends Modal {
+    private scrollbars?: FloatingScrollbars;
     manager: Manager;
     settings: ManagerSettings;
     // this.app.plugins
@@ -378,6 +380,7 @@ export class ManagerModal extends Modal {
     private searchSaveTimer?: number;
     private searchIndex = new Map<string, PluginSearchIndexEntry>();
     private pluginCardControllers = new Map<string, PluginCardController>();
+    private pluginDateMetaById = new Map<string, PluginDateMeta>();
     private bulkBarHostEl?: HTMLElement;
     private singleStartedPluginIds = new Set<string>();
     private expandedSourceConfigKeys = new Set<string>();
@@ -1628,7 +1631,10 @@ export class ManagerModal extends Modal {
             }
         }
 
-        if (titleRow) this.renderPluginReleaseBadge(titleRow, manifest.version);
+        if (titleRow) {
+            this.renderPluginReleaseBadge(titleRow, manifest.version);
+            this.renderRecentInstallBadge(titleRow, this.readRecentInstallTimestamp(pluginId));
+        }
 
         const tagsEl = card.querySelector<HTMLElement>(".manager-plugin-card__tags");
         let visibleTagCount = 0;
@@ -1930,6 +1936,24 @@ export class ManagerModal extends Modal {
         if (!channel) return;
         const badge = parent.createSpan({ cls: 'manager-plugin-card__release', text: channel === 'rc' ? 'RC' : 'Preview' });
         parent.querySelector('.manager-item__versions')?.insertAdjacentElement('afterend', badge);
+    }
+
+    /** Mark plugins installed inside the configured window / 标记在配置窗口内安装的插件。 */
+    private renderRecentInstallBadge(parent: HTMLElement, installedAt?: number): void {
+        parent.querySelector(".manager-plugin-card__recent-install")?.remove();
+        const configuredDays = this.settings.RECENT_INSTALL_DAYS;
+        const days = Number.isFinite(configuredDays) && configuredDays >= 0 ? Math.floor(configuredDays) : 7;
+        if (!installedAt || days <= 0) return;
+        const age = Date.now() - installedAt;
+        if (age < 0 || age > days * 24 * 60 * 60 * 1000) return;
+        const badge = parent.createSpan({ cls: "manager-plugin-card__recent-install" });
+        setIcon(badge.createSpan({ cls: "manager-plugin-card__recent-install-icon" }), "clock-4");
+        badge.createSpan({ text: this.manager.translator.t("管理器_最近安装") });
+        badge.setAttribute("title", this.manager.translator.t("管理器_最近安装_提示", { days }));
+    }
+
+    private readRecentInstallTimestamp(pluginId: string): number | undefined {
+        return this.pluginDateMetaById.get(pluginId)?.installedAt;
     }
 
     private createDelayBadge(seconds: number): HTMLElement {
@@ -2601,7 +2625,7 @@ export class ManagerModal extends Modal {
         toolbar.removeClass("manager-toolbar--labels-always", "manager-toolbar--labels-active",
             "manager-toolbar--labels-hidden", "manager-toolbar--hover-labels");
         const mode = this.settings.TOOLBAR_LABEL_MODE;
-        toolbar.addClass(`manager-toolbar--labels-${mode === "active" || mode === "hidden" ? mode : "always"}`);
+        toolbar.addClass(`manager-toolbar--labels-${mode === "always" || mode === "hidden" ? mode : "active"}`);
         if (this.settings.TOOLBAR_HOVER_LABELS !== false) toolbar.addClass("manager-toolbar--hover-labels");
     }
 
@@ -3219,6 +3243,7 @@ export class ManagerModal extends Modal {
         const manifestById = new Map(uniquePlugins.map((plugin) => [plugin.id, plugin]));
         const pluginSettingsById = new Map(this.manager.settings.Plugins.map((plugin) => [plugin.id, plugin]));
         const dateMetaById = await this.getPluginDateMetaMap(uniquePlugins);
+        this.pluginDateMetaById = dateMetaById;
         if (!this.isRenderCurrent(renderGeneration, page)) return;
         const layoutItems = this.getSortedPluginLayoutItems(this.getPluginLayout(uniquePlugins), manifestById, pluginSettingsById, dateMetaById);
         const groupSettingsById = new Map(this.settings.GROUPS.map((group) => [group.id, group]));
@@ -3703,6 +3728,7 @@ export class ManagerModal extends Modal {
                 }
             }
             this.renderPluginReleaseBadge(titleRow, plugin.version);
+            this.renderRecentInstallBadge(titleRow, dateMetaById.get(plugin.id)?.installedAt);
             // [默认] 描述
             const hasDescription = ManagerPlugin.desc.trim().length > 0;
             const desc = createDiv({ text: ManagerPlugin.desc, title: plugin.description, cls: ["manager-item__name-desc"], });
@@ -8178,6 +8204,8 @@ export class ManagerModal extends Modal {
     }
 
     public onOpen() {
+        this.scrollbars?.destroy();
+        this.scrollbars = new FloatingScrollbars(this.modalEl);
         void this.openAsync();
     }
 
@@ -8198,6 +8226,8 @@ export class ManagerModal extends Modal {
     }
 
     public onClose() {
+        this.scrollbars?.destroy();
+        this.scrollbars = undefined;
         this.ribbonPage?.closeGroupMenus();
         this.mobileHeaderObserver?.disconnect();
         this.mobileHeaderObserver = undefined;

@@ -1,10 +1,10 @@
 {
   "name": "better-plugins-manager",
-  "version": "1.1.11",
+  "version": "1.2.0",
   "description": "A more capable plugin manager for Obsidian.",
   "main": "main.js",
   "scripts": {
-    "check": "tsc -noEmit -skipLibCheck && eslint src/devices --max-warnings 0 && node --test tests/device-management.test.mjs tests/release-policy.test.mjs tests/ribbon-groups.test.mjs tests/ribbon-migration.test.mjs",
+    "check": "tsc -noEmit -skipLibCheck && eslint src/devices src/catalog src/ui src/features.ts src/overview-state.ts --max-warnings 0 && node --test tests/device-management.test.mjs tests/release-policy.test.mjs tests/ribbon-groups.test.mjs tests/ribbon-migration.test.mjs tests/catalog.test.mjs tests/settings-migrations.test.mjs",
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "version": "node version-bump.mjs && git add manifest.json versions.json package-lock.json"

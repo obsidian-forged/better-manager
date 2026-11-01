@@ -1,61 +1,20 @@
-<div align="center">
-
-# Better Plugins Manager
+# Better Manager
 
 **更强大的 Obsidian 插件管理器。**
 
-让插件数量较多的 Obsidian 库依然保持清晰可控：延迟启动、批量管理、分组标签、GitHub 安装和冲突诊断都集中在一个管理器中。
+用延迟启动、批量管理、分组标签、设备预设和清晰的管理界面，整理你的插件工作流。
 
-<p>
-  <a href="../README.md">English</a>
-  ·
-  <a href="README_JA.md">日本語</a>
-  ·
-  <a href="README_KO.md">한국어</a>
-  ·
-  <a href="README_ES.md">Español</a>
-  ·
-  <a href="README_FR.md">Français</a>
-  ·
-  <a href="README_RU.md">Русский</a>
-  ·
-  <a href="https://github.com/eondrcode/obsidian-manager/releases">Releases</a>
-  ·
-  <a href="https://ifdian.net/a/eondr">支持作者</a>
-</p>
+[English](https://github.com/lmce72/obsidian-manager-rev/blob/main/README.md) · [日本語](https://github.com/lmce72/obsidian-manager-rev/blob/main/docs/README_JA.md) · [한국어](https://github.com/lmce72/obsidian-manager-rev/blob/main/docs/README_KO.md) · [Español](https://github.com/lmce72/obsidian-manager-rev/blob/main/docs/README_ES.md) · [Français](https://github.com/lmce72/obsidian-manager-rev/blob/main/docs/README_FR.md) · [Русский](https://github.com/lmce72/obsidian-manager-rev/blob/main/docs/README_RU.md) · [版本发布](https://github.com/lmce72/obsidian-manager-rev/releases) · [支持作者](https://ifdian.net/a/eondr)
 
-<p>
-  <a href="https://github.com/eondrcode/obsidian-manager/releases">
-    <img alt="Latest Release" src="https://img.shields.io/github/v/release/eondrcode/obsidian-manager?style=flat-square&label=release">
-  </a>
-  <img alt="GitHub Downloads" src="https://img.shields.io/github/downloads/eondrcode/obsidian-manager/total?style=flat-square&label=downloads">
-  <img alt="Last Commit" src="https://img.shields.io/github/last-commit/eondrcode/obsidian-manager?style=flat-square&label=last%20commit">
-  <img alt="Issues" src="https://img.shields.io/github/issues/eondrcode/obsidian-manager?style=flat-square&label=issues">
-  <img alt="Stars" src="https://img.shields.io/github/stars/eondrcode/obsidian-manager?style=flat-square&label=stars">
-  <img alt="License" src="https://img.shields.io/github/license/eondrcode/obsidian-manager?style=flat-square&label=license">
-</p>
+![Latest Release](https://img.shields.io/github/v/release/lmce72/obsidian-manager-rev?style=flat-square&label=release) ![GitHub Downloads](https://img.shields.io/github/downloads/lmce72/obsidian-manager-rev/total?style=flat-square&label=downloads) ![Last Commit](https://img.shields.io/github/last-commit/lmce72/obsidian-manager-rev?style=flat-square&label=last%20commit) ![Issues](https://img.shields.io/github/issues/lmce72/obsidian-manager-rev?style=flat-square&label=issues) ![Stars](https://img.shields.io/github/stars/lmce72/obsidian-manager-rev?style=flat-square&label=stars) ![License](https://img.shields.io/github/license/lmce72/obsidian-manager-rev?style=flat-square&label=license) ![Obsidian Plugin](https://img.shields.io/badge/Obsidian-plugin-7C3AED?style=flat-square&logo=obsidian&logoColor=white) ![Minimum Obsidian Version](https://img.shields.io/badge/Obsidian-%E2%89%A5%201.5.8-7C3AED?style=flat-square) ![TypeScript](https://img.shields.io/badge/TypeScript-ready-3178C6?style=flat-square&logo=typescript&logoColor=white) ![Platform](https://img.shields.io/badge/platform-desktop%20%7C%20mobile-4B5563?style=flat-square) ![i18n](https://img.shields.io/badge/i18n-7%20languages-0F766E?style=flat-square) ![GitHub Source Tracking](https://img.shields.io/badge/GitHub-source%20tracking-181717?style=flat-square&logo=github&logoColor=white) ![Sponsor on Afdian](https://img.shields.io/badge/Afdian-sponsor-946ce6?style=flat-square)
 
-<p>
-  <img alt="Obsidian Plugin" src="https://img.shields.io/badge/Obsidian-plugin-7C3AED?style=flat-square&logo=obsidian&logoColor=white">
-  <img alt="Minimum Obsidian Version" src="https://img.shields.io/badge/Obsidian-%E2%89%A5%201.5.8-7C3AED?style=flat-square">
-  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-ready-3178C6?style=flat-square&logo=typescript&logoColor=white">
-  <img alt="Platform" src="https://img.shields.io/badge/platform-desktop%20%7C%20mobile-4B5563?style=flat-square">
-  <img alt="i18n" src="https://img.shields.io/badge/i18n-7%20languages-0F766E?style=flat-square">
-  <img alt="GitHub Source Tracking" src="https://img.shields.io/badge/GitHub-source%20tracking-181717?style=flat-square&logo=github&logoColor=white">
-  <a href="https://ifdian.net/a/eondr">
-    <img alt="Sponsor on Afdian" src="https://img.shields.io/badge/Afdian-sponsor-946ce6?style=flat-square">
-  </a>
-</p>
-
-</div>
-
-![Screenshot](img/index.png)
+![Screenshot](img/1.2.0/index.png)
 
 ---
 
 ## 🎯 BPM 是什么？
 
-**Better Plugins Manager (BPM)** 是 Obsidian 社区插件的控制中心，适合依赖大量插件、需要比简单启用/禁用更完整管理能力的库。
+**Better Manager (BPM)** 是 Obsidian 社区插件的控制中心，适合依赖大量插件、需要比简单启用/禁用更完整管理能力的库。
 
 它可以帮助你保持启动响应速度，按工作流整理插件，从 GitHub Release 安装插件，并在出现问题时定位冲突来源。
 
@@ -67,11 +26,13 @@
 
 ## ✨ 核心功能
 
-BPM 围绕五个清晰的 tab 组织。每个 tab 负责一个工作流，让相关控制集中在一起，桌面端和移动端都更容易浏览。
+BPM 按插件、外观、设备、安装来源、迁移和诊断划分页面；启用 Ribbon 管理后显示边栏编排。可在设置中调整功能与工具入口的显示。
 
 | Tab | 工作流 |
 |-----|--------|
 | 🧩 Plugin View | 管理已安装插件、插件信息、筛选、启动行为和单插件操作 |
+| 🎨 外观总览 | 管理主题、CSS 片段与外观预设 |
+| 📱 设备管理 | 设置设备类型、默认预设与命名预设 |
 | 📥 Install Hub | 从 GitHub 安装插件或主题，并管理已跟踪来源 |
 | 📦 Transfer Pack | 在不同库之间导出、导入和恢复插件/主题包 |
 | 🎛️ Ribbon Order | 控制 Obsidian 左侧 Ribbon 图标的顺序和显隐 |
@@ -81,7 +42,7 @@ BPM 围绕五个清晰的 tab 组织。每个 tab 负责一个工作流，让相
 
 日常插件管理的主页面。
 
-![Plugin View](img/PluginView.png)
+![Plugin View](img/1.2.0/PluginView.png)
 
 | 区域 | 功能 |
 |------|------|
@@ -93,11 +54,37 @@ BPM 围绕五个清晰的 tab 组织。每个 tab 负责一个工作流，让相
 | **插件操作** | 检查更新、下载更新、重启插件、单次启动、打开设置、打开目录、复制 ID、打开仓库、清空配置、隐藏或删除 |
 | **BPM 标签** | BPM 安装的插件会自动标记 `bpm-install`，也支持通过 `bpm-ignore` 忽略管理 |
 
+### 🎨 外观总览
+
+集中管理主题、CSS 片段与外观预设。可按设备选择预设，并决定外观改动仅在本次会话生效还是永久保存。
+
+### 📱 设备管理
+
+在管理器打开「设备管理」（移动端：「更多 → 设备管理」），开启「按设备类型管理」，确认本机类型。设备类型固定为「电脑、平板、手机」三类；每类可以保存多份命名预设，初始各有一份并继承现有配置；默认不开启接管。
+
+每份预设分别保存插件开关、延迟档位、外观和 Ribbon 显隐与顺序。设备管理页负责本机类型、预设的新建/复制/改名/删除、以及选择本机套用哪一份；每份预设都可以从其他预设复用配置。某个类型还没有配置时，如果其他类型只有一份已配置预设会自动套用；有多份时不会擅自选择，可在设备页用「复用其他预设的配置」手动挑选。设备清单只作展示。管理器自身与 BPM 忽略的插件不参与设备切换；分组、标签、延迟档位定义仍为全局配置。设备管理器不会在移动端启动仅支持桌面的插件。
+
+「插件总览、外观总览、边栏编排」三栏顶部都有同一个「按设备配置」下拉，按类型分组列出命名预设。编辑本机正在使用的那份会立即应用；编辑其他预设只写入配置，对应设备下次启动或重载后生效。插件开关与延迟档位、外观（主题与 CSS 片段开关）、Ribbon 显隐与顺序按预设独立保存；安装来源、导入导出、冲突诊断，以及分组、标签、延迟档位定义保持全局。
+
+设备记录按「每台设备一个小文件」保存在 vault 配置目录里，同步后各设备就能互相出现在清单中；本机选用的预设仍只存在本地。名称默认取桌面主机名或移动端型号，可手动修改；本机类型按 Obsidian 平台信息自动识别，可在设备页手动指定或「按平台重新检测」。平台标识刷新（同步系统或软件更新）时会把旧设备记录迁移到新标识，本机选择的预设存在本地、不受影响；若该预设已被其他设备删除，会回退到同类型默认预设并提示。不提供单设备配置：移动端没有可靠的长期设备标识，按设备分叉会让同步后的配置无法对账。需要区分同类设备时，用多份命名预设并在各设备上各选一份。清除应用数据或重装可能产生新的设备记录，重新选择预设即可。其他设备重载插件后应用已同步的配置。多设备同时编辑仍遵循同步工具的冲突规则，没有实时跨设备合并。
+
+#### 移动端设备为什么可能出现重复记录
+
+移动平台不会向网页或插件提供稳定的硬件唯一标识：
+
+- Obsidian 不一定暴露 Capacitor 的 Device 桥接；即使可用，`getId()` 也是应用/厂商作用域的值，不是物理设备序列号。清除应用数据、重装应用、切换 WebView 数据目录，或系统/厂商迁移都可能改变它。
+- 兜底方案是保存在 Obsidian 本地存储中的 UUID。它能跨普通重启、插件重载和软件更新保留，但清除应用存储或重装就会丢失。
+- 本地存储属于一次安装，而不是物理设备本身，也不会随同步数据迁移。
+- BPM 只保存平台标识的哈希，用它展示设备列表并记住本次安装选用的预设，从不把配置绑定到设备 id。因此出现重复记录或删除旧记录，都不会改变预设内容，也不会影响另一台安装选择哪份预设。
+- 如果希望把两次安装视为同一台设备，请手动改名或删除旧记录，并在两边选择同一份命名预设。不提供单设备配置，因为同步后无法可靠对账。
+
+Obsidian 原生启用的插件可能先于管理器启动；若需要接管启动顺序，请配合现有延迟启动和启动接管功能。未安装插件与暂不可用的 Ribbon 图标会保留配置。触屏通过上下移动按钮调整 Ribbon 顺序，无需拖拽。
+
 ### 📥 Install Hub
 
 Install Hub 负责从 GitHub 安装插件/主题，并管理安装后可跟踪的来源。
 
-![Install Hub](img/installHub.png)
+![Install Hub](img/1.2.0/installHub.png)
 
 | 区域 | 功能 |
 |------|------|
@@ -113,7 +100,7 @@ Install Hub 负责从 GitHub 安装插件/主题，并管理安装后可跟踪�
 
 Transfer Pack 用于在不同 Obsidian 库之间迁移插件配置，不需要手动整理清单。
 
-![Transfer Pack](img/transferPack.png)
+![Transfer Pack](img/1.2.0/transferPack.png)
 
 | 区域 | 功能 |
 |------|------|
@@ -130,7 +117,7 @@ Transfer Pack 用于在不同 Obsidian 库之间迁移插件配置，不需要�
 
 Ribbon Order 保持 Obsidian 左侧 Ribbon 顺序稳定，尤其适合延迟启动插件在启动后才注册图标的情况。
 
-![Ribbon Order](img/ribbonOrder.png)
+![Ribbon Order](img/1.2.0/ribbonOrder.png)
 
 | 区域 | 功能 |
 |------|------|
@@ -144,7 +131,7 @@ Ribbon Order 保持 Obsidian 左侧 Ribbon 顺序稳定，尤其适合延迟启�
 
 Conflict Diagnosis 通过步骤引导插件冲突测试，并把测试状态和结果保存在一个页面中。
 
-![Conflict Diagnosis](img/conflictScan.png)
+![Conflict Diagnosis](img/1.2.0/conflictScan.png)
 
 | 区域 | 功能 |
 |------|------|
@@ -157,30 +144,6 @@ Conflict Diagnosis 通过步骤引导插件冲突测试，并把测试状态和�
 
 ---
 
-## 设备管理
-
-在管理器打开「设备管理」（移动端：「更多 → 设备管理」），开启「按设备类型管理」，确认本机类型。设备类型固定为「电脑、平板、手机」三类；每类可以保存多份命名预设，初始各有一份并继承现有配置；默认不开启接管。
-
-每份预设分别保存插件开关、延迟档位、外观和 Ribbon 显隐与顺序。设备管理页负责本机类型、预设的新建/复制/改名/删除、以及选择本机套用哪一份；每份预设都可以从其他预设复用配置。某个类型还没有配置时，如果其他类型只有一份已配置预设会自动套用；有多份时不会擅自选择，可在设备页用「复用其他预设的配置」手动挑选。设备清单只作展示。管理器自身与 BPM 忽略的插件不参与设备切换；分组、标签、延迟档位定义仍为全局配置。设备管理器不会在移动端启动仅支持桌面的插件。
-
-「插件总览、外观总览、边栏编排」三栏顶部都有同一个「按设备配置」下拉，按类型分组列出命名预设。编辑本机正在使用的那份会立即应用；编辑其他预设只写入配置，对应设备下次启动或重载后生效。插件开关与延迟档位、外观（主题与 CSS 片段开关）、Ribbon 显隐与顺序按预设独立保存；安装来源、导入导出、冲突诊断，以及分组、标签、延迟档位定义保持全局。
-
-设备记录按「每台设备一个小文件」保存在 vault 配置目录里，同步后各设备就能互相出现在清单中；本机选用的预设仍只存在本地。名称默认取桌面主机名或移动端型号，可手动修改；本机类型按 Obsidian 平台信息自动识别，可在设备页手动指定或「按平台重新检测」。平台标识刷新（同步系统或软件更新）时会把旧设备记录迁移到新标识，本机选择的预设存在本地、不受影响；若该预设已被其他设备删除，会回退到同类型第一份预设并提示。不提供单设备配置：移动端没有可靠的长期设备标识，按设备分叉会让同步后的配置无法对账。需要区分同类设备时，用多份命名预设并在各设备上各选一份。清除应用数据或重装可能产生新的设备记录，重新选择预设即可。其他设备重载插件后应用已同步的配置。多设备同时编辑仍遵循同步工具的冲突规则，没有实时跨设备合并。
-
-### 移动端设备为什么可能出现重复记录
-
-移动平台不会向网页或插件提供稳定的硬件唯一标识：
-
-- Obsidian 不一定暴露 Capacitor 的 Device 桥接；即使可用，`getId()` 也是应用/厂商作用域的值，不是物理设备序列号。清除应用数据、重装应用、切换 WebView 数据目录，或系统/厂商迁移都可能改变它。
-- 兜底方案是保存在 Obsidian 本地存储中的 UUID。它能跨普通重启、插件重载和软件更新保留，但清除应用存储或重装就会丢失。
-- 本地存储属于一次安装，而不是物理设备本身，也不会随同步数据迁移。
-- BPM 只保存平台标识的哈希，用它展示设备列表并记住本次安装选用的预设，从不把配置绑定到设备 id。因此出现重复记录或删除旧记录，都不会改变预设内容，也不会影响另一台安装选择哪份预设。
-- 如果希望把两次安装视为同一台设备，请手动改名或删除旧记录，并在两边选择同一份命名预设。不提供单设备配置，因为同步后无法可靠对账。
-
-Obsidian 原生启用的插件可能先于管理器启动；若需要接管启动顺序，请配合现有延迟启动和启动接管功能。未安装插件与暂不可用的 Ribbon 图标会保留配置。触屏通过上下移动按钮调整 Ribbon 顺序，无需拖拽。
-
-验证命令：`bun run build`、`node --test tests/device-management.test.mjs`。界面测试使用独立空库，真实触屏滚动仍需真机验证。
-
 ## 📦 安装
 
 ### 社区插件市场
@@ -188,17 +151,17 @@ Obsidian 原生启用的插件可能先于管理器启动；若需要接管启�
 推荐大多数用户使用。
 
 1. 打开 **Obsidian 设置 → 第三方插件**。
-2. 搜索 **Better Plugins Manager**。
+2. 搜索 **Better Manager**。
 3. 安装并启用插件。
 
 ### 手动安装
 
 适合直接安装 GitHub Release。
 
-1. 下载 [latest release](https://github.com/eondrcode/obsidian-manager/releases)。
+1. 下载 [latest release](https://github.com/lmce72/obsidian-manager-rev/releases)。
 2. 将 `main.js`、`manifest.json` 和 `styles.css` 复制到 `.obsidian/plugins/better-plugins-manager/`。
 3. 重启 Obsidian。
-4. 在 **设置 → 第三方插件** 中启用 **Better Plugins Manager**。
+4. 在 **设置 → 第三方插件** 中启用 **Better Manager**。
 
 ---
 
@@ -223,6 +186,7 @@ Obsidian 原生启用的插件可能先于管理器启动；若需要接管启�
 - **左键** 点击主要控件进行切换、编辑、安装、导入或执行操作。
 - **右键** 插件项目打开上下文菜单。
 - **悬停** 工具栏按钮查看提示；触屏设备可使用长按提示。
+- **工具栏标签** 默认仅当前页显示，悬停可查看其他标签；可在 **设置 → 样式** 调整。
 
 ---
 
@@ -230,12 +194,11 @@ Obsidian 原生启用的插件可能先于管理器启动；若需要接管启�
 
 BPM 是一个本地 Obsidian 插件管理器，但部分功能会有意使用外部服务或浏览器 API：
 
-- **外部网络请求**：BPM 仅在用户可见的插件管理功能中访问 GitHub，例如获取社区插件元数据、解析仓库、检查 release，以及从 GitHub 安装或更新插件/主题。这些请求可能使用 `github.com`、`api.github.com` 和 `raw.githubusercontent.com`。BPM 也只会在用户点击相关按钮时打开 `github.com` 仓库页面和 `www.bilibili.com` 项目教程链接。
+- **外部网络请求**：BPM 在用户可见的插件管理功能中访问 GitHub，例如获取社区插件元数据、解析仓库、检查 release，以及从 GitHub 安装或更新插件/主题。这些请求可能使用 `github.com`、`api.github.com` 和 `raw.githubusercontent.com`。仓库、主页和发布链接仅在点击时打开；项目教程链接同样仅在点击时打开。
 - **剪贴板访问**：BPM 仅在用户点击插件的 **Copy ID** 时写入系统剪贴板。
 - **Vault 文件访问**：BPM 会读取插件/主题元数据、用户选中的插件配置文件、迁移包和旧版导出文件夹，用于管理、迁移、备份、导入/导出和冲突排查。BPM 不会把 vault 笔记上传到远程服务。
 - **设备记录**：启用设备管理后，BPM 会为每台设备在 vault 配置目录写一个小型 JSON 文件（`.obsidian/better-plugins-manager-device-<id>.json`），用于同步后让各设备互相出现在设备清单里。文件只包含设备 id、显示名称、设备类型和最近上线时间，不含笔记、插件配置或凭据；写入走 Obsidian 的 vault adapter，不访问 vault 外部；从列表移除设备时会删除对应文件。
 - **Base64 编码/解码**：BPM 运行时使用 `btoa`/`atob` 仅用于在本地 Transfer Pack JSON 数据中打包和恢复二进制/文本文件，不用于隐藏 API key、URL、远程代码或可执行 payload。
-- **扫描限制**：如果插件目录或市场提示恶意软件、混淆或网络扫描不可用，请在安装前查看本仓库源码和 release assets。BPM 不会有意混淆源码。
 
 ---
 ## 🔍 冲突诊断教程
@@ -339,4 +302,4 @@ BPM 设置按功能拆分为多个页面：
 
 ## 📄 License
 
-[MIT](../LICENSE)
+[MIT](https://github.com/lmce72/obsidian-manager-rev/blob/main/LICENSE)

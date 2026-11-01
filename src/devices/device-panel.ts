@@ -126,9 +126,12 @@ export class DevicePanel {
 
         for (const preset of devices.presetsFor(this.selected)) {
             const bound = preset.id === devices.boundPresetId;
+            const isDefault = preset.id === devices.defaultPreset(this.selected).id;
             let name = preset.name;
             const row = new Setting(card).setName(preset.name)
-                .setDesc(bound ? this.t('设备_已绑定') : this.t('设备_未绑定'));
+                .setDesc([bound ? this.t('设备_已绑定') : this.t('设备_未绑定'), isDefault ? this.t('设备_默认预设') : ''].filter(Boolean).join(' · '));
+            row.addButton(button => button.setButtonText(this.t(isDefault ? '设备_默认预设' : '设备_设为默认'))
+                .setDisabled(isDefault).onClick(() => { void this.action(() => devices.setDefaultPreset(preset.id)); }));
             row.addText(text => text.setValue(name).setPlaceholder(this.t('通用_名称_文本')).onChange(value => { name = value; }));
             row.addExtraButton(button => button.setIcon('save').setTooltip(this.t('设备_保存名称')).onClick(() => {
                 void this.action(() => devices.renamePreset(preset.id, name));

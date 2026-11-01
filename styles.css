@@ -16221,54 +16221,80 @@ body .manager-personalize .manager-toolbar__tab.is-active {
     border-top: 0;
 }
 
-/* 设置分页滚动条不占位：隐藏滚动条，仍可滚动 */
-.manager-setting__tabs {
-    scrollbar-width: none !important;
-}
-
-.manager-setting__tabs::-webkit-scrollbar {
-    display: none !important;
-    width: 0 !important;
-    height: 0 !important;
-}
-
-/* 设置分页：滚动条浮动在分页栏底部，不占用布局高度 */
+/* 浮动滑块复用设置分页方案，不占布局高度；Shared in-strip scrollbar overlay. */
 .manager-setting__tabs-wrap {
     position: relative;
     flex: 1 1 auto;
     min-width: 0;
     max-width: 100%;
 }
+.manager-setting__tabs-wrap .manager-setting__tabs { width: 100%; }
 
-.manager-setting__tabs-wrap .manager-setting__tabs {
-    width: 100%;
+/* 提高优先级，压过各顶栏的原生滚动条规则；Override native scrollbar rules for all managed strips. */
+body .bpm-scroll-strip.bpm-scroll-strip {
+    position: relative !important;
+    scrollbar-width: none !important;
 }
-
-.manager-setting__tabs-scrollbar {
+body .bpm-scroll-strip.bpm-scroll-strip::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+}
+.bpm-scroll-strip__track {
     position: absolute;
+    z-index: 10;
     left: 2px;
-    right: 2px;
     bottom: 1px;
     height: 4px;
     border-radius: 2px;
-    background: transparent;
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.15s ease;
 }
-
-.manager-setting__tabs-scrollbar.is-hidden {
-    display: none;
-}
-
-.manager-setting__tabs-wrap:hover .manager-setting__tabs-scrollbar,
-.manager-setting__tabs-wrap.is-scrolling .manager-setting__tabs-scrollbar {
-    opacity: 1;
-}
-
-.manager-setting__tabs-scrollbar-thumb {
+.bpm-scroll-strip__track[hidden] { display: none !important; }
+.bpm-scroll-strip:hover > .bpm-scroll-strip__track,
+.bpm-scroll-strip.is-strip-scrolling > .bpm-scroll-strip__track,
+.bpm-scroll-strip:has(> .bpm-scroll-strip__track > .is-dragging) > .bpm-scroll-strip__track { opacity: 1; }
+.bpm-scroll-strip__thumb {
     height: 100%;
     border-radius: 2px;
     background: var(--scrollbar-thumb-bg, var(--background-modifier-border));
-    transition: transform 0.05s linear;
+    pointer-events: auto;
+    cursor: grab;
+    touch-action: none;
+}
+.bpm-scroll-strip__thumb.is-dragging { cursor: grabbing; }
+
+/* 升级介绍沿用原生控件与主题变量；Native controls and theme variables frame the offline tour. */
+.modal.manager-release-highlights {
+    display: flex;
+    flex-direction: column;
+    width: min(94vw, 1040px);
+    max-height: 92vh;
+}
+.manager-release-highlights .modal-content { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.manager-release-highlights__footer {
+    flex: 0 0 auto;
+    padding-top: var(--size-4-2);
+    border-top: 1px solid var(--background-modifier-border);
+}
+.manager-release-highlights__intro { margin: 0 0 var(--size-4-3); }
+.manager-release-highlights .setting-item { padding: var(--size-4-2) 0; }
+.manager-release-highlights__figure { margin: var(--size-4-3) 0; }
+.manager-release-highlights__image {
+    display: block;
+    width: 100%;
+    max-height: 42vh;
+    object-fit: contain;
+    border-radius: var(--radius-m);
+    background: var(--background-secondary);
+}
+.manager-release-highlights__caption {
+    margin-top: var(--size-4-3);
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
+}
+@media (max-width: 600px) {
+    .manager-release-highlights .setting-item { flex-wrap: wrap; gap: var(--size-4-2); }
+    .manager-release-highlights .setting-item-control { flex-wrap: wrap; }
 }

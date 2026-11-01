@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "name": "Independent source example (placeholder URLs)",
+  "plugins": [
+    {
+      "id": "example-open-plugin",
+      "name": "Example open plugin",
+      "author": "Example author",
+      "publisher": "Example community",
+      "description": "Example metadata only; URLs are placeholders.",
+      "repositoryUrl": "https://git.example.org/community/plugin",
+      "originUrl": "https://example.org/plugins/open",
+      "openness": "open-source",
+      "license": "MIT",
+      "version": "1.1.0",
+      "minAppVersion": "1.8.0",
+      "isDesktopOnly": false,
+      "lastMaintainedAt": "2026-10-29T12:00:00Z",
+      "tags": ["Example"],
+      "useCases": ["Organize a weekly writing review", "Connect project notes"],
+      "quickStart": ["Open a disposable example note.", "Follow the original publication's setup steps.", "Record whether this improves your workflow in the try list."],
+      "screenshots": [{ "url": "https://example.org/screenshots/open.png", "caption": "Example preview (placeholder URL)" }],
+      "demoUrl": "https://example.org/plugins/open/demo",
+      "releases": [
+        {
+          "version": "1.0.0",
+          "publishedAt": "2026-10-01T12:00:00Z",
+          "downloads": 100,
+          "manifest": "https://cdn.example.org/open/1.0.0/manifest.json",
+          "main": "https://cdn.example.org/open/1.0.0/main.js"
+        },
+        {
+          "version": "1.1.0",
+          "publishedAt": "2026-10-29T12:00:00Z",
+          "downloads": 250,
+          "manifest": "https://cdn.example.org/open/1.1.0/manifest.json",
+          "main": "https://cdn.example.org/open/1.1.0/main.js",
+          "styles": "https://cdn.example.org/open/1.1.0/styles.css"
+        }
+      ]
+    },
+    {
+      "id": "example-closed-plugin",
+      "name": "Example closed plugin",
+      "publisher": "Example vendor",
+      "description": "Closed-source distribution without a public repository.",
+      "originUrl": "https://vendor.example.org/plugin",
+      "openness": "closed-source",
+      "version": "2.0.0",
+      "useCases": ["Explore a vendor-distributed tool"],
+      "quickStart": ["Read the vendor's requirements and terms before installing."],
+      "releases": [
+        {
+          "version": "2.0.0",
+          "downloads": 50,
+          "manifest": "https://vendor.example.org/downloads/2.0.0/manifest.json",
+          "main": "https://vendor.example.org/downloads/2.0.0/main.js"
+        }
+      ]
+    }
+  ],
+  "stats": {
+    "example-open-plugin": {
+      "downloads": 350,
+      "updated": 1793275200000,
+      "1.0.0": 100,
+      "1.1.0": 250
+    },
+    "example-closed-plugin": {
+      "downloads": 50,
+      "2.0.0": 50
+    }
+  }
+}

@@ -1,5 +1,6 @@
 import { Notice, Platform } from 'obsidian';
 import type Manager from '../main';
+import { featureEnabled } from '../features';
 import type { RibbonGroup, RibbonItem } from '../data/types';
 import { applyPresetToSettings, capturePreset, cloneAppearance, clonePreset,
     allPresets, detectDeviceType, detectSystemPlatform, DEVICE_TYPES, DeviceManagement, DevicePluginFilters, DevicePluginState, DevicePreset, DeviceScope, DeviceType,
@@ -24,6 +25,7 @@ type CustomCssLike = {
     setTheme?(theme: string): void;
     setCssEnabledStatus?(id: string, enabled: boolean): void;
     loadSnippets?(): Promise<void>;
+    loadTheme?(): Promise<void>;
 };
 type CapacitorDevice = { getId?(): Promise<{ identifier?: string }> };
 interface StoredIdentity { id?: unknown; type?: unknown; platformId?: unknown; presetId?: unknown; }
@@ -69,6 +71,7 @@ export class DeviceManager {
         }
         settings.DEVICE_MANAGEMENT = normalizeDeviceManagement(legacy,
             snapshotPreset(settings, { appearance: this.readLiveAppearance() }));
+        if (!featureEnabled(settings, 'devices')) settings.DEVICE_MANAGEMENT.enabled = false;
         const stored = await this.loadIdentity();
         this.migrateDeviceRecord(typeof stored?.id === 'string' ? stored.id : '');
         const known = this.data.devices.find(device => device.id === this.id);
@@ -87,7 +90,7 @@ export class DeviceManager {
         this.persistIdentity();
         if (this.data.enabled) {
             this.adoptIfNeeded(this.type);
-            this.applyEffective();
+            await this.applyEffective();
         }
         this.ready = true;
         // 记录文件是跨设备的唯一通道：启动时先收别人的，再补写缺失的（含旧版 data.json 里的记录），最后写自己。
@@ -235,7 +238,7 @@ export class DeviceManager {
     private ensureBinding(storedPresetId: string, notifyFallback = false): void {
         const found = storedPresetId ? this.presetById(storedPresetId) : null;
         if (found && found.type === this.type) { this.boundPresetId = found.preset.id; return; }
-        const fallback = this.presetsFor(this.type)[0];
+        const fallback = this.defaultPreset(this.type);
         this.boundPresetId = fallback?.id ?? '';
         if (notifyFallback && storedPresetId && fallback) {
             new Notice(this.manager.translator.t('设备_预设回退', { name: fallback.name }));
@@ -257,6 +260,21 @@ export class DeviceManager {
             this.persistIdentity();
             if (this.data.enabled) await this.applyCurrent();
             await this.manager.saveSettings({ captureDevice: false });
+        });
+    }
+
+    /** 默认预设仅控制新绑定与回退，不覆盖已有绑定；Defaults preserve explicit bindings. */
+    defaultPreset(type: DeviceType): DevicePreset {
+        return this.presetsFor(type).find(preset => preset.id === this.data.defaultPresets[type]) ?? this.presetsFor(type)[0];
+    }
+    async setDefaultPreset(id: string): Promise<void> {
+        await this.run(async () => {
+            const found = this.presetById(id);
+            if (!found) throw new Error(this.manager.translator.t('设备_未找到'));
+            const previous = this.data.defaultPresets[found.type];
+            this.data.defaultPresets[found.type] = id;
+            try { await this.manager.saveSettings(); }
+            catch (error) { this.data.defaultPresets[found.type] = previous; throw error; }
         });
     }
     async createPreset(type: DeviceType, sourceId?: string): Promise<string | null> {
@@ -305,8 +323,9 @@ export class DeviceManager {
             const list = this.presetsFor(found.type);
             if (list.length <= 1) throw new Error(this.manager.translator.t('设备_至少保留预设'));
             this.data.presets[found.type] = list.filter(item => item.id !== id);
+            if (this.data.defaultPresets[found.type] === id) this.data.defaultPresets[found.type] = this.presetsFor(found.type)[0].id;
             if (this.boundPresetId === id) {
-                this.boundPresetId = this.presetsFor(found.type)[0]?.id ?? '';
+                this.boundPresetId = this.defaultPreset(found.type).id;
                 this.persistIdentity();
                 if (this.data.enabled) await this.applyCurrent();
             }
@@ -316,7 +335,10 @@ export class DeviceManager {
     }
 
     effectiveForScope(scope: DeviceScope): DevicePreset {
-        return clonePreset(this.presetById(scope.presetId)?.preset ?? this.presetsFor(scope.type)[0]);
+        const preset = clonePreset(this.presetById(scope.presetId)?.preset ?? this.defaultPreset(scope.type));
+        preset.plugins = this.manager.overview.effectivePlugins(preset.plugins, scope.presetId);
+        preset.appearance = this.manager.overview.effectiveAppearance(preset.appearance, scope.presetId);
+        return preset;
     }
     isLiveScope(scope: DeviceScope): boolean { return scope.presetId === this.boundPresetId; }
     isProjectingForeign(page?: ScopePage): boolean {
@@ -441,7 +463,7 @@ export class DeviceManager {
         found.preset.ribbon = cloneRibbon(snapshot.ribbon);
         found.preset.ribbonGroups = normalizeRibbonGroups(snapshot.ribbonGroups);
         found.preset.ribbonEnabled = snapshot.ribbonEnabled;
-        found.preset.plugins = { ...found.preset.plugins, ...snapshot.plugins };
+        found.preset.plugins = { ...found.preset.plugins, ...this.manager.overview.persistentPlugins(snapshot.plugins, presetId) };
         found.preset.filters = snapshot.filters;
         if (!found.preset.configured && before !== JSON.stringify([found.preset.plugins, found.preset.filters, found.preset.ribbon, found.preset.ribbonGroups, found.preset.ribbonEnabled])) {
             found.preset.configured = true;
@@ -449,11 +471,13 @@ export class DeviceManager {
     }
 
     /** 捕获时只有值真的变了才标记“已配置”，避免空保存把新类型锁死。 */
-    private captureInto(preset: DevicePreset, extras: { appearance?: ScopedAppearance }): void {
+    private captureInto(preset: DevicePreset, extras: { appearance?: ScopedAppearance }, markConfigured = true): void {
         const before = JSON.stringify([preset.plugins, preset.filters, preset.ribbon, preset.ribbonGroups, preset.ribbonEnabled, preset.appearance]);
         capturePreset(preset, this.manager.settings, extras);
+        preset.plugins = this.manager.overview.persistentPlugins(preset.plugins, preset.id);
+        preset.appearance = this.manager.overview.persistentAppearance(preset.appearance, preset.id);
         preset.filters = this.pluginFilters();
-        if (!preset.configured && before !== JSON.stringify([preset.plugins, preset.filters, preset.ribbon, preset.ribbonGroups, preset.ribbonEnabled, preset.appearance])) {
+        if (markConfigured && !preset.configured && before !== JSON.stringify([preset.plugins, preset.filters, preset.ribbon, preset.ribbonGroups, preset.ribbonEnabled, preset.appearance])) {
             preset.configured = true;
         }
     }
@@ -504,6 +528,7 @@ export class DeviceManager {
     }
     /** 读写当前栏目的外观状态：外域只存储，本机实时应用。 */
     writeAppearance(page: ScopePage, patch: { theme?: string; snippets?: Record<string, boolean> }): Promise<void> {
+        if (page === 'themes') return this.run(() => this.manager.overview.writeAppearance(patch));
         return this.run(async () => {
             const scope = this.selectedScope(page);
             const live = this.isLiveScope(scope);
@@ -546,7 +571,10 @@ export class DeviceManager {
 
     /** 保存时写回的“本机真实值”；投影期间不能让外域值污染 data.json。 */
     persistedSettings(): Manager['settings'] {
-        const persisted = this.buildPersistedSettings();
+        const raw = this.buildPersistedSettings();
+        const states = this.manager.overview.persistentPlugins(Object.fromEntries(raw.Plugins.map(plugin =>
+            [plugin.id, { enabled: plugin.enabled, delay: plugin.delay }])), this.boundPresetId);
+        const persisted = { ...raw, Plugins: raw.Plugins.map(plugin => ({ ...plugin, ...states[plugin.id] })) };
         // 设备记录只走独立文件；写进 data.json 会让三端互相覆盖并触发同步抖动。
         const management = persisted.DEVICE_MANAGEMENT;
         if (!management) return persisted;
@@ -738,7 +766,7 @@ export class DeviceManager {
             if (id === this.id) {
                 if (this.data.enabled) {
                     const bound = this.boundPreset();
-                    if (bound) capturePreset(bound, this.manager.settings, { appearance: this.readLiveAppearance() });
+                    if (bound) this.captureInto(bound, { appearance: this.readLiveAppearance() }, false);
                 }
                 this.type = type;
                 this.adoptIfNeeded(type);
@@ -880,31 +908,40 @@ export class DeviceManager {
 
     /** 应用本机绑定的预设：投影设置、重算插件运行态，再把新登记的项写回。 */
     private async applyCurrent(): Promise<void> {
-        this.applyEffective();
+        await this.applyEffective();
         await this.manager.applyDeviceConfiguration();
         const bound = this.boundPreset();
         if (bound) this.captureInto(bound, { appearance: this.readLiveAppearance() });
         await this.manager.saveSettings({ captureDevice: false });
     }
 
-    private applyEffective(): void {
-        const preset = this.boundPreset();
-        if (!preset) return;
+    private async applyEffective(): Promise<void> {
+        const bound = this.boundPreset();
+        if (!bound) return;
+        const preset = this.effectiveForScope({ key: scopeKey(bound.id), type: this.type, presetId: bound.id });
         applyPresetToSettings(preset, this.manager.settings, this.manager.manifest.id);
-        this.applyAppearance(preset.appearance);
+        if (featureEnabled(this.manager.settings, 'themes')) await this.applyAppearance(preset.appearance);
     }
 
-    private applyAppearance(appearance: ScopedAppearance): void {
+    private async applyAppearance(appearance: ScopedAppearance): Promise<void> {
         const customCss = this.customCss();
         if (!customCss) return;
         try {
-            if (customCss.theme !== appearance.theme) customCss.setTheme?.(appearance.theme);
-            const live = this.readLiveAppearance();
-            const enabled = new Set(Object.entries(appearance.snippets).filter(([, flag]) => flag).map(([id]) => id));
-            for (const id of Object.keys(live.snippets)) if (!enabled.has(id)) customCss.setCssEnabledStatus?.(id, false);
-            for (const id of enabled) if (!live.snippets[id]) customCss.setCssEnabledStatus?.(id, true);
+            // 绑定切换也不能把会话覆盖写盘；Rebinding preserves the permanent appearance baseline.
+            const persistent = this.manager.overview.persistentAppearance(appearance, this.boundPresetId);
+            if (customCss.theme !== persistent.theme) customCss.setTheme?.(persistent.theme);
+            const snippetIds = new Set([...Object.keys(this.readLiveAppearance().snippets), ...Object.keys(persistent.snippets)]);
+            const enabled = new Set(Object.entries(persistent.snippets).filter(([, flag]) => flag).map(([id]) => id));
+            customCss.enabledSnippets = customCss.enabledSnippets instanceof Set ? new Set(enabled) : [...enabled];
+            for (const id of snippetIds) customCss.setCssEnabledStatus?.(id, enabled.has(id));
+            customCss.theme = appearance.theme;
+            const runtimeIds = Object.keys(appearance.snippets).filter(id => appearance.snippets[id]);
+            customCss.enabledSnippets = customCss.enabledSnippets instanceof Set ? new Set(runtimeIds) : runtimeIds;
+            await customCss.loadTheme?.();
+            await customCss.loadSnippets?.();
         } catch (error) {
-            if (this.manager.settings.DEBUG) console.error('[BPM] Apply device appearance failed', error);
+            this.report(error);
+            throw error;
         }
     }
 }

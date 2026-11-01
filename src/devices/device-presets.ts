@@ -49,6 +49,7 @@ export interface ManagedDevice {
 
 export interface DeviceManagement {
     enabled: boolean;
+    defaultPresets: Record<DeviceType, string>;
     presets: Record<DeviceType, DevicePreset[]>;
     devices: ManagedDevice[];
 }
@@ -328,7 +329,12 @@ export function normalizeDeviceManagement(value: unknown, baseline: DevicePreset
                 lastSeen: typeof raw.lastSeen === 'number' && Number.isFinite(raw.lastSeen) ? raw.lastSeen : 0 });
         }
     }
-    return { enabled: source.enabled === true, presets, devices };
+    const rawDefaults = isRecord(source.defaultPresets) ? source.defaultPresets : {};
+    const defaultPresets = {} as Record<DeviceType, string>;
+    for (const type of DEVICE_TYPES) {
+        defaultPresets[type] = presets[type].find(preset => preset.id === rawDefaults[type])?.id ?? presets[type][0].id;
+    }
+    return { enabled: source.enabled === true, defaultPresets, presets, devices };
 }
 
 /** 保留未安装插件，避免另一设备的配置被裁剪；Keep remote-only plugin choices. */

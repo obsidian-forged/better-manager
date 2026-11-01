@@ -93,12 +93,16 @@ export interface ManagerSettings {
     LANGUAGE_INITIALIZED?: boolean;
     /** 已执行到的设置迁移版本，由 migrations.ts 维护，用于避免重复迁移旧数据。 */
     MIGRATION_VERSION?: string;
+    /** 待展示的版本介绍，关闭后清空；Pending upgrade tour, cleared on dismissal. */
+    RELEASE_HIGHLIGHTS_PENDING: string;
     /** 调试日志开关。开启后会输出更新检测、仓库解析、迁移等调试信息。 */
     DEBUG: boolean;
 
     // 基础设置页
     /** 是否持久化管理页筛选状态；关闭时筛选只在当前弹窗生命周期内生效。 */
     PERSISTENCE: boolean;
+    /** 最近安装标签显示窗口（天）；0 表示关闭标签。 */
+    RECENT_INSTALL_DAYS: number;
     /** 管理器弹窗是否居中显示；关闭时桌面端会偏上显示。 */
     CENTER: boolean;
     /** 是否启用 BPM 延迟启动模式；开启后插件启用状态由 BPM 记录驱动。 */
@@ -271,10 +275,12 @@ export const DEFAULT_SETTINGS: ManagerSettings = {
     LANGUAGE: "",
     LANGUAGE_INITIALIZED: false,
     MIGRATION_VERSION: "",
+    RELEASE_HIGHLIGHTS_PENDING: "",
     DEBUG: false,
 
     // 基础设置页
     PERSISTENCE: false,
+    RECENT_INSTALL_DAYS: 7,
     CENTER: false,
     DELAY: false,
     DELAY_WAIT_MESSAGE: false,
@@ -318,7 +324,7 @@ export const DEFAULT_SETTINGS: ManagerSettings = {
     // 样式设置页
     PLUGIN_OVERVIEW_LAYOUT: "list",
     PLUGIN_OVERVIEW_SORT: "layout",
-    TOOLBAR_LABEL_MODE: "always",
+    TOOLBAR_LABEL_MODE: "active",
     TOOLBAR_HOVER_LABELS: true,
     ITEM_STYLE: "alwaysExpand",
     GROUP_STYLE: "a",

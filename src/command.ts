@@ -1,3 +1,4 @@
+import { featureEnabled } from './features';
 import {
     App,
     Command,
@@ -249,7 +250,7 @@ class ManagerCommandService {
     }
 
     private refreshStaticCommands() {
-        const language = this.manager.settings.LANGUAGE || "";
+        const language = (this.manager.settings.LANGUAGE || "") + JSON.stringify(this.manager.settings.FEATURES);
         if (this.staticCommandIds.size > 0 && this.staticLanguage === language) return;
         this.removeStaticCommands();
         this.staticLanguage = language;
@@ -312,6 +313,7 @@ class ManagerCommandService {
 
     private refreshDynamicCommands() {
         this.removeDynamicCommands();
+        if (!featureEnabled(this.manager.settings, 'plugins')) return;
         if (this.manager.settings.COMMAND_ITEM) this.registerPluginCommands();
         if (this.manager.settings.COMMAND_GROUP) this.registerGroupCommands();
         if (this.manager.settings.COMMAND_TAG) this.registerTagCommands();
@@ -383,6 +385,9 @@ class ManagerCommandService {
     }
 
     private addStaticCommand(command: Command) {
+        if (command.id === 'troubleshoot-conflicts' && !featureEnabled(this.manager.settings, 'troubleshoot')) return;
+        if (['control-plugin', 'save-command-profile', 'restore-previous-command-state'].includes(command.id)
+            && !featureEnabled(this.manager.settings, 'plugins')) return;
         const registered = this.manager.addCommand(command);
         this.staticCommandIds.add(registered.id);
         this.staticCommandIds.add(this.fullCommandId(command.id));

@@ -57,7 +57,7 @@ export default class ManagerBasis extends BaseSetting {
             'active': t('设置_样式设置_功能标签显示_当前'),
             'hidden': t('设置_样式设置_功能标签显示_不显示'),
         });
-        const currentLabelMode = this.settings.TOOLBAR_LABEL_MODE || 'always';
+        const currentLabelMode = this.settings.TOOLBAR_LABEL_MODE || 'active';
         toolbarLabelDropdown.setValue(currentLabelMode);
 
         const hoverLabelBar = new Setting(this.containerEl)
@@ -74,7 +74,7 @@ export default class ManagerBasis extends BaseSetting {
             void this.saveAndRefreshManager();
         });
         toolbarLabelDropdown.onChange((value) => {
-            this.settings.TOOLBAR_LABEL_MODE = (value === 'active' || value === 'hidden' ? value : 'always') as ToolbarLabelMode;
+            this.settings.TOOLBAR_LABEL_MODE = (value === 'always' || value === 'hidden' ? value : 'active') as ToolbarLabelMode;
             syncHoverRow(this.settings.TOOLBAR_LABEL_MODE);
             void this.saveAndRefreshManager();
         });

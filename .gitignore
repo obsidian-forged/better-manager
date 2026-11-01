@@ -27,3 +27,6 @@ i18n
 
 # 参考资料
 参考
+
+# Local Obsidian test vaults, profiles, backups and debug scripts
+/.device-test/

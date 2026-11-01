@@ -44,7 +44,7 @@ export class UpdateModal extends Modal {
         titleBar.descEl.empty();
         const titleWrap = titleBar.nameEl.createDiv("manager-version-picker__title");
         const titleIcon = titleWrap.createSpan({ cls: "manager-version-picker__title-icon" });
-        setIcon(titleIcon, "package-down");
+        setIcon(titleIcon, "package-open");
         const titleText = titleWrap.createDiv("manager-version-picker__title-text");
         titleText.createDiv({ cls: "manager-version-picker__eyebrow", text: t("管理器_选择版本_标题") });
         titleText.createDiv({ cls: "manager-version-picker__plugin-name", text: manifest?.name || this.pluginId });

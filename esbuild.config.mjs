@@ -12,6 +12,8 @@ const context = await esbuild.context({
 	},
 	// 修改启动路径
 	entryPoints: ["main.ts"],
+	// 截图随插件离线分发，仅介绍弹窗使用；Bundle offline screenshots for the upgrade tour.
+	loader: { ".webp": "dataurl" },
 	bundle: true,
 	external: [
 		"obsidian",

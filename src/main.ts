@@ -1,4 +1,7 @@
+import type { ReleaseHighlightsModal } from './modal/release-highlights-modal';
 import { DeviceManager } from './devices/device-manager';
+import { OverviewState } from './overview-state';
+import { featureEnabled, toolEnabled } from './features';
 import { DelayWaitNotice } from './delay-wait-notice';
 import { normalizePath, ObsidianProtocolData, Plugin, PluginManifest, Workspace } from 'obsidian';
 import { DEFAULT_SETTINGS, ManagerSettings, PluginUpdateCheckMode, ReleaseCompatibilityMode } from './settings/data';
@@ -115,6 +118,7 @@ export default class Manager extends Plugin {
     public settings!: ManagerSettings;
     public devices!: DeviceManager;
     public managerModal: ManagerModal | null = null;
+    private releaseHighlightsModal?: ReleaseHighlightsModal;
     public ribbonModal: RibbonModal | null = null;
     public appPlugins!: ObsidianPluginRegistry;
     public appWorkspace!: Workspace;
@@ -162,12 +166,15 @@ export default class Manager extends Plugin {
     /** 最近一次延时启动的结果汇总，供排查 */
     public lastDelayStartReport: DelayStartResult[] = [];
 
+    public readonly overview = new OverviewState(this);
+
     public async onload() {
         this.appPlugins = (this.app as ObsidianAppWithInternals).plugins;
         this.appWorkspace = this.app.workspace;
 
         console.log(`%c ${this.manifest.name} %c v${this.manifest.version} `, `padding: 2px; border-radius: 2px 0 0 2px; color: #fff; background: #5B5B5B;`, `padding: 2px; border-radius: 0 2px 2px 0; color: #fff; background: #409EFF;`);
         await this.loadSettings();
+        if (!featureEnabled(this.settings, 'plugins')) this.settings.DELAY = false;
         let settingsDirty = false;
         const markSettingsDirty = () => {
             settingsDirty = true;
@@ -247,6 +254,7 @@ export default class Manager extends Plugin {
         this.agreement = new Agreement(this);
         // Keep network activity and source installation out of the Windows cold-start I/O burst.
         this.app.workspace.onLayoutReady(() => {
+            this.scheduleStartupTask("release highlights", () => this.showReleaseHighlights(), 500);
             this.scheduleStartupTask("plugin updates", () => this.startupCheckForUpdates(), 3000);
             this.scheduleStartupTask("source maintenance", () => this.startupMaintainBetaSources(), 3000);
         });
@@ -310,6 +318,8 @@ export default class Manager extends Plugin {
     public onunload() {
         // 卸载后一切延迟回调必须停手，否则会在已卸载的插件上继续操作 ribbon
         this.isUnloaded = true;
+        this.releaseHighlightsModal?.close();
+        this.releaseHighlightsModal = undefined;
         this.delayWaitNotice?.stop();
         // 卸载前恢复本机预设视图，避免其他预设的投影值留在内存。
         void this.devices?.flushProjection().catch(() => { /* 卸载阶段无法提示 */ });
@@ -810,7 +820,7 @@ export default class Manager extends Plugin {
     }
 
     public isRibbonManagerEnabled(): boolean {
-        return this.settings?.RIBBON_MANAGER_ENABLED !== false;
+        return featureEnabled(this.settings, 'ribbon') && this.settings?.RIBBON_MANAGER_ENABLED !== false;
     }
 
     private ensureSystemRibbonManager() {
@@ -940,6 +950,32 @@ export default class Manager extends Plugin {
     }
 
     /** 打开管理器：命令、功能区图标共用，已打开时先关闭旧实例避免多个弹窗叠加。 */
+    /** 仅升级时展示内嵌截图，关闭后不再提示；Show the bundled tour once after upgrading. */
+    private async showReleaseHighlights(): Promise<void> {
+        if (this.isUnloaded || this.releaseHighlightsModal || this.settings.RELEASE_HIGHLIGHTS_PENDING !== '1.2.0') return;
+        try {
+            const { ReleaseHighlightsModal } = await import('./modal/release-highlights-modal.js');
+            if (this.isUnloaded) return;
+            this.releaseHighlightsModal = new ReleaseHighlightsModal(this.app, this, () => { void this.dismissReleaseHighlights(); });
+            this.releaseHighlightsModal.open();
+        } catch (error) {
+            if (this.settings.DEBUG) console.error('[BPM] Release highlights failed', error);
+            if (!this.isUnloaded) new Notice(this.translator.t('更新介绍_错误'));
+        }
+    }
+
+    private async dismissReleaseHighlights(): Promise<void> {
+        this.releaseHighlightsModal = undefined;
+        if (this.isUnloaded || this.settings.RELEASE_HIGHLIGHTS_PENDING !== '1.2.0') return;
+        this.settings.RELEASE_HIGHLIGHTS_PENDING = '';
+        try { await this.saveSettings(); }
+        catch (error) {
+            this.settings.RELEASE_HIGHLIGHTS_PENDING = '1.2.0';
+            if (this.settings.DEBUG) console.error('[BPM] Saving release highlights state failed', error);
+            new Notice(this.translator.t('更新介绍_保存失败'));
+        }
+    }
+
     public async openManagerModal(): Promise<void> {
         const { ManagerModal } = await import('./modal/manager-modal.js');
         this.managerModal?.close();
@@ -953,7 +989,7 @@ export default class Manager extends Plugin {
         // 已启动的异步 onload 必须落定后才能换预设；Wait for an in-flight startup to settle.
         while (this.delayQueueRunning && !this.isUnloaded) await new Promise<void>(resolve => window.setTimeout(resolve, 10));
         const failures: string[] = [];
-        for (const plugin of this.getDelayManagedPluginManifests()) {
+        for (const plugin of featureEnabled(this.settings, 'plugins') ? this.getDelayManagedPluginManifests() : []) {
             if (this.isUnloaded) return;
             const record = this.settings.Plugins.find(item => item.id === plugin.id);
             if (!record) continue;
@@ -961,7 +997,10 @@ export default class Manager extends Plugin {
             const persisted = this.appPlugins.enabledPlugins.has(plugin.id);
             const running = Boolean(this.appPlugins.plugins?.[plugin.id]);
             try {
-                if (!enabled) {
+                if (this.overview.pluginState(plugin.id, this.devices.boundPresetId)) {
+                    if (enabled && !running) await this.appPlugins.enablePlugin(plugin.id);
+                    else if (!enabled && running) await this.appPlugins.disablePlugin(plugin.id);
+                } else if (!enabled) {
                     if (persisted || running) await this.appPlugins.disablePluginAndSave(plugin.id);
                 } else if (this.settings.DELAY) {
                     if (persisted) await this.appPlugins.disablePluginAndSave(plugin.id);
@@ -1109,6 +1148,7 @@ export default class Manager extends Plugin {
     }
 
     private async startupCheckForUpdates() {
+        if (!featureEnabled(this.settings, 'plugins') || !toolEnabled(this.settings, 'updates')) return;
         if (!this.settings.STARTUP_CHECK_UPDATES) return;
         try {
             const manifests = Object.values(this.appPlugins.manifests).filter((pm: PluginManifest) => pm.id !== this.manifest.id);
@@ -1193,6 +1233,7 @@ export default class Manager extends Plugin {
     }
 
     private async startupMaintainBetaSources() {
+        if (!featureEnabled(this.settings, 'install')) return;
         await this.startupCheckBetaSources();
         await this.startupUpdateBetaSources();
     }
