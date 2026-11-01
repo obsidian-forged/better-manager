@@ -1,4 +1,5 @@
 import { FloatingScrollbars } from '../ui/floating-scrollbars';
+import { TaskCenterView } from '../ui/task-center-view';
 import { isToolInPage, ToolScope } from '../ui/tool-visibility';
 import { featureEnabled, toolEnabled, FeatureId, ToolId } from '../features';
 import { DevicePanel } from '../devices/device-panel';
@@ -1550,8 +1551,7 @@ export class ManagerModal extends Modal {
             statusChip.addClass(isSelf ? "is-self" : (isEnabled ? "is-enabled" : "is-disabled"));
         }
         if (cardIcon) {
-            cardIcon.empty();
-            setIcon(cardIcon, isEnabled ? "plug-zap" : "plug");
+            this.manager.pluginIcons.render(cardIcon, pluginId, isEnabled);
         }
 
         controller?.syncToggleValue?.(isSelf ? true : isEnabled);
@@ -1750,7 +1750,15 @@ export class ManagerModal extends Modal {
         this.handleMissingRepo(pluginId);
     }
 
+    /** 外域预设只保存配置，本机插件生命周期/配置文件操作必须切回本机。 */
+    private blockForeignScopeAction(action: string): boolean {
+        if (!this.manager.devices?.isProjectingForeign()) return false;
+        new Notice(this.manager.translator.t('设备_外域操作拦截', { action }), 5000);
+        return true;
+    }
+
     private async uninstallPluginWithConfirm(plugin: PluginManifest, isSelf: boolean) {
+        if (this.blockForeignScopeAction(this.manager.translator.t('管理器_删除插件_描述'))) return;
         if (isSelf) return;
         new DeleteModal(this.app, this.manager, async () => {
             await this.appPlugins.uninstallPlugin(plugin.id);
@@ -1764,6 +1772,7 @@ export class ManagerModal extends Modal {
     }
 
     private async clearPluginConfig(plugin: PluginManifest, isSelf: boolean) {
+        if (this.blockForeignScopeAction(this.manager.translator.t('管理器_清空配置_描述'))) return;
         if (isSelf) {
             new Notice(this.manager.translator.t("管理器_清空配置_自身拦截"));
             return;
@@ -1786,6 +1795,7 @@ export class ManagerModal extends Modal {
     }
 
     private async singleStartPlugin(plugin: PluginManifest) {
+        if (this.blockForeignScopeAction(this.manager.translator.t('菜单_单次启动_描述'))) return;
         new Notice(this.manager.translator.t("管理器_单次启动中_提示"));
         await this.appPlugins.enablePlugin(plugin.id);
         this.singleStartedPluginIds.add(plugin.id);
@@ -1793,6 +1803,7 @@ export class ManagerModal extends Modal {
     }
 
     private async restartPlugin(plugin: PluginManifest) {
+        if (this.blockForeignScopeAction(this.manager.translator.t('菜单_重启插件_描述'))) return;
         const heapBefore = readHeapMB();
         new Notice(this.manager.translator.t("管理器_重启中_提示"));
         await this.appPlugins.disablePlugin(plugin.id);
@@ -1820,6 +1831,7 @@ export class ManagerModal extends Modal {
     }
 
     private async enableBpmIgnoredPlugin(plugin: PluginManifest, managerPlugin: ManagerPlugin) {
+        if (this.blockForeignScopeAction(this.manager.translator.t('提示_BPM忽略_操作拦截'))) return;
         if (!managerPlugin.tags.includes(BPM_IGNORE_TAG)) return;
         managerPlugin.enabled = this.isPluginEnabledForDisplay(plugin.id, managerPlugin);
         managerPlugin.tags = managerPlugin.tags.filter((tag) => tag !== BPM_IGNORE_TAG);
@@ -1860,6 +1872,8 @@ export class ManagerModal extends Modal {
     }
 
     private openSettingsTab(tabId: string) {
+        if (tabId !== this.manager.manifest.id && this.appPlugins.manifests[tabId]
+            && this.blockForeignScopeAction(this.manager.translator.t('管理器_插件设置_描述'))) return;
         void (async () => {
             await this.appSetting.open();
             await this.appSetting.openTabById(tabId);
@@ -2323,6 +2337,7 @@ export class ManagerModal extends Modal {
     modalContainer?: HTMLElement;
     private desktopActionWrapper?: HTMLElement;
     private desktopFilterWrapper?: HTMLElement;
+    private taskCenterView?: TaskCenterView;
     private bulkEditButtonEl?: HTMLButtonElement;
     private editorButtonEl?: HTMLButtonElement;
     private pluginTabEl?: HTMLButtonElement;
@@ -2636,6 +2651,8 @@ export class ManagerModal extends Modal {
 
     private renderGlobalTools(parent: HTMLElement): void {
         const t = (key: string) => this.manager.translator.t(key);
+        this.taskCenterView?.destroy();
+        this.taskCenterView = undefined;
         const createIconTool = (icon: string, label: string, onClick: (event: MouseEvent) => void) => {
             const el = parent.createDiv({ cls: 'clickable-icon extra-setting-button manager-global-tool' });
             el.setAttribute('tabindex', '0');
@@ -2663,6 +2680,8 @@ export class ManagerModal extends Modal {
             menu.showAtMouseEvent(event);
         });
         contacts.setAttribute('aria-haspopup', 'menu');
+        // 后台下载/检查任务入口，和全局工具同一行。
+        this.taskCenterView = new TaskCenterView(this.manager, parent);
         // 关闭按钮统一用移动端那颗，原生关闭按钮由样式隐藏。
         const close = createIconTool('x', t('通用_关闭窗口'), () => this.close());
         close.addClass('manager-modal-close');
@@ -3621,7 +3640,7 @@ export class ManagerModal extends Modal {
 
             const cardIcon = createSpan({ cls: "manager-plugin-card__icon" });
             cardIcon.setAttribute("aria-hidden", "true");
-            setIcon(cardIcon, isEnabled ? "plug-zap" : "plug");
+            this.manager.pluginIcons.render(cardIcon, plugin.id, isEnabled);
             itemEl.nameEl.appendChild(cardIcon);
             // 图标旁的双行标题，名称与运行元信息分开；Two text rows beside the plugin icon.
             const headingText = itemEl.nameEl.createDiv('manager-plugin-card__heading-text');
@@ -4091,6 +4110,7 @@ export class ManagerModal extends Modal {
                     openPluginSetting.setIcon("settings");
                     openPluginSetting.setTooltip(this.manager.translator.t("管理器_打开设置_描述"));
                     openPluginSetting.onClick(() => {
+                        if (this.blockForeignScopeAction(this.manager.translator.t("管理器_打开设置_描述"))) return;
                         openPluginSetting?.setDisabled(true);
                         void (async () => {
                             try {
@@ -4183,8 +4203,7 @@ export class ManagerModal extends Modal {
                             statusChip.setText(targetEnabled ? this.manager.translator.t("管理器_状态_启用中") : this.manager.translator.t("管理器_状态_已禁用"));
                             statusChip.removeClass(targetEnabled ? "is-disabled" : "is-enabled");
                             statusChip.addClass(targetEnabled ? "is-enabled" : "is-disabled");
-                            cardIcon.empty();
-                            setIcon(cardIcon, targetEnabled ? "plug-zap" : "plug");
+                            this.manager.pluginIcons.render(cardIcon, plugin.id, targetEnabled);
                             if (this.settings.FADE_OUT_DISABLED_PLUGINS) {
                                 itemEl.settingEl.toggleClass("inactive", !targetEnabled);
                             }
@@ -8064,6 +8083,12 @@ export class ManagerModal extends Modal {
         }
     }
 
+    public refreshDevicePanelIfOpen(): void {
+        if (this.activePage === "devices" && this.devicePanel && this.pageEl?.isConnected) {
+            this.devicePanel.render(this.pageEl);
+        }
+    }
+
     private showDevicePanel(): void {
         if (!this.devicePanel) this.devicePanel = new DevicePanel(this.manager);
         this.devicePanel.render(this.pageEl);
@@ -8093,6 +8118,7 @@ export class ManagerModal extends Modal {
             return;
         }
         this.manager.devices?.noteActivePage(this.activePage);
+        if (this.activePage !== "devices") this.devicePanel?.destroy();
         const renderGeneration = this.nextRenderGeneration();
         this.pageEl.empty();
         this.clearPluginOverviewLayoutClass();
@@ -8229,6 +8255,9 @@ export class ManagerModal extends Modal {
     public onClose() {
         this.scrollbars?.destroy();
         this.scrollbars = undefined;
+        this.taskCenterView?.destroy();
+        this.taskCenterView = undefined;
+        this.devicePanel?.destroy();
         this.ribbonPage?.closeGroupMenus();
         this.mobileHeaderObserver?.disconnect();
         this.mobileHeaderObserver = undefined;

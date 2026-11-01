@@ -181,8 +181,16 @@ export class CatalogSourceImportModal extends Modal {
             this.preview = undefined;
             this.previewEl.empty();
             let result: SourcePreview;
-            if (this.mode === "url") result = await this.service.previewUrl(this.urlDraft);
-            else {
+            if (this.mode === "url") {
+                const task = this.manager.tasks.start({ title: this.t("任务_下载目录数据"), progress: 0.1 });
+                try {
+                    result = await this.service.previewUrl(this.urlDraft);
+                    task.done();
+                } catch (error) {
+                    task.fail();
+                    throw error;
+                }
+            } else {
                 const file = this.mode === "file" ? this.file : undefined;
                 if (this.mode === "file" && !file) throw new Error(this.t("目录_选择文件"));
                 if (file && file.size > MAX_SOURCE_BYTES) throw new Error(this.t("目录_文件过大"));

@@ -106,14 +106,25 @@ export class SettingsSessionStore {
         this.editing = true;
     }
 
-    external(value: object): { changed: boolean; apply?: SettingsRecord } {
+    /** 外部快照是否变化；投影期间只探测，不推进 base/observed。 */
+    public hasExternalChange(value: object): boolean {
+        return settingsFingerprint(value) !== this.observed;
+    }
+
+    /**
+     * 外部修改与当前本地配置做三方合并后立即返回：
+     * 本机未保存字段优先，其他设备修改的独立字段直接落地。
+     * base 更新为远端快照，后续同步仍能区分本地编辑。
+     */
+    external(value: object, local: object): { changed: boolean; apply?: SettingsRecord } {
         const incoming = record(clone(value));
         const fingerprint = settingsFingerprint(incoming);
         if (fingerprint === this.observed) return { changed: false };
+        const merged = mergeSettings(this.base, record(clone(local)), incoming);
         this.observed = fingerprint;
-        if (this.editing || this.cached) { this.pending = true; return { changed: true }; }
         this.base = incoming;
-        return { changed: true, apply: incoming };
+        this.pending = this.editing || this.cached;
+        return { changed: true, apply: merged };
     }
 
     async activateCache(value: object): Promise<void> {

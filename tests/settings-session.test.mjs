@@ -16,27 +16,46 @@ function fixture(initial = { style: 'cards', name: 'initial' }, cache = null) {
     };
     return { state, io, store: new SettingsSessionStore(io, 'device-a') };
 }
-test('an open editor buffers external changes without changing its configuration', async () => {
+test('an open editor merges external changes without mutating its local object', async () => {
     const { state, store } = fixture(); const current = await store.load(); store.begin();
     state.shared.style = 'list';
-    assert.deepEqual(store.external(state.shared), { changed: true });
+    const result = store.external(state.shared, current);
+    assert.equal(result.changed, true);
+    assert.equal(result.apply.style, 'list');
     assert.equal(current.style, 'cards');
-    assert.deepEqual(store.external({ name: 'initial', style: 'list' }), { changed: false });
+    assert.deepEqual(store.external({ name: 'initial', style: 'list' }, current), { changed: false });
+    Object.assign(current, result.apply);
     const merged = await store.finish(current);
     assert.equal(merged.style, 'list');
     assert.equal(state.sharedWrites, 0);
 });
-test('protected edits write only to cache and merge back with independent remote edits on close', async () => {
+test('protected edits write only to cache while independent remote edits merge immediately', async () => {
     const { state, store } = fixture(); const current = await store.load(); store.begin();
     await store.activateCache(current);
     current.name = 'local edit'; state.shared.style = 'list';
-    store.external(state.shared); await store.save(current);
+    const result = store.external(state.shared, current);
+    assert.equal(result.apply.name, 'local edit');
+    assert.equal(result.apply.style, 'list');
+    Object.assign(current, result.apply);
+    await store.save(current);
     assert.equal(state.sharedWrites, 0); assert.equal(state.cache.value.name, 'local edit');
+    assert.equal(state.cache.value.style, 'list');
     assert.equal(store.usingCache, true);
     const merged = await store.finish(current);
     assert.deepEqual(merged, { style: 'list', name: 'local edit' });
     assert.equal(state.cache, null); assert.equal(store.usingCache, false);
 });
+test('later external fields still apply after an earlier direct merge', async () => {
+    const { state, store } = fixture(); const current = await store.load(); store.begin();
+    current.name = 'local';
+    state.shared.style = 'list';
+    Object.assign(current, store.external(state.shared, current).apply);
+    state.shared.style = 'grid';
+    const second = store.external(state.shared, current);
+    assert.equal(second.apply.style, 'grid');
+    assert.equal(second.apply.name, 'local');
+});
+
 test('normal saves also preserve remote fields without requiring protection', async () => {
     const { store, state } = fixture(); const current = await store.load(); store.begin();
     current.name = 'local'; state.shared.style = 'remote';

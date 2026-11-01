@@ -15157,6 +15157,14 @@ body.is-tablet button.manager-device-scope__quick-apply {
     margin-inline-start: auto;
 }
 
+/* 桌面端总览行：工具承载 setting-item 会被 Obsidian 模态窗补 16px 下内边距，
+   导致统计按钮与工具按钮上下错开；这里只重置桌面行内工具。 */
+.manager-container.manager-container--main:not(.manager-container--mobile) .manager-overview-heading.manager-overview-inline .manager-page-tools .setting-item {
+    min-height: 0;
+    padding: 0;
+    align-items: center;
+}
+
 /* 过滤块并入概览行后改为纵向排列，避免原有横排把筛选内容挤成 0 宽 */
 .manager-container.manager-container--main .manager-section--filters.manager-section--overview-inline {
     flex-direction: column;
@@ -16182,16 +16190,102 @@ body .manager-personalize .manager-personalize__feature.is-active,
 }
 .manager-setting__tabs-wrap .manager-setting__tabs { width: 100%; }
 
-/* 搜索占满原顶栏，结果跳转到原生设置；Search replaces the entire tab bar. */
-.manager-setting__topbar--search { gap: var(--size-4-2); }
-.manager-setting__topbar--search .manager-setting-search__input {
+/* 搜索：顶栏控件淡出、搜索框横向展开，设置内容保持可见 */
+.manager-setting__topbar {
+    position: relative;
+    --bpm-setting-search-size: 30px;
+}
+.manager-setting-search__trigger {
+    display: inline-flex;
+    flex: 0 0 var(--bpm-setting-search-size);
+    align-items: center;
+    justify-content: center;
+    width: var(--bpm-setting-search-size);
+    height: var(--bpm-setting-search-size);
+    padding: 0;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s, 6px);
+    background: transparent;
+    color: var(--text-muted);
+    box-shadow: none;
+}
+.manager-setting-search__trigger:hover,
+.manager-setting-search__trigger:focus-visible {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+/* 主题的 button 底色优先级更高，这里强制回透明底+边框 */
+body .manager-setting__topbar .manager-setting-search__trigger {
+    background: transparent !important;
+    box-shadow: none !important;
+}
+body .manager-setting__topbar .manager-setting-search__trigger:hover,
+body .manager-setting__topbar .manager-setting-search__trigger:focus-visible {
+    background: var(--background-modifier-hover) !important;
+}
+.manager-setting-search__trigger svg { width: 18px; height: 18px; }
+
+.manager-setting__topbar--search > :not(.manager-setting-search__layer) {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+}
+.manager-setting-search__layer {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: var(--bpm-setting-search-size);
+    overflow: hidden;
+    transition: width 0.24s ease;
+}
+.manager-setting-search__layer.is-open { width: 100%; }
+.manager-setting-search__field {
     flex: 1 1 auto;
+    min-width: 0;
+    opacity: 0;
+    transition: opacity 0.15s ease 0.05s;
+}
+.manager-setting-search__layer.is-open .manager-setting-search__field { opacity: 1; }
+.manager-setting-search__field .manager-setting-search__input {
     width: 100%;
     min-width: 0;
+    height: var(--bpm-setting-search-size);
 }
-.manager-setting-search__trigger,
-.manager-setting__topbar--search > button { flex: 0 0 auto; }
+.manager-setting-search__close {
+    display: inline-flex;
+    flex: 0 0 var(--bpm-setting-search-size);
+    align-items: center;
+    justify-content: center;
+    width: var(--bpm-setting-search-size);
+    height: var(--bpm-setting-search-size);
+    padding: 0;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s, 6px);
+    background: transparent;
+    color: var(--text-muted);
+    box-shadow: none;
+}
+.manager-setting-search__close:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
 .manager-setting-search__results { display: flex; flex-direction: column; gap: var(--size-4-2); }
+.manager-setting-search__results--floating {
+    position: fixed;
+    z-index: 320;
+    overflow-y: auto;
+    padding: 8px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m, 8px);
+    background: var(--background-primary);
+    box-shadow: var(--shadow-s, 0 8px 24px rgba(0, 0, 0, 0.18));
+}
+@media (max-width: 600px) {
+    .manager-setting__topbar { --bpm-setting-search-size: 34px; }
+}
 .manager-setting-search__status { color: var(--text-muted); font-size: var(--font-ui-small); }
 button.manager-setting-search__result {
     display: flex;
@@ -16280,4 +16374,333 @@ body .bpm-scroll-strip.bpm-scroll-strip::-webkit-scrollbar {
 @media (max-width: 600px) {
     .manager-release-highlights .setting-item { flex-wrap: wrap; gap: var(--size-4-2); }
     .manager-release-highlights .setting-item-control { flex-wrap: wrap; }
+}
+
+/* Plugin glyphs retain the card tile; colour only flows vertically. */
+.manager-plugin-card__icon[data-bpm-icon] {
+    color: var(--bpm-plugin-icon-color, var(--text-accent));
+    background: linear-gradient(180deg, color-mix(in srgb, var(--bpm-plugin-icon-color, var(--interactive-accent)) 16%, var(--bpm-card)), color-mix(in srgb, var(--bpm-plugin-icon-color, var(--interactive-accent)) 5%, var(--bpm-card)));
+}
+.manager-plugin-card.is-disabled .manager-plugin-card__icon[data-bpm-icon] { opacity: 0.65; }
+
+/* 设置顶栏：后台在线任务入口与浮动进度面板 / Background task entry and floating progress panel */
+.manager-setting__tasks {
+    position: relative;
+    display: inline-flex;
+    flex: 0 0 auto;
+}
+
+.manager-setting__tasks-button {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s, 6px);
+    background: transparent;
+    color: var(--text-muted);
+    box-shadow: none;
+    cursor: pointer;
+}
+
+.manager-setting__tasks-button:hover,
+.manager-setting__tasks-button.is-open {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.manager-setting__tasks-button svg {
+    width: 18px;
+    height: 18px;
+}
+
+.manager-setting__tasks-dot {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--interactive-accent);
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.manager-setting__tasks-button.has-running .manager-setting__tasks-dot {
+    opacity: 1;
+    animation: bpm-task-pulse 1.6s ease-in-out infinite;
+}
+
+.manager-setting__task-panel {
+    position: fixed;
+    z-index: 300;
+    display: flex;
+    flex-direction: column;
+    width: min(360px, calc(100vw - 24px));
+    max-height: min(420px, calc(100vh - 96px));
+    padding: 10px;
+    overflow: hidden;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m, 8px);
+    background: var(--background-primary);
+    box-shadow: var(--shadow-s, 0 8px 24px rgba(0, 0, 0, 0.18));
+    color: var(--text-normal);
+}
+
+.manager-setting__task-panel.is-hidden {
+    display: none;
+}
+
+.manager-setting__task-panel-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 4px 8px;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.manager-setting__task-panel-title {
+    font-size: var(--font-ui-medium);
+    font-weight: 600;
+}
+
+.manager-setting__task-panel-count {
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+}
+
+.manager-setting__task-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-height: 0;
+    margin-top: 6px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+}
+
+.manager-setting__task-empty {
+    padding: 16px 8px;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    text-align: center;
+}
+
+.manager-setting__task-empty.is-hidden {
+    display: none;
+}
+
+.manager-setting__task {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 4px;
+    border-radius: var(--radius-s, 6px);
+}
+
+.manager-setting__task:hover {
+    background: var(--background-modifier-hover);
+}
+
+.manager-setting__task-icon {
+    display: inline-flex;
+    flex: 0 0 18px;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    margin-top: 1px;
+    color: var(--text-muted);
+}
+
+.manager-setting__task-icon svg {
+    width: 18px;
+    height: 18px;
+}
+
+.manager-setting__task.is-running .manager-setting__task-icon {
+    color: var(--text-accent);
+}
+
+/* 2 秒一圈的加载图标 / One spin every two seconds */
+.manager-setting__task.is-running .manager-setting__task-icon svg {
+    animation: bpm-task-spin 2s linear infinite;
+}
+
+.manager-setting__task.is-done .manager-setting__task-icon {
+    color: var(--text-success, var(--interactive-accent));
+}
+
+.manager-setting__task.is-error .manager-setting__task-icon {
+    color: var(--text-error);
+}
+
+.manager-setting__task-body {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+}
+
+.manager-setting__task-title-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+}
+
+.manager-setting__task-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    font-size: var(--font-ui-smaller);
+    line-height: 1.3;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.manager-setting__task-percent {
+    flex: 0 0 auto;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    font-variant-numeric: tabular-nums;
+}
+
+.manager-setting__task-bar {
+    position: relative;
+    height: 4px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--background-modifier-border);
+}
+
+.manager-setting__task-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: var(--interactive-accent);
+    transition: width 0.2s ease;
+}
+
+.manager-setting__task.is-error .manager-setting__task-fill {
+    background: var(--text-error);
+}
+
+.manager-setting__task-dismiss {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-s, 4px);
+    background: transparent;
+    color: var(--text-muted);
+    box-shadow: none;
+    cursor: pointer;
+}
+
+.manager-setting__task-dismiss:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.manager-setting__task-dismiss svg {
+    width: 14px;
+    height: 14px;
+}
+
+@keyframes bpm-task-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+@keyframes bpm-task-pulse {
+    0%, 100% { opacity: 0.35; }
+    50% { opacity: 1; }
+}
+
+@media (max-width: 600px) {
+    .manager-setting__tasks-button {
+        width: 34px;
+        height: 34px;
+    }
+
+    .manager-setting__task-panel {
+        width: min(320px, calc(100vw - 16px));
+    }
+}
+
+/* 所属插件被禁用：名称删除线、图标斜线、状态标签 */
+.ribbon-manager-item-name--disabled {
+    color: var(--text-muted);
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+}
+
+.ribbon-manager-item-icon--disabled {
+    position: relative;
+    opacity: 0.55;
+}
+
+.ribbon-manager-item-icon--disabled::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 20px;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--text-muted);
+    transform: translate(-50%, -50%) rotate(-45deg);
+    pointer-events: none;
+}
+
+.ribbon-manager-disabled-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 7px;
+    border: 1px solid color-mix(in srgb, var(--text-error) 45%, var(--background-modifier-border));
+    border-radius: 999px;
+    color: var(--text-error);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+/* Ribbon 过滤栏：多选状态钮在分隔线左侧，分组使用 BPM 下拉，搜索靠右。 */
+.ribbon-manager-filter-right {
+    margin-inline-start: auto;
+    justify-content: flex-end;
+}
+
+.ribbon-manager-filter-group > .manager-scope-select--compact {
+    flex: 0 0 auto;
+    align-self: center;
+}
+
+.ribbon-manager-filter-group > .manager-scope-select--compact .manager-multiselect-filter__trigger {
+    height: 30px;
+    padding-inline: 10px;
+    border: 0;
+    background: transparent;
+    color: var(--text-muted);
+}
+
+.ribbon-manager-filter-group > .manager-scope-select--compact .manager-multiselect-filter__trigger:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+@media (max-width: 760px) {
+    .ribbon-manager-modal .ribbon-manager-filter-right {
+        margin-inline-start: 0;
+        justify-content: space-between;
+    }
 }

@@ -1,5 +1,6 @@
 import { Menu, Notice, setIcon } from 'obsidian';
 import type Manager from '../main';
+import { confirmWithModal } from '../utils';
 import { ScopeSelect } from '../ui/scope-select';
 import { featureEnabled } from '../features';
 import { DEVICE_TYPES, DeviceScope, ScopePage, scopeKey, DeviceType } from './device-presets';
@@ -72,17 +73,25 @@ export class DeviceScopeBar {
     private openQuickApplyPresetMenu(event: MouseEvent, page: ScopePage, type: DeviceType): void {
         const devices = this.manager.devices;
         const t = (key: string, vars?: Record<string, string | number>) => this.manager.translator.t(key, vars);
+        const apply = async (presetId: string, presetName: string, source: 'window' | 'scope') => {
+            // 已配置的预设可能正被其他设备使用，覆盖前明确确认。
+            if (devices.presetById(presetId)?.preset.configured) {
+                const confirmed = await confirmWithModal(this.manager.app, this.manager,
+                    t('设备_快速应用确认', { target: presetName }));
+                if (!confirmed) return;
+            }
+            await devices.quickApply(presetId, page, source);
+            new Notice(t('设备_快速应用完成', { target: presetName }));
+        };
         const presetMenu = new Menu();
         for (const preset of devices.presetsFor(type)) {
             presetMenu.addItem(item => item.setTitle(preset.name).setIcon('settings-2').onClick(() => {
                 const sourceMenu = new Menu();
                 sourceMenu.addItem(source => source.setTitle(t('设备_快速应用_当前窗口')).setIcon('panels-top-left').onClick(() => {
-                    void devices.quickApply(preset.id, page, 'window').then(() => new Notice(t('设备_快速应用完成', { target: preset.name })))
-                        .catch(error => devices.report(error));
+                    void apply(preset.id, preset.name, 'window').catch(error => devices.report(error));
                 }));
                 sourceMenu.addItem(source => source.setTitle(t('设备_快速应用_当前作用域')).setIcon('copy').onClick(() => {
-                    void devices.quickApply(preset.id, page, 'scope').then(() => new Notice(t('设备_快速应用完成', { target: preset.name })))
-                        .catch(error => devices.report(error));
+                    void apply(preset.id, preset.name, 'scope').catch(error => devices.report(error));
                 }));
                 sourceMenu.showAtMouseEvent(event);
             }));

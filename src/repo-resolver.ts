@@ -1,6 +1,7 @@
 import { normalizePath, requestUrl } from "obsidian";
 import Manager from "main";
 import { resolveGithubUrl } from "./github-url";
+import { pluginStorage } from './storage/plugin-storage';
 
 /** BPM 自动标记的标签 id。该 id 写入 settings 后不能随显示语言变化。 */
 export const BPM_TAG_ID = "bpm-install";
@@ -39,11 +40,6 @@ export class RepoResolver {
 		this.manager = manager;
 	}
 
-	/** 当前插件目录下的缓存文件路径，使用 normalizePath 兼容不同平台分隔符。 */
-	private get cachePath(): string {
-		return normalizePath(`${this.manager.app.vault.configDir}/${CACHE_FILE}`);
-	}
-
 	/**
 	 * 统一读取 settings.REPO_MAP。
 	 *
@@ -80,14 +76,13 @@ export class RepoResolver {
 
 	/** 从磁盘加载社区列表缓存；失败时降级为空缓存，不阻断插件启动。 */
 	private async loadCacheFromFile(): Promise<void> {
-		const adapter = this.manager.app.vault.adapter;
-		if (!(await adapter.exists(this.cachePath))) return;
-
 		try {
-			const content = await adapter.read(this.cachePath);
+			const content = await pluginStorage(this.manager).read('cache', 'community-plugins.json',
+				[normalizePath(`${this.manager.app.vault.configDir}/${CACHE_FILE}`)]);
+			if (content === undefined) return;
 			this.cache = this.toRepoMap(JSON.parse(content));
 		} catch (e) {
-			console.error("[BPM] Failed to load repository cache", e);
+			if (this.manager.settings.DEBUG) console.error("[BPM] Failed to load repository cache", e);
 			this.cache = {};
 		}
 	}
@@ -98,11 +93,10 @@ export class RepoResolver {
 	 * 写缓存只是性能优化；失败不应影响解析结果，所以这里只记录错误。
 	 */
 	private async writeCache(): Promise<void> {
-		const adapter = this.manager.app.vault.adapter;
 		try {
-			await adapter.write(this.cachePath, JSON.stringify(this.cache, null, 2));
+			await pluginStorage(this.manager).write('cache', 'community-plugins.json', JSON.stringify(this.cache, null, 2));
 		} catch (e) {
-			console.error("[BPM] Failed to write repository cache", e);
+			if (this.manager.settings.DEBUG) console.error("[BPM] Failed to write repository cache", e);
 		}
 	}
 

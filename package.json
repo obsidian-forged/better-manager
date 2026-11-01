@@ -1,10 +1,10 @@
 {
   "name": "better-plugins-manager",
-  "version": "1.2.1",
+  "version": "1.2.3",
   "description": "A more capable plugin manager for Obsidian.",
   "main": "main.js",
   "scripts": {
-    "check": "tsc -noEmit -skipLibCheck && eslint src/devices src/catalog src/ui src/features.ts src/overview-state.ts src/settings/search.ts src/settings/search-view.ts src/settings/session-store.ts --max-warnings 0 && node --test tests/device-management.test.mjs tests/release-policy.test.mjs tests/ribbon-groups.test.mjs tests/ribbon-migration.test.mjs tests/catalog.test.mjs tests/settings-migrations.test.mjs tests/settings-search.test.mjs tests/ribbon-panel.test.mjs tests/sync-update-guard.test.mjs tests/settings-session.test.mjs",
+    "check": "tsc -noEmit -skipLibCheck && eslint src/icons src/storage src/devices src/catalog src/ui src/features.ts src/overview-state.ts src/settings/search.ts src/settings/search-view.ts src/settings/session-store.ts --max-warnings 0 && node --test tests/device-management.test.mjs tests/release-policy.test.mjs tests/ribbon-groups.test.mjs tests/ribbon-migration.test.mjs tests/catalog.test.mjs tests/settings-migrations.test.mjs tests/settings-search.test.mjs tests/ribbon-panel.test.mjs tests/sync-update-guard.test.mjs tests/settings-session.test.mjs tests/plugin-storage.test.mjs tests/plugin-icons.test.mjs tests/task-center.test.mjs",
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "version": "node version-bump.mjs && git add manifest.json versions.json package-lock.json"

@@ -289,13 +289,15 @@ export class CatalogService {
         return { value, name, url: normalized, catalog: parseCatalog(value, name, normalized) };
     }
 
-    public async refresh(id: string): Promise<void> {
+    public async refresh(id: string, onProgress?: (progress: number) => void): Promise<void> {
         await this.commit(async () => {
             const old = this.sources.find(source => source.id === id);
             const official = id === "official";
             const url = official ? OFFICIAL_CATALOG : old?.url;
             if (!url) throw new Error("Local JSON sources must be reimported from a file");
+            onProgress?.(0.15);
             const parsed = parseCatalog(await this.io.request(url, false), old?.name || "Obsidian community", url);
+            onProgress?.(0.6);
             let warning: string | undefined;
             if (official) {
                 try {
@@ -308,9 +310,11 @@ export class CatalogService {
                     warning = `Statistics refresh failed; retained earlier data: ${error instanceof Error ? error.message : "Unknown error"}`;
                 }
             }
+            onProgress?.(0.88);
             const source: CatalogSource = { ...parsed, id, url, official, fetchedAt: Date.now(), warning };
             return [...this.sources.filter(source => source.id !== id), source];
         });
+        onProgress?.(1);
     }
 
     public remove(id: string): Promise<void> {

@@ -5,6 +5,7 @@ import type { ManagerPlugin } from "./data/types";
 import { BPM_TAG_ID } from "./repo-resolver";
 import { resolveGithubUrl } from "./github-url";
 import { isPrereleaseRelease } from "./release-policy";
+import type { BackgroundTaskHandle } from "./tasks/task-center";
 
 /**
  * GitHub release 资源描述。
@@ -426,11 +427,14 @@ export const installPluginFromGithub = async (
 	version?: string,
 	markAsBpm = true
 ): Promise<boolean> => {
+	let task: BackgroundTaskHandle | null = null;
 	try {
 		const repo = sanitizeRepo(repoInput);
+		task = manager.tasks.start({ title: manager.translator.t("任务_获取发布", { name: repo }), progress: 0.04 });
 		const token = await getToken(manager);
 		const release = await getRelease(manager, repo, version, token);
 		const tag = release.tag_name || version || "";
+		task.update({ title: manager.translator.t("任务_下载插件文件", { name: repo }), progress: 0.2 });
 
 		if (manager.settings.DEBUG) console.log("[BPM] install from GitHub", { repo, version, tag });
 
@@ -444,6 +448,7 @@ export const installPluginFromGithub = async (
 			});
 		}
 
+		task.update({ progress: 0.58 });
 		if (!files.manifestText || !files.mainJs) {
 			if (!tag) throw new Error("未找到发布 tag，无法下载原始文件。");
 			try {
@@ -462,13 +467,16 @@ export const installPluginFromGithub = async (
 			}
 		}
 
+		task.update({ progress: 0.72 });
 		if (!files.manifestText || !files.mainJs) {
+			task.fail();
 			new Notice(manager.translator.t("安装_错误_缺少插件资源"));
 			return false;
 		}
 
 		const manifest = JSON.parse(files.manifestText) as PluginManifestJson;
 		if (!manifest?.id) {
+			task.fail();
 			new Notice(manager.translator.t("安装_错误_manifest缺少ID"));
 			return false;
 		}
@@ -489,6 +497,7 @@ export const installPluginFromGithub = async (
 			});
 		}
 
+		task.update({ title: manager.translator.t("任务_写入插件文件", { name: repo }), progress: 0.84 });
 		const writes = [
 			adapter.write(`${pluginPath}manifest.json`, files.manifestText),
 			adapter.write(`${pluginPath}main.js`, files.mainJs),
@@ -496,6 +505,7 @@ export const installPluginFromGithub = async (
 		if (files.styles) writes.push(adapter.write(`${pluginPath}styles.css`, files.styles));
 		await Promise.all(writes);
 
+		task.update({ title: manager.translator.t("任务_启用插件", { name: manifest.name || manifest.id }), progress: 0.94 });
 		try {
 			await manager.appPlugins.disablePlugin(manifest.id);
 		} catch {
@@ -528,9 +538,11 @@ export const installPluginFromGithub = async (
 
 		if (manager.settings.DEBUG) console.log("[BPM] install complete", { id: manifest.id, markAsBpm });
 
+		task.done();
 		new Notice(manager.translator.t("安装_成功_提示", { name: manifest.name || manifest.id }));
 		return true;
 	} catch (error) {
+		task?.fail();
 		const err = error as GithubRequestError;
 		console.error(error);
 		if (err?.status === 403 && !manager.hasGithubToken()) {
@@ -551,18 +563,22 @@ export const installPluginFromGithub = async (
  * 下载和写入同样使用并行流程，安装完成后调用 Obsidian 的 customCss 设置当前主题。
  */
 export const installThemeFromGithub = async (manager: Manager, repoInput: string, version?: string): Promise<boolean> => {
+	let task: BackgroundTaskHandle | null = null;
 	try {
 		const repo = sanitizeRepo(repoInput);
+		task = manager.tasks.start({ title: manager.translator.t("任务_获取发布", { name: repo }), progress: 0.04 });
 		const token = await getToken(manager);
 		const release = await getRelease(manager, repo, version, token);
 
 		const manifestUrl = pickAsset(release, "manifest.json");
 		const themeUrl = pickAsset(release, "theme.css") ?? pickAsset(release, "themes.css") ?? pickAsset(release, "theme-beta.css");
 		if (!manifestUrl || !themeUrl) {
+			task.fail();
 			new Notice(manager.translator.t("安装_错误_缺少主题资源"));
 			return false;
 		}
 
+		task.update({ title: manager.translator.t("任务_下载主题文件", { name: repo }), progress: 0.3 });
 		const [manifestText, themeCss] = await Promise.all([
 			fetchText(manager, manifestUrl, token),
 			fetchText(manager, themeUrl, token),
@@ -570,6 +586,7 @@ export const installThemeFromGithub = async (manager: Manager, repoInput: string
 
 		const manifest = JSON.parse(manifestText) as { name: string };
 		if (!manifest?.name) {
+			task.fail();
 			new Notice(manager.translator.t("安装_错误_主题manifest缺少名称"));
 			return false;
 		}
@@ -579,6 +596,7 @@ export const installThemeFromGithub = async (manager: Manager, repoInput: string
 		const themePath = `${themeDir}/`;
 		if (!(await adapter.exists(themeDir))) await adapter.mkdir(themeDir);
 
+		task.update({ title: manager.translator.t("任务_写入主题文件", { name: manifest.name }), progress: 0.8 });
 		await Promise.all([
 			adapter.write(`${themePath}theme.css`, themeCss),
 			adapter.write(`${themePath}manifest.json`, manifestText),
@@ -588,9 +606,11 @@ export const installThemeFromGithub = async (manager: Manager, repoInput: string
 		// @ts-ignore
 		manager.app.customCss?.setTheme?.(manifest.name);
 
+		task.done();
 		new Notice(manager.translator.t("安装_主题成功_提示", { name: manifest.name }));
 		return true;
 	} catch (error) {
+		task?.fail();
 		console.error(error);
 		new Notice(manager.translator.t("安装_主题错误_通用"));
 		return false;

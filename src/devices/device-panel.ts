@@ -14,6 +14,8 @@ export class DevicePanel {
     private root!: HTMLElement;
     private busy = false;
     private refreshing = false;
+    private refreshTimer?: number;
+    private destroyed = false;
 
     constructor(private readonly manager: Manager) { this.selected = manager.devices.type; }
     private t(key: string, vars?: Record<string, string | number>): string { return this.manager.translator.t(key, vars); }
@@ -35,6 +37,8 @@ export class DevicePanel {
     }
 
     render(container: HTMLElement): void {
+        this.stopAutoRefresh();
+        this.destroyed = false;
         this.root = container;
         container.empty();
         const page = container.createDiv('manager-vault-share');
@@ -86,6 +90,19 @@ export class DevicePanel {
         this.renderPresets(page);
         this.renderDevices(page);
         void this.refreshFromDisk();
+        // 设备记录不在 data.json 里；页面打开时轻量轮询，另一台设备改名/改类型能尽快出现。
+        this.refreshTimer = window.setInterval(() => { void this.refreshFromDisk(); }, 3000);
+    }
+
+    private stopAutoRefresh(): void {
+        if (this.refreshTimer !== undefined) window.clearInterval(this.refreshTimer);
+        this.refreshTimer = undefined;
+    }
+
+    public destroy(): void {
+        this.destroyed = true;
+        this.stopAutoRefresh();
+        this.root?.empty();
     }
 
     /** 打开设备页时并回其他设备刚同步过来的记录 / Pull records synced in by other devices. */
@@ -93,8 +110,9 @@ export class DevicePanel {
         if (this.refreshing) return;
         this.refreshing = true;
         try {
+            if (this.destroyed) return;
             const changed = await this.manager.devices.mergeDeviceRecords();
-            if (changed && this.root.isConnected) this.render(this.root);
+            if (changed && !this.destroyed && this.root.isConnected) this.render(this.root);
         } catch (error) { this.manager.devices.report(error); }
         finally { this.refreshing = false; }
     }

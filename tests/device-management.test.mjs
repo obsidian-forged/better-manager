@@ -9,7 +9,7 @@ const nativeRequire = createRequire(import.meta.url);
 const platform = { isMobileApp: false, isTablet: false };
 const notices = [];
 class NativeBase {}
-const obsidian = { Platform: platform, Plugin: NativeBase, Modal: NativeBase, SuggestModal: NativeBase, PluginSettingTab: NativeBase,
+const obsidian = { normalizePath: path => path, Platform: platform, Plugin: NativeBase, Modal: NativeBase, SuggestModal: NativeBase, PluginSettingTab: NativeBase,
     Notice: class { constructor(message) { notices.push(message); } } };
 async function load(entry) {
     const result = await build({ entryPoints: [entry], bundle: true, platform: 'node', format: 'cjs',
@@ -30,12 +30,12 @@ const record = (id, enabled, tags = []) => ({ id, name: id, desc: '', group: '',
 const ribbon = { bpmUniqueId: 'a', name: 'A', icon: 'star', visible: true, order: 0, ribbonIdMap: { en: 'a' } };
 const firstOf = (settings, type) => settings.DEVICE_MANAGEMENT.presets[type][0];
 const keyOf = (settings, type) => `preset:${firstOf(settings, type).id}`;
-const DEVICES_DIR = '.obsidian/better-plugins-manager-device-';
+const DEVICES_DIR = '.obsidian/plugins/self/data/devices/';
 /** 最小 DataAdapter：设备记录按文件夹里的 JSON 文件同步 / In-memory adapter for device files. */
 function memoryAdapter(files = {}) {
     return {
         files,
-        async exists(path) { return Object.prototype.hasOwnProperty.call(files, path); },
+        async exists(path) { return Object.prototype.hasOwnProperty.call(files, path) || Object.keys(files).some(file => file.startsWith(path + '/')); },
         async mkdir() {},
         async list(dir) { return { files: Object.keys(files).filter(path => path.startsWith(`${dir}/`)), folders: [] }; },
         async read(path) { if (!(path in files)) throw new Error('ENOENT'); return files[path]; },
@@ -105,7 +105,7 @@ test('external settings changes keep live object references and never reload int
             adapter.files[path] = JSON.stringify(remote);
             await manager.refreshSettingsQuietly();
             assert.equal(manager.settings, current);
-            assert.equal(manager.settings.RECENT_INSTALL_DAYS, 7);
+            assert.equal(manager.settings.RECENT_INSTALL_DAYS, days);
         }
         assert.ok(Object.keys(adapter.files).some(path => path.endsWith('.cache')));
         manager.settings.RECENT_INSTALL_DAYS = 14; await manager.saveSettings();
@@ -114,6 +114,30 @@ test('external settings changes keep live object references and never reload int
         assert.equal(manager.settings, current);
         assert.equal(JSON.parse(adapter.files[path]).RECENT_INSTALL_DAYS, 14);
         assert.equal(renders, 0);
+    } finally { globalThis.window = previousWindow; }
+});
+
+test('external merges apply remote fields immediately but keep local unsaved fields', async () => {
+    const adapter = memoryAdapter(); const { manager } = await fixture({ adapter });
+    const path = '.obsidian/plugins/self/data.json';
+    adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
+    manager.saveData = async value => { adapter.files[path] = JSON.stringify(value); };
+    await manager.loadSettings();
+    manager.beginSettingsEditing({});
+    const previousWindow = globalThis.window;
+    globalThis.window = { setTimeout, clearTimeout };
+    try {
+        manager.settings.RECENT_INSTALL_DAYS = 14;
+        const remote = JSON.parse(adapter.files[path]);
+        remote.LANGUAGE = 'fr';
+        adapter.files[path] = JSON.stringify(remote);
+        await manager.refreshSettingsQuietly();
+        assert.equal(manager.settings.RECENT_INSTALL_DAYS, 14);
+        assert.equal(manager.settings.LANGUAGE, 'fr');
+        await manager.saveSettings();
+        const saved = JSON.parse(adapter.files[path]);
+        assert.equal(saved.RECENT_INSTALL_DAYS, 14);
+        assert.equal(saved.LANGUAGE, 'fr');
     } finally { globalThis.window = previousWindow; }
 });
 
@@ -132,6 +156,54 @@ test('three types migrate into at least one independent named preset each', asyn
     assert.equal(firstOf(settings, 'computer').plugins.a.enabled, true);
     assert.equal(settings.RIBBON_SETTINGS[0].ribbonIdMap.en, 'a');
     assert.equal(firstOf(settings, 'phone').ribbon[0].ribbonIdMap.en, 'a');
+});
+
+test('inheritance copies the full configuration into the bound preset and never overwrites configured types', async () => {
+    const { manager, settings } = await fixture();
+    const computer = firstOf(settings, 'computer');
+    computer.configured = true;
+    computer.plugins.a.enabled = false;
+    computer.filters.search = 'computer-only';
+    const tablet = firstOf(settings, 'tablet');
+    tablet.configured = false;
+    const second = structuredClone(tablet);
+    second.id = 'tablet-second';
+    second.name = 'Tablet 2';
+    settings.DEVICE_MANAGEMENT.presets.tablet.push(second);
+
+    manager.devices.adoptIfNeeded('tablet', second.id);
+    assert.equal(second.configured, true);
+    assert.equal(second.plugins.a.enabled, false);
+    assert.equal(second.filters.search, 'computer-only');
+    assert.equal(tablet.configured, false);
+
+    // 已配置的类型不再被继承覆盖，即使调用时指定了另一份预设。
+    tablet.configured = true;
+    tablet.plugins.a.enabled = true;
+    tablet.filters.search = 'tablet-only';
+    manager.devices.adoptIfNeeded('tablet', 'tablet-second');
+    assert.equal(tablet.plugins.a.enabled, true);
+    assert.equal(tablet.filters.search, 'tablet-only');
+});
+
+test('opening a foreign preset does not absorb live state for plugins the preset never configured', async () => {
+    const { manager, settings, calls } = await fixture();
+    await manager.devices.setEnabled(true);
+    settings.Plugins.push(record('newp', true));
+    manager.appPlugins.manifests.newp = { id: 'newp', name: 'newp' };
+    const phone = firstOf(settings, 'phone');
+    assert.equal(phone.plugins.newp, undefined);
+
+    await manager.devices.selectScope('plugins', keyOf(settings, 'phone'));
+    await manager.devices.closeProjection();
+    assert.equal(phone.plugins.newp, undefined);
+
+    await manager.devices.selectScope('plugins', keyOf(settings, 'phone'));
+    calls.length = 0;
+    await manager.overview.setPluginState('newp', { enabled: false });
+    await manager.devices.closeProjection();
+    assert.equal(phone.plugins.newp.enabled, false);
+    assert.equal(calls.some(([action, id]) => ['enable', 'disable', 'runtime-enable', 'runtime-disable'].includes(action) && id === 'newp'), false);
 });
 
 test('default presets survive normalization and control missing bindings without changing explicit bindings', async () => {
@@ -572,7 +644,7 @@ test('an unconfigured type adopts the only configured preset automatically', asy
     assert.ok(notices.some(message => String(message).includes('设备_自动复用')));
 });
 
-test('multiple configured candidates are not adopted automatically', async () => {
+test('multiple configured candidates adopt the bound/first configured preset deterministically', async () => {
     const { manager, settings } = await fixture();
     settings.DEVICE_MANAGEMENT.enabled = true;
     for (const type of ['phone', 'tablet']) {
@@ -581,8 +653,12 @@ test('multiple configured candidates are not adopted automatically', async () =>
         preset.plugins.a.enabled = false;
     }
     const restarted = new DeviceManager(manager);
+    notices.length = 0;
     await restarted.initialize();
-    assert.equal(firstOf(settings, 'computer').configured, false);
+    const computer = firstOf(settings, 'computer');
+    assert.equal(computer.configured, true);
+    assert.equal(computer.plugins.a.enabled, false);
+    assert.ok(notices.some(message => String(message).includes('设备_自动复用')));
 });
 
 test('copying another preset replaces settings but keeps id and name', async () => {
@@ -700,6 +776,53 @@ test('merging keeps the local name and refreshes the heartbeat of a known device
     assert.equal(record.name, 'Renamed here');
     assert.equal(record.lastSeen, 20);
     assert.equal(settings.DEVICE_MANAGEMENT.devices.filter(device => device.id === 'known').length, 1);
+});
+
+test('remote name and type updates win only when their revision is newer', async () => {
+    const adapter = memoryAdapter({
+        [`${DEVICES_DIR}known.json`]: JSON.stringify({ id: 'known', name: 'Original', type: 'tablet', lastSeen: 9, updatedAt: 100 }),
+    });
+    const { manager, settings } = await fixture({ adapter });
+    await manager.devices.mergeDeviceRecords();
+    let record = settings.DEVICE_MANAGEMENT.devices.find(device => device.id === 'known');
+    assert.equal(record.name, 'Original');
+    adapter.files[`${DEVICES_DIR}known.json`] = JSON.stringify({ id: 'known', name: 'Remote', type: 'phone', lastSeen: 20, updatedAt: 200 });
+    notices.length = 0;
+    await manager.devices.mergeDeviceRecords();
+    record = settings.DEVICE_MANAGEMENT.devices.find(device => device.id === 'known');
+    assert.equal(record.name, 'Remote');
+    assert.equal(record.type, 'phone');
+    assert.ok(notices.some(message => String(message).includes('设备_远程更新')));
+
+    await manager.devices.rename('known', 'Local');
+    adapter.files[`${DEVICES_DIR}known.json`] = JSON.stringify({ id: 'known', name: 'Older remote', type: 'computer', lastSeen: 30, updatedAt: 200 });
+    await manager.devices.mergeDeviceRecords();
+    record = settings.DEVICE_MANAGEMENT.devices.find(device => device.id === 'known');
+    assert.equal(record.name, 'Local');
+    assert.equal(record.type, 'phone');
+});
+
+test('re-enabling device management merges changes made while it was off', async () => {
+    const { manager, settings } = await fixture();
+    await manager.devices.setEnabled(true);
+    await manager.devices.setEnabled(false);
+    settings.Plugins.find(plugin => plugin.id === 'a').enabled = false;
+    await manager.devices.setEnabled(true);
+    assert.equal(settings.Plugins.find(plugin => plugin.id === 'a').enabled, false);
+    assert.equal(firstOf(settings, 'computer').plugins.a.enabled, false);
+    assert.equal(manager.appPlugins.enabledPlugins.has('a'), false);
+});
+
+test('scope selections are remembered per page', async () => {
+    const { manager, settings } = await fixture();
+    await manager.devices.setEnabled(true);
+    await manager.devices.selectScope('themes', keyOf(settings, 'phone'));
+    await manager.devices.selectScope('plugins', keyOf(settings, 'tablet'));
+    assert.equal(manager.devices.selectedScopeKey('themes'), keyOf(settings, 'phone'));
+    assert.equal(manager.devices.selectedScopeKey('plugins'), keyOf(settings, 'tablet'));
+    assert.equal(manager.devices.selectedScopeKey('ribbon'), keyOf(settings, 'computer'));
+    await manager.devices.bindPreset(manager.devices.boundPresetId);
+    assert.equal(manager.devices.selectedScopeKey('themes'), keyOf(settings, 'computer'));
 });
 
 test('renaming this device rewrites its own record file', async () => {

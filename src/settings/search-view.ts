@@ -13,6 +13,11 @@ export class SettingsSearch {
     private readonly items: SettingsSearchItem[] = [];
     private results?: HTMLElement;
     private matches: SettingsSearchItem[] = [];
+    private topbar?: HTMLElement;
+    private layer?: HTMLElement;
+    private doc?: Document;
+    private win?: Window | null;
+    private destroyed = false;
 
     constructor(private readonly tab: ManagerSettingTab, private readonly pages: SettingsSearchPage[],
         private readonly exit: (page?: number, ordinal?: number) => void) {}
@@ -35,16 +40,24 @@ export class SettingsSearch {
                 if (name || description) this.items.push({ name, description, page: pageIndex, ordinal });
             });
         });
-        topbar.empty();
+        this.doc = topbar.ownerDocument;
+        this.win = this.doc.defaultView;
+        this.topbar = topbar;
+        // 保留顶栏 DOM，只让原有控件淡出；搜索层覆盖其上，下面的内容保持可见。
         topbar.addClass('manager-setting__topbar--search');
-        const input = new TextComponent(topbar);
+        this.layer = topbar.createDiv('manager-setting-search__layer');
+        const field = this.layer.createDiv('manager-setting-search__field');
+        const input = new TextComponent(field);
         input.inputEl.type = 'search';
         input.inputEl.addClass('manager-setting-search__input');
         input.setPlaceholder(t('设置_搜索_占位'));
         input.inputEl.setAttribute('aria-label', t('设置_搜索_占位'));
-        new ButtonComponent(topbar).setIcon('x').setTooltip(t('设置_搜索_关闭')).onClick(() => this.exit());
-        this.tab.contentEl.empty();
-        this.results = this.tab.contentEl.createDiv('manager-setting-search__results');
+        const close = new ButtonComponent(this.layer)
+            .setIcon('x')
+            .setTooltip(t('设置_搜索_关闭'))
+            .onClick(() => this.exit());
+        close.buttonEl.addClass('manager-setting-search__close');
+        this.results = this.doc.body.createDiv('manager-setting-search__results manager-setting-search__results--floating');
         input.onChange(query => this.render(query));
         input.inputEl.addEventListener('keydown', event => {
             if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); this.exit(); }
@@ -53,8 +66,63 @@ export class SettingsSearch {
                 this.exit(this.matches[0].page, this.matches[0].ordinal);
             }
         });
+        this.doc.addEventListener('pointerdown', this.onDocumentPointerDown, true);
+        this.doc.addEventListener('scroll', this.onDocumentScroll, true);
+        this.win?.addEventListener('resize', this.onResize);
+        // 强制一次布局后直接展开；隐藏窗口里 rAF 可能停摆，不能依赖它启动过渡。
+        this.layer.getBoundingClientRect();
+        this.layer.addClass('is-open');
+        this.positionResults();
         this.render('');
         input.inputEl.focus();
+    }
+
+    /** 顶部淡出、搜索框展开期间保持内容可读 / Content stays mounted while the header fades. */
+    private positionResults(): void {
+        if (!this.topbar || !this.results) return;
+        const rect = this.topbar.getBoundingClientRect();
+        const viewportWidth = this.win?.innerWidth ?? this.doc?.documentElement.clientWidth ?? rect.width;
+        const viewportHeight = this.win?.innerHeight ?? this.doc?.documentElement.clientHeight ?? 0;
+        const margin = 8;
+        const width = Math.min(Math.max(rect.width, 240), 560);
+        const left = Math.max(margin, Math.min(rect.left, viewportWidth - width - margin));
+        const maxHeight = Math.max(160, viewportHeight - rect.bottom - 24);
+        this.results.setCssStyles({
+            left: `${Math.round(left)}px`,
+            top: `${Math.round(rect.bottom + 6)}px`,
+            width: `${Math.round(width)}px`,
+            maxHeight: `${Math.round(maxHeight)}px`,
+        });
+    }
+
+    private readonly onDocumentPointerDown = (event: PointerEvent): void => {
+        const target = event.target as Node | null;
+        if (target && (this.topbar?.contains(target) || this.results?.contains(target))) return;
+        this.exit();
+    };
+
+    private readonly onDocumentScroll = (event: Event): void => {
+        const target = event.target as Node | null;
+        if (target && this.results?.contains(target)) return;
+        this.positionResults();
+    };
+
+    private readonly onResize = (): void => this.positionResults();
+
+    public destroy(): void {
+        if (this.destroyed) return;
+        this.destroyed = true;
+        this.topbar?.removeClass('manager-setting__topbar--search');
+        this.layer?.remove();
+        this.results?.remove();
+        this.layer = undefined;
+        this.results = undefined;
+        this.doc?.removeEventListener('pointerdown', this.onDocumentPointerDown, true);
+        this.doc?.removeEventListener('scroll', this.onDocumentScroll, true);
+        this.win?.removeEventListener('resize', this.onResize);
+        this.doc = undefined;
+        this.win = null;
+        this.topbar = undefined;
     }
 
     private render(query: string): void {

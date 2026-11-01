@@ -194,11 +194,12 @@ Conflict Diagnosis 通过步骤引导插件冲突测试，并把测试状态和�
 
 BPM 是一个本地 Obsidian 插件管理器，但部分功能会有意使用外部服务或浏览器 API：
 
-- **外部网络请求**：BPM 在用户可见的插件管理功能中访问 GitHub，例如获取社区插件元数据、解析仓库、检查 release，以及从 GitHub 安装或更新插件/主题。这些请求可能使用 `github.com`、`api.github.com` 和 `raw.githubusercontent.com`。仓库、主页和发布链接仅在点击时打开；项目教程链接同样仅在点击时打开。
+- **外部网络请求**：BPM 在用户可见的插件管理功能中访问 GitHub，例如获取社区插件元数据、解析仓库、检查 release，以及从 GitHub 安装或更新插件/主题。这些请求可能使用 `github.com`、`api.github.com` 和 `raw.githubusercontent.com`。当插件本地没有可用图标时，BPM 还会查询 Obsidian 社区目录（`community.obsidian.md`）的搜索索引，读取社区为该插件分配的 Lucide 图标名。仓库、主页和发布链接仅在点击时打开；项目教程链接同样仅在点击时打开。
 - **剪贴板访问**：BPM 仅在用户点击插件的 **Copy ID** 时写入系统剪贴板。
 - **Vault 文件访问**：BPM 会读取插件/主题元数据、用户选中的插件配置文件、迁移包和旧版导出文件夹，用于管理、迁移、备份、导入/导出和冲突排查。BPM 不会把 vault 笔记上传到远程服务。
-- **设备记录**：启用设备管理后，BPM 会为每台设备在 vault 配置目录写一个小型 JSON 文件（`.obsidian/better-plugins-manager-device-<id>.json`），用于同步后让各设备互相出现在设备清单里。文件只包含设备 id、显示名称、设备类型和最近上线时间，不含笔记、插件配置或凭据；写入走 Obsidian 的 vault adapter，不访问 vault 外部；从列表移除设备时会删除对应文件。
-- **编辑缓存**：频繁的外部配置更新会触发提醒，并在插件 `data.json` 同级生成按本机标识区分的 `data-<local-id>.cache`。缓存包含 BPM 设置副本，用于保持当前界面稳定；最后一个 BPM 窗口关闭时，会将本机改动与最新共享配置合并。恢复成功后删除缓存，写回失败则保留并在下次启动恢复；不会采用其他设备的缓存。同步工具可能包含这些文件，请按与 `data.json` 相同的隐私要求处理。
+- **设备记录**：启用设备管理后，BPM 会为每台设备在插件数据目录写一个小型 JSON 文件（`.obsidian/plugins/better-plugins-manager/data/devices/<id>.json`），用于同步后让各设备互相出现在设备清单里。文件只包含设备 id、显示名称、设备类型和最近上线时间，不含笔记、插件配置或凭据；写入走 Obsidian 的 vault adapter，不访问 vault 外部；从列表移除设备时会删除对应文件。
+- **图标兜底**：优先使用 Obsidian 已注册的图标；指定的 Lucide 图标在本地不存在时，从官方 `lucide-icons/lucide` GitHub 仓库下载 SVG。落到默认插头图标前，BPM 还会查询 Obsidian 社区目录为该插件分配的 Lucide 图标名，并按同样方式解析。SVG 与颜色规则保存到 `data/icons.css`，供离线复用。请求仅含图标名，不含 vault 内容或凭据。可重建的仓库和目录缓存保存在 `cache/`；原生 `data.json` 设置文件保留原位。已有设备与缓存文件会自动迁移。
+- **编辑缓存**：频繁的外部配置更新会触发提醒，并在插件目录生成按本机标识区分的 `data/recovery/<local-id>.cache`。缓存包含 BPM 设置副本，用于保持当前界面稳定；最后一个 BPM 窗口关闭时，会将本机改动与最新共享配置合并。恢复成功后删除缓存，写回失败则保留并在下次启动恢复；不会采用其他设备的缓存。同步工具可能包含这些文件，请按与 `data.json` 相同的隐私要求处理。
 - **Base64 编码/解码**：BPM 运行时使用 `btoa`/`atob` 仅用于在本地 Transfer Pack JSON 数据中打包和恢复二进制/文本文件，不用于隐藏 API key、URL、远程代码或可执行 payload。
 
 ---

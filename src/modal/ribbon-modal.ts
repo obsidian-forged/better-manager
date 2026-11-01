@@ -4,6 +4,7 @@ import Manager from "main";
 import { RibbonItem } from "../data/types";
 import { confirmWithModal } from "../utils";
 import { RIBBON_GROUP_ITEM_PREFIX } from "../manager/ribbon-groups";
+import { SystemRibbonManager } from "../manager/system-ribbon-manager";
 import { DeviceScopeBar } from "../devices/device-scope-bar";
 import { ScopeSelect } from "../ui/scope-select";
 
@@ -20,6 +21,8 @@ class GroupIconPicker extends FuzzySuggestModal<string> {
     }
 }
 
+type RibbonStatusFilter = 'visible' | 'hidden' | 'disabled';
+
 export class RibbonModal extends Modal {
     private scrollbars?: FloatingScrollbars;
     manager: Manager;
@@ -29,12 +32,20 @@ export class RibbonModal extends Modal {
 
     /** 重绘、换页与关闭均清理菜单监听；Clean up shared menus across rendering and page lifecycles. */
     closeGroupMenus(): void {
+        this.closeItemGroupMenus();
+        this.filterSelects.forEach(select => select.close());
+        this.filterSelects = [];
+    }
+
+    private closeItemGroupMenus(): void {
         this.groupSelects.forEach(select => select.close());
         this.groupSelects = [];
     }
 
     // 过滤和搜索
-    private currentFilter = "all";
+    private statusFilters = new Set<RibbonStatusFilter>();
+    private groupFilter = '';
+    private filterSelects: ScopeSelect[] = [];
     private externalFilterBar = false;
     private externalFilterHost?: HTMLElement;
     private groupsCollapsed = false;
@@ -115,6 +126,15 @@ export class RibbonModal extends Modal {
             return "refresh-cw";
         }
         return "help-circle";
+    }
+
+    /** 该 Ribbon 条目所属插件是否已被禁用（分组入口没有所属插件）。 */
+    private isRibbonItemPluginDisabled(item: RibbonItem): boolean {
+        if (!item.bpmUniqueId || item.bpmUniqueId.startsWith(RIBBON_GROUP_ITEM_PREFIX)) return false;
+        const pluginId = SystemRibbonManager.pluginPrefixOf(item.bpmUniqueId);
+        if (!pluginId) return false;
+        const plugin = this.manager.settings.Plugins.find(record => record.id === pluginId);
+        return Boolean(plugin && plugin.enabled === false);
     }
 
     private renderRibbonItemIcon(iconEl: HTMLElement, item: RibbonItem) {
@@ -328,7 +348,7 @@ export class RibbonModal extends Modal {
             const removeButton = new ExtraButtonComponent(cell);
             removeButton.setIcon('trash').setTooltip(t('Ribbon_删除分组')).onClick(() => {
                 groups.splice(groups.indexOf(group), 1);
-                if (this.currentFilter === `group:${group.id}`) this.currentFilter = "all";
+                if (this.groupFilter === group.id) this.groupFilter = '';
                 if (!groups.length) this.showGroupedItems = false;
                 this.commitRibbonGroups();
                 this.displayWithoutSearch();
@@ -378,28 +398,25 @@ export class RibbonModal extends Modal {
         const scopedItems = this.showGroupedItems ? allItems : ungroupedItems;
         const visibleCount = scopedItems.filter(item => item.visible).length;
         const hiddenCount = scopedItems.filter(item => !item.visible).length;
+        const disabledCount = scopedItems.filter(item => this.isRibbonItemPluginDisabled(item)).length;
         const filterBar = containerEl.createDiv("ribbon-manager-filter-bar");
 
         // 左侧：过滤按钮组
         const filterGroup = filterBar.createDiv("ribbon-manager-filter-group");
 
-        const filters: Array<{ key: string; label: string; count: number; icon: string }> = [
+        const filters: Array<{ key: "all" | RibbonStatusFilter; label: string; count: number; icon: string }> = [
             { key: "all", label: t("通用_全部_文本"), count: scopedItems.length, icon: "menu" },
             { key: "visible", label: t("Ribbon_显示"), count: visibleCount, icon: "eye" },
             { key: "hidden", label: t("Ribbon_隐藏"), count: hiddenCount, icon: "eye-off" },
-            ...this.manager.settings.RIBBON_GROUPS.map(group => ({
-                key: `group:${group.id}`, label: group.name, count: group.members.length, icon: group.icon || "folder",
-            })),
+            { key: "disabled", label: t("Ribbon_插件被禁用"), count: disabledCount, icon: "ban" },
         ];
 
-        filters.forEach((filter, index) => {
-            if (index === 3 && filters.length > 3) filterGroup.createSpan({ cls: "ribbon-filter-divider" });
+        filters.forEach(filter => {
+            const active = filter.key === "all" ? this.statusFilters.size === 0 : this.statusFilters.has(filter.key);
             const btn = new ButtonComponent(filterGroup);
             btn.buttonEl.addClass("ribbon-filter-btn");
-            btn.buttonEl.setAttribute('aria-pressed', `${this.currentFilter === filter.key}`);
-            if (this.currentFilter === filter.key) {
-                btn.buttonEl.addClass("is-active");
-            }
+            btn.buttonEl.setAttribute('aria-pressed', `${active}`);
+            if (active) btn.buttonEl.addClass("is-active");
 
             // 自定义按钮内容：图标 + 文本 + 数量
             btn.buttonEl.empty();
@@ -408,10 +425,21 @@ export class RibbonModal extends Modal {
             btn.buttonEl.createSpan({ text: `${filter.label} ${filter.count}`, cls: "ribbon-filter-btn-text" });
 
             btn.onClick(() => {
-                this.currentFilter = filter.key;
+                if (filter.key === "all") this.statusFilters.clear();
+                else if (this.statusFilters.has(filter.key)) this.statusFilters.delete(filter.key);
+                else this.statusFilters.add(filter.key);
                 this.displayWithoutSearch();
             });
         });
+
+        // 分隔线左侧全部是多选状态钮；分组改为 BPM 同款下拉。
+        filterGroup.createSpan({ cls: "ribbon-filter-divider" });
+        const groupOptions = [{ value: "", label: t("Ribbon_全部分组") },
+            ...this.manager.settings.RIBBON_GROUPS.map(group => ({ value: group.id, label: `${group.name} (${group.members.length})` }))];
+        this.filterSelects.push(ScopeSelect.compact(filterGroup, t("Ribbon_分组筛选"), this.groupFilter, groupOptions, value => {
+            this.groupFilter = value;
+            this.displayWithoutSearch();
+        }));
 
         // 右侧：显示已分组开关 + 搜索框
         const rightSide = filterBar.createDiv("ribbon-manager-filter-right");
@@ -446,21 +474,24 @@ export class RibbonModal extends Modal {
     }
 
     renderFilteredList(containerEl: HTMLElement, listContainer: HTMLElement) {
-        this.closeGroupMenus();
+        this.closeItemGroupMenus();
         listContainer.empty();
         const allItems = this.manager.settings.RIBBON_SETTINGS;
 
         // 根据过滤器筛选项目
         const memberIds = new Set(this.manager.settings.RIBBON_GROUPS.flatMap(group => group.members));
         let items = this.showGroupedItems ? allItems : allItems.filter(item => !memberIds.has(item.bpmUniqueId));
-        if (this.currentFilter === "visible") {
-            items = items.filter(item => item.visible);
-        } else if (this.currentFilter === "hidden") {
-            items = items.filter(item => !item.visible);
-        } else if (this.currentFilter.startsWith("group:")) {
-            const group = this.manager.settings.RIBBON_GROUPS.find(entry => `group:${entry.id}` === this.currentFilter);
+        if (this.groupFilter) {
+            const group = this.manager.settings.RIBBON_GROUPS.find(entry => entry.id === this.groupFilter);
             if (group) items = allItems.filter(item => group.members.includes(item.bpmUniqueId));
-            else this.currentFilter = "all";
+            else this.groupFilter = "";
+        }
+        if (this.statusFilters.size) {
+            items = items.filter(item =>
+                (this.statusFilters.has("visible") && item.visible)
+                || (this.statusFilters.has("hidden") && !item.visible)
+                || (this.statusFilters.has("disabled") && this.isRibbonItemPluginDisabled(item))
+            );
         }
 
         // 根据搜索词过滤
@@ -520,19 +551,25 @@ export class RibbonModal extends Modal {
             orderInput.addEventListener("blur", commitOrder);
 
             // 图标
+            const pluginDisabled = this.isRibbonItemPluginDisabled(item);
             const iconEl = itemContent.createDiv({ cls: "setting-item-icon" });
             this.renderRibbonItemIcon(iconEl, item);
+            if (pluginDisabled) {
+                iconEl.addClass("ribbon-manager-item-icon--disabled");
+                itemEl.addClass("is-plugin-disabled");
+            }
 
             const textWrap = itemContent.createDiv({ cls: "ribbon-manager-item-text" });
             const titleLine = textWrap.createDiv({ cls: "ribbon-manager-item-title-line" });
             titleLine.createEl("div", {
                 text: item.name || this.manager.translator.t("Ribbon_未命名"),
-                cls: "setting-item-name"
+                cls: `setting-item-name${pluginDisabled ? " ribbon-manager-item-name--disabled" : ""}`
             });
-            titleLine.createSpan({
+            const stateEl = titleLine.createSpan({
                 text: item.visible ? t("管理器_状态_显示中") : t("管理器_状态_已隐藏"),
                 cls: `ribbon-manager-item-state ${item.visible ? "is-visible" : "is-hidden"}`
             });
+            if (pluginDisabled) titleLine.createSpan({ cls: "ribbon-manager-disabled-chip", text: t("Ribbon_插件被禁用") });
             const groupOfItem = this.manager.settings.RIBBON_GROUPS.find(group => group.members.includes(item.bpmUniqueId));
             if (groupOfItem) {
                 itemEl.addClass("is-grouped-item");
@@ -547,15 +584,29 @@ export class RibbonModal extends Modal {
 
             // 可见性按钮
             const visibilityDiv = controlBar.createDiv({ cls: "ribbon-manager-control-visibility" });
-            new ButtonComponent(visibilityDiv)
+            const syncVisibilityRow = () => {
+                itemEl.toggleClass("is-hidden", !item.visible);
+                stateEl.setText(item.visible ? t("管理器_状态_显示中") : t("管理器_状态_已隐藏"));
+                stateEl.toggleClass("is-visible", item.visible);
+                stateEl.toggleClass("is-hidden", !item.visible);
+                visibilityButton.setIcon(item.visible ? "eye" : "eye-off")
+                    .setTooltip(this.manager.translator.t(item.visible ? "Ribbon_隐藏" : "Ribbon_显示"));
+            };
+            const visibilityButton = new ButtonComponent(visibilityDiv)
                 .setIcon(item.visible ? "eye" : "eye-off")
-                .setTooltip(item.visible ? this.manager.translator.t("Ribbon_隐藏") : this.manager.translator.t("Ribbon_显示"))
-                .onClick(async () => {
-                    const newValue = !item.visible;
-                    item.visible = newValue;
-
-                    await this.persistRibbonConfig();
-                    this.displayWithoutSearch();
+                .setTooltip(this.manager.translator.t(item.visible ? "Ribbon_隐藏" : "Ribbon_显示"))
+                .onClick(() => {
+                    item.visible = !item.visible;
+                    // 先让这一行立刻反馈，再把原生显隐与移动端 SAF 写盘推到下一帧/后台。
+                    if (this.statusFilters.has("visible") || this.statusFilters.has("hidden")) {
+                        this.rerenderPreservingScroll();
+                    } else {
+                        syncVisibilityRow();
+                    }
+                    requestAnimationFrame(() => {
+                        this.manager.applyRibbonSettings();
+                        void this.manager.saveSettings();
+                    });
                 });
 
             if (!item.bpmUniqueId.startsWith(RIBBON_GROUP_ITEM_PREFIX)) {

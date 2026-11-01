@@ -22,7 +22,8 @@ class ManagerSettingTab extends PluginSettingTab {
 
     hide(): void {
         this.isVisible = false;
-        this.scrollbars?.destroy(); this.scrollbars = undefined; this.search = undefined;
+        this.scrollbars?.destroy(); this.scrollbars = undefined;
+        this.search?.destroy(); this.search = undefined;
         this.manager.endSettingsEditing(this);
     }
 
@@ -53,6 +54,7 @@ class ManagerSettingTab extends PluginSettingTab {
 
     renderSettings(): void {
         const { containerEl } = this;
+        this.search?.destroy();
         this.search = undefined;
         const scroller = this.scrollContainer();
         const scrollTop = scroller?.scrollTop ?? 0;

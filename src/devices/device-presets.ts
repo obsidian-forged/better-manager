@@ -45,6 +45,8 @@ export interface ManagedDevice {
     type: DeviceType;
     platform?: string;
     lastSeen: number;
+    /** 名称/类型/平台本地修改的版本；用于跨设备合并时保护较新的本地改动。 */
+    updatedAt?: number;
 }
 
 export interface DeviceManagement {
@@ -326,7 +328,8 @@ export function normalizeDeviceManagement(value: unknown, baseline: DevicePreset
                 || !isDeviceType(raw.type) || devices.some(device => device.id === raw.id)) continue;
             devices.push({ id: raw.id, name: raw.name, type: raw.type,
                 platform: typeof raw.platform === 'string' ? raw.platform : 'unknown',
-                lastSeen: typeof raw.lastSeen === 'number' && Number.isFinite(raw.lastSeen) ? raw.lastSeen : 0 });
+                lastSeen: typeof raw.lastSeen === 'number' && Number.isFinite(raw.lastSeen) ? raw.lastSeen : 0,
+                updatedAt: typeof raw.updatedAt === 'number' && Number.isFinite(raw.updatedAt) ? raw.updatedAt : undefined });
         }
     }
     const rawDefaults = isRecord(source.defaultPresets) ? source.defaultPresets : {};

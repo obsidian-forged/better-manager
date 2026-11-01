@@ -1,6 +1,9 @@
 import type { ReleaseHighlightsModal } from './modal/release-highlights-modal';
 import { SyncUpdateGuard } from './ui/sync-update-guard';
-import { SettingsSessionStore } from './settings/session-store';
+import { SettingsSessionStore, settingsFingerprint } from './settings/session-store';
+import { PluginIcons } from './icons/plugin-icons';
+import { pluginStorage } from './storage/plugin-storage';
+import { BackgroundTaskCenter, BackgroundTaskHandle } from './tasks/task-center';
 import { DeviceManager } from './devices/device-manager';
 import { OverviewState } from './overview-state';
 import { featureEnabled, toolEnabled } from './features';
@@ -113,6 +116,9 @@ type SecretStorageLike = {
 type CommunityPluginStatsEntry = Record<string, number | string | undefined>;
 
 export default class Manager extends Plugin {
+    public readonly pluginIcons = new PluginIcons(this);
+    /** 设置页任务入口读取的在线下载/检查进度 / Progress shown by the settings task entry. */
+    public readonly tasks = new BackgroundTaskCenter();
     /** Serialize settings writes and remember the last successful payload. */
     private settingsSaveQueue: Promise<void> = Promise.resolve();
     private persistedSettingsJson = '';
@@ -136,6 +142,9 @@ export default class Manager extends Plugin {
     private ribbonGroups = new RibbonGroups(this);
     public updateStatus: Record<string, UpdateStatus> = {};
     private updateProgressNotice: Notice | null = null;
+    private updateProgressTask: BackgroundTaskHandle | null = null;
+    private lastSyncAppliedNotice = 0;
+    private lastSyncDeferredNotice = 0;
 
 
     // 拖拽隐藏功能相关状态
@@ -227,6 +236,10 @@ export default class Manager extends Plugin {
         if (this.normalizeBuiltinTagNames() || builtinTagsChanged || bpmRecordsChanged || selfRecordChanged) markSettingsDirty();
 
         this.repoResolver = new RepoResolver(this);
+        // 用户数据与缓存目录随插件启动建好；Create data/ and cache/ up front.
+        void pluginStorage(this).ensureAreas().catch(error => {
+            if (this.settings.DEBUG) console.error("[BPM] ensure storage folders failed", error);
+        });
 
         // 先投影本机预设，再构造延迟队列；Select the device preset before queuing plugins.
         this.synchronizePlugins(Object.values(this.appPlugins.manifests), { save: false });
@@ -325,12 +338,14 @@ export default class Manager extends Plugin {
     public onunload() {
         // 卸载后一切延迟回调必须停手，否则会在已卸载的插件上继续操作 ribbon
         this.isUnloaded = true;
+        this.pluginIcons.dispose();
         this.managerModal?.close();
         this.ribbonModal?.close();
         this.settingsTab?.hide();
         this.releaseHighlightsModal?.close();
         this.releaseHighlightsModal = undefined;
         this.delayWaitNotice?.stop();
+        this.devices?.dispose();
         // 卸载前恢复本机预设视图，避免其他预设的投影值留在内存。
         void this.devices?.flushProjection().catch(() => { /* 卸载阶段无法提示 */ });
         this.startupTimers.forEach(handle => window.clearTimeout(handle));
@@ -902,14 +917,19 @@ export default class Manager extends Plugin {
         if (stored !== owner) storage.saveLocalStorage('bpm-settings-cache-owner', owner);
         const adapter = this.app.vault.adapter;
         const folder = `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
-        const cachePath = `${folder}/data-${owner}.cache`;
+        const storageFiles = pluginStorage(this);
+        const recoveryName = `recovery/${owner}.cache`;
+        const legacyCache = `${folder}/data-${owner}.cache`;
         this.settingsSession = new SettingsSessionStore({
             readShared: async () => this.normalizeSettings(await adapter.exists(`${folder}/data.json`)
                 ? JSON.parse(await adapter.read(`${folder}/data.json`)) as unknown : await this.loadData()),
             writeShared: value => this.saveData(value),
-            readCache: async () => await adapter.exists(cachePath) ? JSON.parse(await adapter.read(cachePath)) as unknown : null,
-            writeCache: value => adapter.write(cachePath, JSON.stringify(value, null, 2)),
-            removeCache: async () => { if (await adapter.exists(cachePath)) await adapter.remove(cachePath); },
+            readCache: async () => {
+                const text = await storageFiles.read('data', recoveryName, [legacyCache], true);
+                return text === undefined ? null : JSON.parse(text) as unknown;
+            },
+            writeCache: value => storageFiles.write('data', recoveryName, JSON.stringify(value, null, 2)),
+            removeCache: () => storageFiles.remove('data', recoveryName, [legacyCache]),
         }, owner);
         this.settings = this.normalizeSettings(await this.settingsSession.load()) as unknown as ManagerSettings;
         this.persistedSettingsJson = JSON.stringify(this.settings);
@@ -930,6 +950,17 @@ export default class Manager extends Plugin {
         for (const key of Object.keys(target)) if (!(key in incoming)) delete target[key];
         Object.assign(this.settings, next);
         this.persistedSettingsJson = JSON.stringify(this.devices?.persistedSettings() ?? this.settings);
+    }
+
+    /** 外部合并后，用磁盘快照决定下次保存是否真的需要写盘。 */
+    private markExternalPersistence(incoming: Record<string, unknown>): void {
+        const live = this.devices?.persistedSettings() ?? this.settings;
+        const disk = this.normalizeSettings(incoming) as unknown as ManagerSettings;
+        const management = disk.DEVICE_MANAGEMENT;
+        const normalizedDisk = management ? { ...disk, DEVICE_MANAGEMENT: { ...management, devices: [] } } : disk;
+        this.persistedSettingsJson = settingsFingerprint(live) === settingsFingerprint(normalizedDisk)
+            ? JSON.stringify(live)
+            : '';
     }
 
     private queueSettingsOperation<T>(operation: () => Promise<T>): Promise<T> {
@@ -977,14 +1008,47 @@ export default class Manager extends Plugin {
                 if (this.isUnloaded) return;
                 const path = `${this.app.vault.configDir}/plugins/${this.manifest.id}/data.json`;
                 const incoming = this.normalizeSettings(JSON.parse(await this.app.vault.adapter.read(path)) as unknown);
-                const result = this.settingsSession?.external(incoming);
+                // 外域作用域只保存预设；此时不把远端值塞进投影，退出作用域时由 finish 合并。
+                if (this.devices?.isProjectingForeign()) {
+                    const recordsChanged = await this.devices.mergeDeviceRecords();
+                    if (recordsChanged) this.managerModal?.refreshDevicePanelIfOpen();
+                    if (this.settingsSession?.hasExternalChange(incoming)) {
+                        const now = Date.now();
+                        if (now - this.lastSyncDeferredNotice > 30_000) {
+                            this.lastSyncDeferredNotice = now;
+                            new Notice(this.translator.t('同步_外域更新延后'), 8000);
+                        }
+                    }
+                    return;
+                }
+                const beforeBound = this.devices?.boundFingerprint() ?? '';
+                const result = this.settingsSession?.external(incoming, this.settings);
                 const visible = this.settingsEditors.size > 0;
-                if (this.syncUpdateGuard.observe(visible, result?.changed ?? false) && !this.settingsSession?.usingCache) {
+                const frequent = this.syncUpdateGuard.observe(visible, result?.changed ?? false)
+                    && !this.settingsSession?.usingCache;
+                if (result?.apply) {
+                    this.adoptSettings(result.apply);
+                    this.markExternalPersistence(incoming);
+                    const recordsChanged = await this.devices?.mergeDeviceRecords();
+                    this.devices?.reconcileAfterExternal();
+                    if (recordsChanged) this.managerModal?.refreshDevicePanelIfOpen();
+                    const afterBound = this.devices?.boundFingerprint() ?? '';
+                    if (beforeBound && afterBound && beforeBound !== afterBound && this.devices?.data.enabled) {
+                        void this.devices.apply().catch(error => this.devices?.report(error));
+                    }
+                    const now = Date.now();
+                    if (now - this.lastSyncAppliedNotice > 10_000) {
+                        this.lastSyncAppliedNotice = now;
+                        new Notice(this.translator.t('同步_外部已应用'), 5000);
+                    }
+                } else if (!this.settingsSession) {
+                    this.adoptSettings(incoming);
+                }
+                if (frequent) {
                     await this.settingsSession?.activateCache(this.devices?.persistedSettings() ?? this.settings);
                     new Notice(this.translator.t('同步_频繁更新提醒'), 10_000);
                 }
-                if (result?.apply) this.adoptSettings(result.apply);
-                if (this.settings.DEBUG) console.log('[BPM] External settings buffered without changing the interface');
+                if (this.settings.DEBUG) console.log('[BPM] External settings merged into memory without rebuilding the interface');
             });
         } catch (error) {
             if (this.settings?.DEBUG) console.error("[BPM] external settings refresh failed", error);
@@ -996,7 +1060,8 @@ export default class Manager extends Plugin {
         const save = async () => {
             if (options.captureDevice !== false) this.devices?.capture();
             // 其他设备同步过来的设备记录只存在于磁盘，先并回内存再整份写回。
-            await this.devices?.mergeDeviceRecords();
+            const recordsChanged = await this.devices?.mergeDeviceRecords();
+            if (recordsChanged) this.managerModal?.refreshDevicePanelIfOpen();
             // 投影其他设备时，data.json 只写本机真实值；外域值留在 DEVICE_MANAGEMENT。
             const settings = this.devices?.persistedSettings() ?? this.settings;
             const serialized = JSON.stringify(settings);
@@ -1152,17 +1217,31 @@ export default class Manager extends Plugin {
 
     public showUpdateProgress(total: number): { dispose: () => void; update: (processed: number, currentId?: string) => void; cancel: () => void; isCancelled: () => boolean } {
         if (this.updateProgressNotice) this.updateProgressNotice.hide();
+        this.updateProgressTask?.done();
         const baseText = this.translator.t("通知_检测更新中文案");
+        const taskTitle = this.translator.t("任务_检查更新");
+        const totalCount = Math.max(total, 1);
         const notice = new Notice(baseText, 0);
-        const update = (p: number, currentId?: string) => {
-            notice.setMessage(`${baseText} ${Math.min(p, total)}/${total}${currentId ? ` · ${currentId}` : ""}`);
-        };
+        const task = this.tasks.start({ title: `${taskTitle} 0/${totalCount}` });
         this.updateProgressNotice = notice;
+        this.updateProgressTask = task;
+        let finished = false;
+        const update = (p: number, currentId?: string) => {
+            const processed = Math.min(p, total);
+            notice.setMessage(`${baseText} ${processed}/${total}${currentId ? ` · ${currentId}` : ""}`);
+            task.update({ title: `${taskTitle} ${processed}/${totalCount}`, progress: processed / totalCount });
+            if (processed >= totalCount && !finished) {
+                finished = true;
+                task.done();
+            }
+        };
         update(0);
         return {
             dispose: () => {
                 notice.hide();
+                if (!finished) task.done();
                 if (this.updateProgressNotice === notice) this.updateProgressNotice = null;
+                if (this.updateProgressTask === task) this.updateProgressTask = null;
             },
             update,
             cancel: () => undefined,

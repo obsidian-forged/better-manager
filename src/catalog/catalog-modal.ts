@@ -114,6 +114,20 @@ export class CatalogModal extends Modal {
         return button;
     }
 
+    /** 目录刷新属于在线下载，登记到设置页任务中心 / Track catalog refresh as an online task. */
+    private async refreshSource(id: string): Promise<void> {
+        const name = this.service.getSources().find(source => source.id === id)?.name
+            || (id === "official" ? this.t("目录_官方") : id);
+        const task = this.manager.tasks.start({ title: this.t("任务_下载目录", { name }), progress: 0.04 });
+        try {
+            await this.service.refresh(id, progress => task.update({ progress: 0.04 + progress * 0.96 }));
+            task.done();
+        } catch (error) {
+            task.fail();
+            throw error;
+        }
+    }
+
     private render(): void {
         this.filterSelects.forEach(select => select.close());
         this.filterSelects = [];
@@ -201,12 +215,12 @@ export class CatalogModal extends Modal {
             this.importModal = new CatalogSourceImportModal(this.app, this.manager, this.service, () => { if (!this.closed) this.render(); });
             this.importModal.open();
         });
-        this.action(header, this.t("目录_官方"), () => this.service.refresh("official"));
+        this.action(header, this.t("目录_官方"), () => this.refreshSource("official"));
         if (!this.service.getSources().length) sources.createDiv({ cls: "bpm-empty-state", text: this.t("目录_暂无来源") });
         for (const source of this.service.getSources()) {
             const card = sources.createDiv("manager-source-card");
             const actions = this.sectionHeader(card, source.name, this.t("目录_预览数量", { count: source.plugins.length }));
-            if (source.url) this.action(actions, this.t("目录_刷新"), () => this.service.refresh(source.id));
+            if (source.url) this.action(actions, this.t("目录_刷新"), () => this.refreshSource(source.id));
             this.action(actions, this.t("目录_删除"), async () => {
                 await this.service.remove(source.id);
                 if (this.sourceId === source.id) this.sourceId = "";

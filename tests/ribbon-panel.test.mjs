@@ -6,6 +6,7 @@ const nativeRequire = createRequire(import.meta.url);
 
 // 验证真实面板的重绘/事件链，不启动或改动个人库；Exercise production rendering with native API doubles.
 class Element {
+    ownerDocument = { defaultView: { innerWidth: 800, innerHeight: 600, addEventListener() {}, removeEventListener() {} }, addEventListener() {}, removeEventListener() {} };
     children = [];
     classes = new Set();
     attributes = {};
@@ -22,6 +23,12 @@ class Element {
         this.children.push(child); return child;
     }
     addClass(...names) { names.forEach(name => this.classes.add(name)); }
+    removeClass(...names) { names.forEach(name => this.classes.delete(name)); }
+    hasClass(name) { return this.classes.has(name); }
+    toggleClass(name, enabled) { if (enabled) this.classes.add(name); else this.classes.delete(name); }
+    closest() { return null; }
+    querySelector() { return null; }
+    querySelectorAll() { return []; }
     setAttribute(name, value) { this.attributes[name] = value; }
     empty() { this.children = []; }
     addEventListener() {}
@@ -53,26 +60,32 @@ function fixture() {
         isRibbonManagerEnabled: () => true, translator: { t: key => key } };
     const panel = new RibbonModal({}, manager);
     const rendered = [];
-    panel.renderFilteredList = () => { rendered.push(panel.currentFilter); };
+    panel.renderFilteredList = () => { rendered.push([...panel.statusFilters].sort()); };
     let scopes = 0;
     panel.renderScopeBar = () => { scopes++; };
     return { panel, rendered, scopes: () => scopes };
 }
 const buttons = host => host.children[0].children[0].children.filter(child => child.tag === 'button');
 
-test('embedded Ribbon re-renders the external active filter on every selection', () => {
+test('embedded Ribbon supports multi-select status filters and clears them via All', () => {
     const { panel, rendered, scopes } = fixture();
     const host = new Element(); const page = new Element();
     panel.setExternalFilterBar(true); panel.mountFilterBar(host); panel.display(page, false);
     assert.equal(scopes(), 0);
-    for (const index of [1, 2, 0, 2]) {
-        buttons(host)[index].click();
-        assert.equal(host.children.length, 1);
-        assert.deepEqual(buttons(host).map(button => button.classes.has('is-active')), [0, 1, 2].map(value => value === index));
-        assert.deepEqual(buttons(host).map(button => button.attributes['aria-pressed']), [0, 1, 2].map(value => `${value === index}`));
-        assert.equal(rendered.at(-1), ['all', 'visible', 'hidden'][index]);
-    }
-    assert.equal(scopes(), 0);
+    const states = () => buttons(host).map(button => button.classes.has('is-active'));
+    const pressed = () => buttons(host).map(button => button.attributes['aria-pressed']);
+    assert.deepEqual(states(), [true, false, false, false]);
+    buttons(host)[1].click();
+    assert.deepEqual(states(), [false, true, false, false]);
+    buttons(host)[2].click();
+    assert.deepEqual(states(), [false, true, true, false]);
+    buttons(host)[3].click();
+    assert.deepEqual(states(), [false, true, true, true]);
+    buttons(host)[0].click();
+    assert.deepEqual(states(), [true, false, false, false]);
+    assert.deepEqual(pressed(), ['true', 'false', 'false', 'false']);
+    assert.equal(host.children.length, 1);
+    assert.ok(rendered.length > 0);
 });
 test('standalone mobile Ribbon keeps its own single device selector', () => {
     const { panel, scopes } = fixture();
