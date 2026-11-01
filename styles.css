@@ -15618,3 +15618,9 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
     border: 0 !important;
     box-shadow: none !important;
 }
+
+/* 顶栏功能区所在的父容器不再描边（保留背景与圆角） */
+.manager-container .manager-section--actions {
+    border: 0 !important;
+    box-shadow: none !important;
+}
