@@ -16205,7 +16205,7 @@ body .manager-personalize .manager-toolbar__tab.is-active {
     padding: 4px 8px !important;
 }
 
-/* 设置页首个标题的下外边距收紧 */
-.manager-setting__content > div:nth-child(1) {
+/* 设置页标题（settings-item-heading）的下外边距收紧 */
+.manager-setting__content .setting-item-heading {
     margin-bottom: 4px;
 }
