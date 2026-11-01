@@ -15753,3 +15753,20 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
     height: 18px;
     stroke-width: 2.1;
 }
+
+/* 桌面插件卡片：操作按钮移到右下角，标题区拿回整行宽度，避免自定义名/标题/版本被挤换行 */
+.manager-container:not(.manager-container--mobile) .manager-plugin-card {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+}
+
+.manager-container:not(.manager-container--mobile) .manager-plugin-card > .setting-item-info {
+    width: 100%;
+    min-width: 0;
+}
+
+.manager-container:not(.manager-container--mobile) .manager-plugin-card > .setting-item-control {
+    align-self: flex-end;
+    margin: 0;
+}
