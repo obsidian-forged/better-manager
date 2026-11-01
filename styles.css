@@ -16198,3 +16198,9 @@ body .manager-personalize .manager-toolbar__tab.is-active {
 .manager-personalize .manager-bar__action .setting-item-control {
     gap: 4px;
 }
+
+/* 个性化 BPM：模块行与功能行使用相同内边距，内容左边界一致 */
+.manager-personalize .manager-toolbar__tabs,
+.manager-personalize .manager-toolbar__tools {
+    padding: 4px 8px !important;
+}
