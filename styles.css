@@ -16215,3 +16215,8 @@ body .manager-personalize .manager-toolbar__tab.is-active {
     padding-left: 0;
     padding-right: 0;
 }
+
+/* 设置页标题上方不再画分隔线 */
+.manager-setting__content > .setting-item-heading {
+    border-top: 0;
+}
