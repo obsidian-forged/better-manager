@@ -15805,6 +15805,15 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
     margin: 0 !important;
 }
 
-.manager-plugin-card__footer .manager-plugin-card__tags > .manager-tag:first-child {
-    margin-left: 0;
+/* 标签间距改用右边距，避免最后一个标签留下尾部空隙 */
+.manager-container .manager-plugin-card__tags {
+    gap: 0;
+}
+
+.manager-container .manager-plugin-card__tags > .manager-tag {
+    margin: 0 4px 0 0;
+}
+
+.manager-container .manager-plugin-card__tags > .manager-tag:last-child {
+    margin-right: 0;
 }
