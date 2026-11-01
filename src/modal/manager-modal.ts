@@ -2474,6 +2474,13 @@ export class ManagerModal extends Modal {
             btn.buttonEl.addEventListener("touchcancel", clear);
         */
         const toolbar = actionContent.createDiv("manager-toolbar");
+        // 顶栏最左侧的 BPM 设置入口（图标 + 文字，样式与功能图标一致）
+        const settingsLink = toolbar.createEl("button", { cls: "manager-toolbar__settings" });
+        settingsLink.type = "button";
+        settingsLink.setAttribute("aria-label", this.manager.translator.t("管理器_插件设置_描述"));
+        setIcon(settingsLink.createSpan("manager-toolbar__settings-icon"), "settings");
+        settingsLink.createSpan({ cls: "manager-toolbar__settings-label", text: this.manager.translator.t("管理器_BPM设置_短") });
+        settingsLink.addEventListener("click", () => this.openSettingsTab(this.manager.manifest.id));
         const tabs = toolbar.createDiv("manager-toolbar__tabs");
         tabs.setAttribute("role", "tablist");
         tabs.setAttribute("data-slot", "tabs-list");

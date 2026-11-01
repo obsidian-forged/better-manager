@@ -1,4 +1,4 @@
-import { App, PluginSettingTab } from 'obsidian';
+import { App, PluginSettingTab, setIcon } from 'obsidian';
 import Manager from "../main";
 
 import ManagerBasis from './ui/manager-basis';
@@ -64,14 +64,14 @@ class ManagerSettingTab extends PluginSettingTab {
         this.contentEl.addClass('manager-setting__content');
 
         const tabItems = [
-            { text: this.manager.translator.t('设置_基础设置_前缀'), content: () => this.basisDisplay() },
-            { text: this.manager.translator.t('设置_主页面功能_前缀'), content: () => this.mainPageDisplay() },
-            { text: this.manager.translator.t('设置_样式设置_前缀'), content: () => this.styleDisplay() },
-            { text: this.manager.translator.t('设置_分组设置_前缀'), content: () => this.groupDisplay() },
-            { text: this.manager.translator.t('设置_标签设置_前缀'), content: () => this.tagDisplay() },
+            { text: this.manager.translator.t('设置_基础设置_前缀'), icon: 'settings-2', content: () => this.basisDisplay() },
+            { text: this.manager.translator.t('设置_主页面功能_前缀'), icon: 'mouse-pointer-click', content: () => this.mainPageDisplay() },
+            { text: this.manager.translator.t('设置_样式设置_前缀'), icon: 'palette', content: () => this.styleDisplay() },
+            { text: this.manager.translator.t('设置_分组设置_前缀'), icon: 'folder-tree', content: () => this.groupDisplay() },
+            { text: this.manager.translator.t('设置_标签设置_前缀'), icon: 'tags', content: () => this.tagDisplay() },
 
         ];
-        if (this.manager.settings.DELAY) tabItems.push({ text: this.manager.translator.t('设置_延迟设置_前缀'), content: () => this.delayDisplay() });
+        if (this.manager.settings.DELAY) tabItems.push({ text: this.manager.translator.t('设置_延迟设置_前缀'), icon: 'timer', content: () => this.delayDisplay() });
 
         const tabItemsEls: HTMLButtonElement[] = [];
 
@@ -82,7 +82,10 @@ class ManagerSettingTab extends PluginSettingTab {
             itemEl.setAttribute('role', 'tab');
             itemEl.setAttribute('tabindex', '0');
             itemEl.setAttribute('data-slot', 'tabs-trigger');
-            itemEl.textContent = item.text;
+            const iconEl = itemEl.createSpan('manager-setting__tabs-icon');
+            iconEl.setAttribute('aria-hidden', 'true');
+            setIcon(iconEl, item.icon);
+            itemEl.createSpan({ cls: 'manager-setting__tabs-label', text: item.text });
             tabItemsEls.push(itemEl);
             const activate = () => {
                 this.activeTabIndex = index;

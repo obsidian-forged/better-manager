@@ -15371,3 +15371,76 @@ body.is-mobile .ribbon-manager-modal .ribbon-manager-item-control-root > .ribbon
 .manager-container.manager-container--main:not(.manager-container--mobile) .manager-filter-control-group {
     grid-template-columns: none; grid-template-rows: auto; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr);
 }
+
+/* 管理器顶栏：BPM 设置入口与按内容伸缩的功能项 / BPM settings entry and content-sized tabs */
+.manager-toolbar__settings {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 6px;
+    height: var(--bpm-control-size);
+    padding: 0 12px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--bpm-radius-sm);
+    background: var(--interactive-normal);
+    color: var(--text-normal);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    box-shadow: none;
+}
+
+.manager-toolbar__settings:hover {
+    background: var(--interactive-hover);
+    border-color: var(--background-modifier-border);
+}
+
+.manager-toolbar__settings-icon {
+    display: inline-flex;
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+    color: var(--text-accent);
+}
+
+.manager-toolbar__settings-icon svg {
+    width: 16px;
+    height: 16px;
+    stroke-width: 2.1;
+}
+
+.manager-container .manager-toolbar__tabs .manager-toolbar__tab {
+    flex: 0 0 auto !important;
+    width: auto !important;
+}
+
+/* 设置分页：标签左侧图标与选中态（对齐图标按钮的底色与边框） */
+.manager-setting__tabs-icon {
+    display: inline-flex;
+    flex: 0 0 16px;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+}
+
+.manager-setting__tabs-icon svg {
+    width: 16px;
+    height: 16px;
+    stroke-width: 2;
+}
+
+body .manager-setting__tabs .manager-setting__tabs-item_is-active,
+body .manager-setting__tabs .manager-setting__tabs-item[data-state="active"] {
+    border-color: var(--background-modifier-border) !important;
+    background: var(--interactive-normal) !important;
+    color: var(--text-accent) !important;
+    box-shadow: none !important;
+}
+
+body .manager-setting__tabs .manager-setting__tabs-item_is-active .manager-setting__tabs-icon,
+body .manager-setting__tabs .manager-setting__tabs-item[data-state="active"] .manager-setting__tabs-icon {
+    color: var(--text-accent);
+}
