@@ -15817,3 +15817,8 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
 .manager-container .manager-plugin-card__tags > .manager-tag:last-child {
     margin-right: 0;
 }
+
+/* 描述从标题下方直接起排，不再为等高卡片做底部对齐 */
+.manager-container .manager-plugin-overview--two-column > .manager-plugin-card > .setting-item-info > .manager-plugin-card__body {
+    margin-block-start: 6px;
+}
