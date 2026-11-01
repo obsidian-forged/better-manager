@@ -2595,21 +2595,9 @@ export class ManagerModal extends Modal {
             menu.showAtMouseEvent(event);
         });
         contacts.setAttribute('aria-haspopup', 'menu');
-        if (Platform.isMobile && this.nativeMobileCloseEl) {
-            const close = this.nativeMobileCloseEl;
-            close.addClass('manager-modal-close');
-            close.setAttribute('aria-label', t('通用_关闭窗口'));
-            close.setAttribute('role', 'button');
-            if (!close.hasAttribute('tabindex')) {
-                close.tabIndex = 0;
-                close.addEventListener('keydown', event => {
-                    if (event.key !== 'Enter' && event.key !== ' ') return;
-                    event.preventDefault();
-                    close.click();
-                });
-            }
-            parent.appendChild(close);
-        }
+        // 关闭按钮统一用移动端那颗，原生关闭按钮由样式隐藏。
+        const close = createIconTool('x', t('通用_关闭窗口'), () => this.close());
+        close.addClass('manager-modal-close');
     }
 
     private createPageTools(): void {

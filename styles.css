@@ -15575,3 +15575,40 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
     grid-row: 2;
     min-width: 0;
 }
+
+/* 管理器关闭按钮：统一为移动端那颗（带边框的方形按钮），桌面端也放进工具行 */
+.manager-modal-close {
+    position: static;
+    inset: auto;
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: var(--bpm-action-size);
+    height: var(--bpm-action-size);
+    min-width: var(--bpm-action-size);
+    padding: 0;
+    margin: 0;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--bpm-radius-sm);
+    background: var(--background-primary);
+    color: var(--text-muted);
+    box-shadow: none;
+    cursor: pointer;
+}
+
+.manager-modal-close:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.manager-modal-close svg {
+    width: 18px;
+    height: 18px;
+}
+
+/* 隐藏原生关闭按钮，统一使用工具行里的方形关闭按钮 */
+.manager-container .modal-close-button,
+.manager-container > .modal-header-button {
+    display: none !important;
+}
