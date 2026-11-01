@@ -56,7 +56,12 @@ class ManagerSettingTab extends PluginSettingTab {
         };
         containerEl.empty();
         containerEl.addClass('manager-setting__container');
-        const tabsEl = this.containerEl.createEl('div');
+        const topbar = this.containerEl.createEl('div');
+        topbar.addClass('manager-setting__topbar');
+        const brand = topbar.createDiv('manager-setting__brand');
+        setIcon(brand.createSpan('manager-setting__brand-icon'), 'settings');
+        brand.createSpan({ cls: 'manager-setting__brand-label', text: this.manager.translator.t('管理器_BPM设置_短') });
+        const tabsEl = topbar.createEl('div');
         tabsEl.addClass('manager-setting__tabs');
         tabsEl.setAttribute('role', 'tablist');
         tabsEl.setAttribute('data-slot', 'tabs-list');
