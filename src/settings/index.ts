@@ -24,8 +24,36 @@ class ManagerSettingTab extends PluginSettingTab {
         this.renderSettings();
     }
 
+    /** 记住当前分页，重绘后回到同一页并恢复滚动位置，避免改一次配置就跳回顶部。 */
+    private activeTabIndex = 0;
+
+    private scrollContainer(): HTMLElement | null {
+        let el: HTMLElement | null = this.containerEl;
+        while (el) {
+            const overflowY = getComputedStyle(el).overflowY;
+            if (overflowY === 'auto' || overflowY === 'scroll') return el;
+            el = el.parentElement;
+        }
+        return null;
+    }
+
     renderSettings(): void {
         const { containerEl } = this;
+        const scroller = this.scrollContainer();
+        const scrollTop = scroller?.scrollTop ?? 0;
+        // 分页内容自身也是滚动容器，改配置触发的重绘要沿用它的位置。
+        const contentTop = this.contentEl?.scrollTop ?? 0;
+        const restore = () => {
+            if (scroller && scrollTop > 0) {
+                scroller.scrollTop = scrollTop;
+                requestAnimationFrame(() => { if (scroller.isConnected) scroller.scrollTop = scrollTop; });
+            }
+            if (contentTop > 0) {
+                this.contentEl.scrollTop = contentTop;
+                const content = this.contentEl;
+                requestAnimationFrame(() => { if (content.isConnected) content.scrollTop = contentTop; });
+            }
+        };
         containerEl.empty();
         containerEl.addClass('manager-setting__container');
         const tabsEl = this.containerEl.createEl('div');
@@ -57,6 +85,7 @@ class ManagerSettingTab extends PluginSettingTab {
             itemEl.textContent = item.text;
             tabItemsEls.push(itemEl);
             const activate = () => {
+                this.activeTabIndex = index;
                 tabItemsEls.forEach(tabEl => {
                     tabEl.removeClass('manager-setting__tabs-item_is-active');
                     tabEl.setAttribute('aria-selected', 'false');
@@ -69,7 +98,7 @@ class ManagerSettingTab extends PluginSettingTab {
             };
             itemEl.setAttribute('aria-selected', 'false');
             itemEl.setAttribute('data-state', 'inactive');
-            if (index === 0) activate();
+            if (index === Math.min(this.activeTabIndex, tabItems.length - 1)) activate();
             itemEl.addEventListener('click', activate);
             itemEl.addEventListener('keydown', (event) => {
                 if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -77,6 +106,7 @@ class ManagerSettingTab extends PluginSettingTab {
                 activate();
             });
         });
+        restore();
     }
     basisDisplay() { this.contentEl.empty(); new ManagerBasis(this).render(); }
     mainPageDisplay() { this.contentEl.empty(); new ManagerMainPage(this).render(); }
