@@ -15929,3 +15929,57 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
     margin: 0;
     flex: 0 0 auto;
 }
+
+/* 移动端：关闭按钮与顶栏图标按钮同尺寸（仅移动端） */
+.manager-container--mobile .bpm-mobile-header__actions .manager-global-tools > .manager-modal-close {
+    width: var(--bpm-action-size) !important;
+    height: var(--bpm-action-size) !important;
+    min-width: var(--bpm-action-size) !important;
+    min-height: var(--bpm-action-size) !important;
+    border-radius: var(--bpm-radius-sm) !important;
+}
+
+.manager-container--mobile .bpm-mobile-header__actions .manager-global-tools > .manager-modal-close svg {
+    width: 18px;
+    height: 18px;
+}
+
+/* 手机端概览：统计只留图标+数字，操作按钮换行而不是被滚动隐藏 */
+body.is-phone .manager-container--mobile .manager-overview-heading .manager-food {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    scrollbar-width: thin;
+}
+
+body.is-phone .manager-container--mobile .bpm-stat-chip__label {
+    display: none;
+}
+
+body.is-phone .manager-container--mobile .bpm-stat-chip {
+    gap: 4px;
+    padding-inline: 8px;
+}
+
+body.is-phone .manager-container--mobile .manager-page-tools {
+    width: 100%;
+    overflow-x: visible;
+}
+
+body.is-phone .manager-container--mobile .manager-page-tools .setting-item-control {
+    flex-wrap: wrap;
+    justify-content: center;
+    width: 100%;
+}
+
+/* 隐藏标签时，长按功能项临时显示标签 */
+.manager-toolbar__tab--label-preview .manager-toolbar__tab-label {
+    display: inline !important;
+}
+
+/* 移动端关闭按钮宽度也强制与图标按钮一致（含 flex 基准与上限） */
+.manager-container.manager-container--mobile .bpm-mobile-header__actions .manager-global-tools > .manager-modal-close {
+    flex: 0 0 var(--bpm-action-size) !important;
+    width: var(--bpm-action-size) !important;
+    max-width: var(--bpm-action-size) !important;
+}

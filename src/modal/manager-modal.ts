@@ -2494,7 +2494,35 @@ export class ManagerModal extends Modal {
             iconEl.setAttribute("aria-hidden", "true");
             setIcon(iconEl, icon);
             tab.createSpan({ cls: "manager-toolbar__tab-label", text: label });
-            tab.addEventListener("click", () => this.setDesktopPage(page));
+            // 标签隐藏时，长按功能项临时显示标签（触屏）。
+            let pressTimer: number | undefined;
+            let longPressed = false;
+            let previewTimer: number | undefined;
+            const clearPress = () => {
+                if (pressTimer !== undefined) { window.clearTimeout(pressTimer); pressTimer = undefined; }
+            };
+            tab.addEventListener("pointerdown", (event) => {
+                if (event.pointerType === "mouse") return;
+                longPressed = false;
+                clearPress();
+                pressTimer = window.setTimeout(() => {
+                    longPressed = true;
+                    tab.addClass("manager-toolbar__tab--label-preview");
+                    if (previewTimer !== undefined) window.clearTimeout(previewTimer);
+                    previewTimer = window.setTimeout(() => tab.removeClass("manager-toolbar__tab--label-preview"), 1500);
+                }, 450);
+            });
+            ["pointerup", "pointerleave", "pointercancel"].forEach((name) =>
+                tab.addEventListener(name, clearPress));
+            tab.addEventListener("click", (event) => {
+                if (longPressed) {
+                    longPressed = false;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    return;
+                }
+                this.setDesktopPage(page);
+            });
             return tab;
         };
         const pageTabs = new Map(this.getPageNavigationItems().map(item =>
