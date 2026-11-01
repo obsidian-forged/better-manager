@@ -15624,3 +15624,44 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
     border: 0 !important;
     box-shadow: none !important;
 }
+
+/* 顶栏功能区：与 logo 同高、无上下内边距、溢出时用 Obsidian 横向滚动条 */
+.manager-container.manager-container--main:not(.manager-container--mobile) .manager-toolbar__tabs {
+    flex: 0 1 auto !important;
+    height: 34px !important;
+    min-height: 34px !important;
+    max-height: 34px !important;
+    max-width: 100%;
+    min-width: 0;
+    padding: 0 3px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: thin;
+    overscroll-behavior-x: contain;
+}
+
+.manager-container.manager-container--main:not(.manager-container--mobile) .manager-toolbar__tabs::-webkit-scrollbar {
+    display: block;
+    height: 4px;
+}
+
+.manager-container.manager-container--main:not(.manager-container--mobile) .manager-toolbar__tabs::-webkit-scrollbar-thumb {
+    background: var(--background-modifier-border);
+    border-radius: 2px;
+}
+
+.manager-container.manager-container--main:not(.manager-container--mobile) .manager-toolbar {
+    min-width: 0;
+}
+
+/* 关闭按钮使用警示色 */
+.manager-modal-close {
+    color: var(--text-warning) !important;
+    border-color: color-mix(in srgb, var(--color-orange) 42%, var(--background-modifier-border)) !important;
+}
+
+.manager-modal-close:hover {
+    background: color-mix(in srgb, var(--color-orange) 14%, transparent) !important;
+    color: var(--text-warning) !important;
+    border-color: color-mix(in srgb, var(--color-orange) 60%, var(--background-modifier-border)) !important;
+}
