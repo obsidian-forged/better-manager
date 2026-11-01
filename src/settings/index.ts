@@ -61,10 +61,40 @@ class ManagerSettingTab extends PluginSettingTab {
         const brand = topbar.createDiv('manager-setting__brand');
         setIcon(brand.createSpan('manager-setting__brand-icon'), 'settings');
         brand.createSpan({ cls: 'manager-setting__brand-label', text: this.manager.translator.t('管理器_BPM设置_短') });
-        const tabsEl = topbar.createEl('div');
+        const tabsWrap = topbar.createEl('div');
+        tabsWrap.addClass('manager-setting__tabs-wrap');
+        const tabsEl = tabsWrap.createEl('div');
         tabsEl.addClass('manager-setting__tabs');
         tabsEl.setAttribute('role', 'tablist');
         tabsEl.setAttribute('data-slot', 'tabs-list');
+        // 浮动滚动条：不占布局，悬停/滚动时显示在分页栏底部。
+        const scrollbarEl = tabsWrap.createEl('div');
+        scrollbarEl.addClass('manager-setting__tabs-scrollbar');
+        const thumbEl = scrollbarEl.createEl('div');
+        thumbEl.addClass('manager-setting__tabs-scrollbar-thumb');
+        let scrollHideTimer: number | undefined;
+        const updateTabsScrollbar = () => {
+            const scrollable = tabsEl.scrollWidth - tabsEl.clientWidth;
+            if (scrollable <= 1) {
+                scrollbarEl.addClass('is-hidden');
+                return;
+            }
+            scrollbarEl.removeClass('is-hidden');
+            const ratio = tabsEl.clientWidth / tabsEl.scrollWidth;
+            const thumbWidth = Math.max(18, Math.round(tabsEl.clientWidth * ratio));
+            thumbEl.setCssStyles({
+                width: `${thumbWidth}px`,
+                transform: `translateX(${Math.round((tabsEl.scrollLeft / scrollable) * (tabsEl.clientWidth - thumbWidth))}px)`,
+            });
+        };
+        tabsEl.addEventListener('scroll', () => {
+            updateTabsScrollbar();
+            tabsWrap.addClass('is-scrolling');
+            if (scrollHideTimer !== undefined) window.clearTimeout(scrollHideTimer);
+            scrollHideTimer = window.setTimeout(() => tabsWrap.removeClass('is-scrolling'), 900);
+        });
+        new ResizeObserver(updateTabsScrollbar).observe(tabsEl);
+        updateTabsScrollbar();
         this.contentEl = this.containerEl.createEl('div');
         this.contentEl.addClass('manager-setting__content');
 

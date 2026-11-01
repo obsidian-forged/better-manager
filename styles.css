@@ -16231,3 +16231,44 @@ body .manager-personalize .manager-toolbar__tab.is-active {
     width: 0 !important;
     height: 0 !important;
 }
+
+/* 设置分页：滚动条浮动在分页栏底部，不占用布局高度 */
+.manager-setting__tabs-wrap {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.manager-setting__tabs-wrap .manager-setting__tabs {
+    width: 100%;
+}
+
+.manager-setting__tabs-scrollbar {
+    position: absolute;
+    left: 2px;
+    right: 2px;
+    bottom: 1px;
+    height: 4px;
+    border-radius: 2px;
+    background: transparent;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+}
+
+.manager-setting__tabs-scrollbar.is-hidden {
+    display: none;
+}
+
+.manager-setting__tabs-wrap:hover .manager-setting__tabs-scrollbar,
+.manager-setting__tabs-wrap.is-scrolling .manager-setting__tabs-scrollbar {
+    opacity: 1;
+}
+
+.manager-setting__tabs-scrollbar-thumb {
+    height: 100%;
+    border-radius: 2px;
+    background: var(--scrollbar-thumb-bg, var(--background-modifier-border));
+    transition: transform 0.05s linear;
+}
