@@ -4,6 +4,7 @@ import { RibbonItem } from "../data/types";
 import { confirmWithModal } from "../utils";
 import { RIBBON_GROUP_ITEM_PREFIX } from "../manager/ribbon-groups";
 import { DeviceScopeBar } from "../devices/device-scope-bar";
+import { ScopeSelect } from "../ui/scope-select";
 
 class GroupIconPicker extends FuzzySuggestModal<string> {
     constructor(app: App, private readonly choose: (icon: string) => void) { super(app); }
@@ -22,9 +23,17 @@ export class RibbonModal extends Modal {
     manager: Manager;
     private renderRootEl?: HTMLElement;
     private renderToolbarInRoot = true;
+    private groupSelects: ScopeSelect[] = [];
+
+    /** 重绘、换页与关闭均清理菜单监听；Clean up shared menus across rendering and page lifecycles. */
+    closeGroupMenus(): void {
+        this.groupSelects.forEach(select => select.close());
+        this.groupSelects = [];
+    }
 
     // 过滤和搜索
     private currentFilter = "all";
+    private externalFilterBar = false;
     private groupsCollapsed = false;
     private showGroupedItems = false;
     private searchQuery = "";
@@ -44,6 +53,11 @@ export class RibbonModal extends Modal {
         super(app);
         this.manager = manager;
     }
+
+    /** 嵌入式页面把过滤栏放到外部标题里时使用。 */
+    setExternalFilterBar(value: boolean): void { this.externalFilterBar = value; }
+
+    mountFilterBar(containerEl: HTMLElement): void { this.buildFilterBar(containerEl, () => this.displayWithoutSearch()); }
 
     async onOpen() {
         if (!this.manager.isRibbonManagerEnabled()) {
@@ -100,6 +114,7 @@ export class RibbonModal extends Modal {
     }
 
     display(targetEl?: HTMLElement, showToolbar = this.renderToolbarInRoot) {
+        this.closeGroupMenus();
         const contentEl = targetEl || this.renderRootEl || this.contentEl;
         this.renderRootEl = contentEl;
         this.renderToolbarInRoot = showToolbar;
@@ -109,6 +124,7 @@ export class RibbonModal extends Modal {
         this.renderScopeBar(contentEl);
         // 手机端把「边栏编排 / Ribbon 分组」窗口化，列表占满剩余高度。
         if (showToolbar) {
+            this.externalFilterBar = false;
             if (Platform.isMobileApp) this.renderMobileSectionsBar(contentEl);
             else this.renderToolbar(contentEl);
         }
@@ -304,16 +320,44 @@ export class RibbonModal extends Modal {
 
     renderDraggableList(containerEl: HTMLElement) {
         const t = (k: string) => this.manager.translator.t(k);
-        const allItems = this.manager.settings.RIBBON_SETTINGS;
+        let listContainer: HTMLElement;
+        const refresh = () => this.renderFilteredList(containerEl, listContainer);
+        if (!this.externalFilterBar) this.buildFilterBar(containerEl, refresh);
 
-        // 统计数量：默认不显示分组成员；开关打开时按完整列表统计。
+        if (this.showGroupedItems) {
+            containerEl.createDiv({ cls: "ribbon-manager-grouped-hint", text: t("Ribbon_显示已分组提示") });
+        }
+        listContainer = containerEl.createDiv("draggable-list-container");
+        this.renderFilteredList(containerEl, listContainer);
+    }
+
+    displayWithoutSearch(targetEl?: HTMLElement, showToolbar = this.renderToolbarInRoot) {
+        this.closeGroupMenus();
+        const contentEl = targetEl || this.renderRootEl || this.contentEl;
+        this.renderRootEl = contentEl;
+        this.renderToolbarInRoot = showToolbar;
+        contentEl.empty();
+        if (!this.manager.isRibbonManagerEnabled()) return;
+
+        this.renderScopeBar(contentEl);
+        // 手机端把「边栏编排 / Ribbon 分组」窗口化，列表占满剩余高度。
+        if (showToolbar) {
+            if (Platform.isMobileApp) this.renderMobileSectionsBar(contentEl);
+            else this.renderToolbar(contentEl);
+        }
+        if (!Platform.isMobileApp) this.renderGroups(contentEl);
+        this.renderDraggableList(contentEl);
+    }
+
+    /** 过滤按钮组 + 搜索框；嵌入式 ribbon 页把它挂到概览标题里。 */
+    private buildFilterBar(containerEl: HTMLElement, refresh: () => void): void {
+        const t = (k: string) => this.manager.translator.t(k);
+        const allItems = this.manager.settings.RIBBON_SETTINGS;
         const memberIds = new Set(this.manager.settings.RIBBON_GROUPS.flatMap(group => group.members));
         const ungroupedItems = allItems.filter(item => !memberIds.has(item.bpmUniqueId));
         const scopedItems = this.showGroupedItems ? allItems : ungroupedItems;
         const visibleCount = scopedItems.filter(item => item.visible).length;
         const hiddenCount = scopedItems.filter(item => !item.visible).length;
-
-        // 过滤按钮组和搜索框
         const filterBar = containerEl.createDiv("ribbon-manager-filter-bar");
 
         // 左侧：过滤按钮组
@@ -376,34 +420,12 @@ export class RibbonModal extends Modal {
 
         searchInput.onChange((value) => {
             this.searchQuery = value;
-            this.renderFilteredList(containerEl, listContainer);
+            refresh();
         });
-
-        if (this.showGroupedItems) {
-            containerEl.createDiv({ cls: "ribbon-manager-grouped-hint", text: t("Ribbon_显示已分组提示") });
-        }
-        const listContainer = containerEl.createDiv("draggable-list-container");
-        this.renderFilteredList(containerEl, listContainer);
-    }
-
-    displayWithoutSearch(targetEl?: HTMLElement, showToolbar = this.renderToolbarInRoot) {
-        const contentEl = targetEl || this.renderRootEl || this.contentEl;
-        this.renderRootEl = contentEl;
-        this.renderToolbarInRoot = showToolbar;
-        contentEl.empty();
-        if (!this.manager.isRibbonManagerEnabled()) return;
-
-        this.renderScopeBar(contentEl);
-        // 手机端把「边栏编排 / Ribbon 分组」窗口化，列表占满剩余高度。
-        if (showToolbar) {
-            if (Platform.isMobileApp) this.renderMobileSectionsBar(contentEl);
-            else this.renderToolbar(contentEl);
-        }
-        if (!Platform.isMobileApp) this.renderGroups(contentEl);
-        this.renderDraggableList(contentEl);
     }
 
     renderFilteredList(containerEl: HTMLElement, listContainer: HTMLElement) {
+        this.closeGroupMenus();
         listContainer.empty();
         const allItems = this.manager.settings.RIBBON_SETTINGS;
 
@@ -515,33 +537,33 @@ export class RibbonModal extends Modal {
                     this.displayWithoutSearch();
                 });
 
-            if (!item.bpmUniqueId.startsWith(RIBBON_GROUP_ITEM_PREFIX)) setting.addDropdown(dropdown => {
-                dropdown.addOption('', t('Ribbon_未分组'));
-                for (const group of this.manager.settings.RIBBON_GROUPS) dropdown.addOption(group.id, group.name);
-                dropdown.setValue(this.manager.settings.RIBBON_GROUPS.find(group => group.members.includes(item.bpmUniqueId))?.id ?? '');
-                dropdown.onChange(id => {
-                    for (const group of this.manager.settings.RIBBON_GROUPS) {
-                        group.members = group.members.filter(member => member !== item.bpmUniqueId);
-                        if (group.memberOrders) delete group.memberOrders[item.bpmUniqueId];
-                    }
-                    const group = this.manager.settings.RIBBON_GROUPS.find(entry => entry.id === id);
-                    if (group) {
-                        group.members.push(item.bpmUniqueId);
-                        const maxOrder = Math.max(-1, ...Object.values(group.memberOrders || {}));
-                        group.memberOrders = { ...(group.memberOrders || {}), [item.bpmUniqueId]: maxOrder + 1 };
-                        // 分组入口落在最靠前的成员位置，而不是永远追加到末尾。
-                        this.manager.syncRibbonGroupItems();
-                        const groupItem = this.manager.settings.RIBBON_SETTINGS.find(entry =>
-                            entry.bpmUniqueId === `${RIBBON_GROUP_ITEM_PREFIX}${group.id}`);
-                        const memberItem = this.manager.settings.RIBBON_SETTINGS.find(entry => entry.bpmUniqueId === item.bpmUniqueId);
-                        if (groupItem && memberItem) {
-                            groupItem.order = Math.min(groupItem.order, memberItem.order);
+            if (!item.bpmUniqueId.startsWith(RIBBON_GROUP_ITEM_PREFIX)) {
+                const dropdown = ScopeSelect.compact(setting.controlEl, t('Ribbon_分组'), groupOfItem?.id ?? '',
+                    [{ value: '', label: t('Ribbon_未分组') }, ...this.manager.settings.RIBBON_GROUPS.map(group => ({ value: group.id, label: group.name }))], id => {
+                        for (const group of this.manager.settings.RIBBON_GROUPS) {
+                            group.members = group.members.filter(member => member !== item.bpmUniqueId);
+                            if (group.memberOrders) delete group.memberOrders[item.bpmUniqueId];
                         }
-                    }
-                    this.commitRibbonGroups();
-                    this.displayWithoutSearch();
-                });
-            });
+                        const group = this.manager.settings.RIBBON_GROUPS.find(entry => entry.id === id);
+                        if (group) {
+                            group.members.push(item.bpmUniqueId);
+                            const maxOrder = Math.max(-1, ...Object.values(group.memberOrders || {}));
+                            group.memberOrders = { ...(group.memberOrders || {}), [item.bpmUniqueId]: maxOrder + 1 };
+                            // 分组入口落在最靠前的成员位置，而不是永远追加到末尾。
+                            this.manager.syncRibbonGroupItems();
+                            const groupItem = this.manager.settings.RIBBON_SETTINGS.find(entry =>
+                                entry.bpmUniqueId === `${RIBBON_GROUP_ITEM_PREFIX}${group.id}`);
+                            const memberItem = this.manager.settings.RIBBON_SETTINGS.find(entry => entry.bpmUniqueId === item.bpmUniqueId);
+                            if (groupItem && memberItem) {
+                                groupItem.order = Math.min(groupItem.order, memberItem.order);
+                            }
+                        }
+                        this.commitRibbonGroups();
+                        this.displayWithoutSearch();
+                    });
+                dropdown.field.addClass('ribbon-manager-group-select');
+                this.groupSelects.push(dropdown);
+            }
 
             // 拖拽手柄
             const handle = controlBar.createDiv({
@@ -757,8 +779,10 @@ export class RibbonModal extends Modal {
     }
 
     onClose() {
+        this.closeGroupMenus();
+        this.scopeBar?.close();
         this.manager.ribbonModal = null;
         // 弹窗关闭时结束设备预设投影，避免编辑值残留在内存。
-        void this.manager.devices?.flushProjection().catch(() => undefined);
+        void this.manager.devices?.flushProjection().catch(error => this.manager.devices?.report(error));
     }
 }

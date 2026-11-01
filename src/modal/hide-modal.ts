@@ -1,12 +1,12 @@
 import {
     App,
-    ButtonComponent,
     DropdownComponent,
     Modal,
     PluginManifest,
     SearchComponent,
     Setting,
     ToggleComponent,
+    setIcon,
 } from "obsidian";
 
 import { ManagerSettings, TagFilterOperator } from "../settings/data";
@@ -68,114 +68,121 @@ export class HideModal extends Modal {
     }
 
     public async showHead() {
+        const t = (key: string) => this.manager.translator.t(key);
         const modalEl = this.contentEl.parentElement;
         if (!modalEl) return;
         modalEl.addClass("manager-container");
+        modalEl.addClass("manager-hide-modal");
         // 靠上
         if (!this.settings.CENTER) modalEl.addClass("manager-container__top");
         modalEl.getElementsByClassName("modal-close-button")[0]?.remove();
         this.titleEl.parentElement?.addClass("manager-container__header");
+
+        // 标题 + 关闭
+        this.titleEl.empty();
+        this.titleEl.addClass("hide-modal__title");
+        const titleMain = this.titleEl.createDiv("hide-modal__title-main");
+        const titleIcon = titleMain.createSpan("hide-modal__title-icon");
+        setIcon(titleIcon, "eye-off");
+        titleMain.createSpan({ cls: "hide-modal__title-text", text: t("菜单_隐藏插件_标题") });
+        const closeButton = this.titleEl.createEl("button", { cls: "manager-modal-close hide-modal__close" });
+        closeButton.type = "button";
+        closeButton.setAttribute("aria-label", t("通用_关闭窗口"));
+        setIcon(closeButton, "x");
+        closeButton.addEventListener("click", () => this.close());
+
         this.contentEl.addClass("manager-item-container");
-
-        // [操作行]
-        const actionBar = new Setting(this.titleEl).setClass("manager-bar__action").setName(this.manager.translator.t("菜单_隐藏插件_标题"));
-
-        // [操作行] 关闭
-        const closeButton = new ButtonComponent(actionBar.controlEl);
-        closeButton.setIcon("x");
-        closeButton.onClick(() => { this.close(); });
-
-        // [搜索行]
-        const searchBar = new Setting(this.titleEl).setClass("manager-bar__search").setName(this.manager.translator.t("通用_搜索_文本"));
+        // 过滤区放在 contentEl 之外，重绘列表时不会丢失
+        const chromeEl = modalEl.createDiv("hide-modal__chrome");
+        modalEl.insertBefore(chromeEl, this.contentEl);
+        const filtersEl = chromeEl.createDiv("hide-modal__filters");
+        const addField = (label: string) => {
+            const field = filtersEl.createDiv("hide-modal__field");
+            field.createSpan({ cls: "hide-modal__label", text: label });
+            return field.createDiv("hide-modal__control");
+        };
 
         const filterOptions = {
-            "all": this.manager.translator.t("筛选_全部_描述"),
-            "enabled": this.manager.translator.t("筛选_仅启用_描述"),
-            "disabled": this.manager.translator.t("筛选_仅禁用_描述"),
-            "grouped": this.manager.translator.t("筛选_已分组_描述"),
-            "ungrouped": this.manager.translator.t("筛选_未分组_描述"),
-            "tagged": this.manager.translator.t("筛选_有标签_描述"),
-            "untagged": this.manager.translator.t("筛选_无标签_描述"),
-            "noted": this.manager.translator.t("筛选_有笔记_描述"),
+            "all": t("筛选_全部_描述"),
+            "enabled": t("筛选_仅启用_描述"),
+            "disabled": t("筛选_仅禁用_描述"),
+            "grouped": t("筛选_已分组_描述"),
+            "ungrouped": t("筛选_未分组_描述"),
+            "tagged": t("筛选_有标签_描述"),
+            "untagged": t("筛选_无标签_描述"),
+            "noted": t("筛选_有笔记_描述"),
         };
-        // 过滤器
-        const filterDropdown = new DropdownComponent(searchBar.controlEl);
+        const filterDropdown = new DropdownComponent(addField(t("通用_状态_文本")));
         filterDropdown.addOptions(filterOptions);
         filterDropdown.setValue(this.filter);
         filterDropdown.onChange((value) => { this.filter = value; void this.reloadShowData(); });
 
-        // [搜索行] 分组选择列表
+        const operatorOptions = {
+            "contains": t("筛选_操作符_包含"),
+            "not-contains": t("筛选_操作符_排除"),
+        };
         const groupCounts = this.settings.Plugins.reduce((acc: { [key: string]: number }, plugin) => { const groupId = plugin.group || ""; acc[groupId] = (acc[groupId] || 0) + 1; return acc; }, { "": 0 });
         const groups: Array<[string, string]> = [
-            ["", this.manager.translator.t("通用_无分组_文本")],
+            ["", t("通用_无分组_文本")],
             ...this.settings.GROUPS.map((item): [string, string] => [item.id, `${item.name} [${groupCounts[item.id] || 0}]`]),
         ];
-        const operatorOptions = {
-            "contains": this.manager.translator.t("筛选_操作符_包含"),
-            "not-contains": this.manager.translator.t("筛选_操作符_排除"),
-        };
-        const groupOperatorDropdown = new DropdownComponent(searchBar.controlEl);
-        groupOperatorDropdown.selectEl.parentElement?.addClass("manager-filter-operator-dropdown");
-        groupOperatorDropdown.selectEl.addClass("manager-filter-operator");
+        const groupControl = addField(t("通用_分组_文本"));
+        const groupOperatorDropdown = new DropdownComponent(groupControl);
         groupOperatorDropdown.addOptions(operatorOptions);
         groupOperatorDropdown.setValue(this.groupOperator);
-        groupOperatorDropdown.selectEl.setAttribute("aria-label", this.manager.translator.t("筛选_分组取反_标签"));
+        groupOperatorDropdown.selectEl.setAttribute("aria-label", t("筛选_分组取反_标签"));
         groupOperatorDropdown.onChange((value) => {
             this.groupOperator = value === "not-contains" ? "not-contains" : "contains";
             void this.reloadShowData();
         });
-        const groupsDropdown = new DropdownComponent(searchBar.controlEl);
+        const groupsDropdown = new DropdownComponent(groupControl);
         this.addOrderedOptions(groupsDropdown, groups);
         groupsDropdown.setValue(this.group);
         groupsDropdown.onChange((value) => { this.group = value; void this.reloadShowData(); });
 
-        // [搜索行] 标签选择列表
         const tagCounts: { [key: string]: number } = this.settings.Plugins.reduce((acc, plugin) => { plugin.tags.forEach((tag) => { acc[tag] = (acc[tag] || 0) + 1; }); return acc; }, {} as { [key: string]: number });
         const tags: Array<[string, string]> = [
-            ["", this.manager.translator.t("通用_无标签_文本")],
+            ["", t("通用_无标签_文本")],
             ...this.settings.TAGS.map((item): [string, string] => [item.id, `${item.name} [${tagCounts[item.id] || 0}]`]),
         ];
-        const tagOperatorDropdown = new DropdownComponent(searchBar.controlEl);
-        tagOperatorDropdown.selectEl.parentElement?.addClass("manager-filter-operator-dropdown");
-        tagOperatorDropdown.selectEl.addClass("manager-filter-operator");
+        const tagControl = addField(t("通用_标签_文本"));
+        const tagOperatorDropdown = new DropdownComponent(tagControl);
         tagOperatorDropdown.addOptions(operatorOptions);
         tagOperatorDropdown.setValue(this.tagOperator);
-        tagOperatorDropdown.selectEl.setAttribute("aria-label", this.manager.translator.t("筛选_标签取反_标签"));
+        tagOperatorDropdown.selectEl.setAttribute("aria-label", t("筛选_标签取反_标签"));
         tagOperatorDropdown.onChange((value) => {
             this.tagOperator = value === "not-contains" ? "not-contains" : "contains";
             void this.reloadShowData();
         });
-
-        const tagsDropdown = new DropdownComponent(searchBar.controlEl);
+        const tagsDropdown = new DropdownComponent(tagControl);
         this.addOrderedOptions(tagsDropdown, tags);
         tagsDropdown.setValue(this.tag);
         tagsDropdown.onChange((value) => { this.tag = value; void this.reloadShowData(); });
 
-        // [搜索行] 延迟选择列表
         if (this.settings.DELAY) {
             const delayCounts = this.settings.Plugins.reduce((acc: { [key: string]: number }, plugin) => { const delay = plugin.delay || ""; acc[delay] = (acc[delay] || 0) + 1; return acc; }, { "": 0 });
             const delays: Array<[string, string]> = [
-                ["", this.manager.translator.t("通用_无延迟_文本")],
+                ["", t("通用_无延迟_文本")],
                 ...this.settings.DELAYS.map((item): [string, string] => [item.id, `${item.name} (${delayCounts[item.id] || 0})`]),
             ];
-            const delayOperatorDropdown = new DropdownComponent(searchBar.controlEl);
-            delayOperatorDropdown.selectEl.parentElement?.addClass("manager-filter-operator-dropdown");
-            delayOperatorDropdown.selectEl.addClass("manager-filter-operator");
+            const delayControl = addField(t("通用_延迟_文本"));
+            const delayOperatorDropdown = new DropdownComponent(delayControl);
             delayOperatorDropdown.addOptions(operatorOptions);
             delayOperatorDropdown.setValue(this.delayOperator);
-            delayOperatorDropdown.selectEl.setAttribute("aria-label", this.manager.translator.t("筛选_延迟取反_标签"));
+            delayOperatorDropdown.selectEl.setAttribute("aria-label", t("筛选_延迟取反_标签"));
             delayOperatorDropdown.onChange((value) => {
                 this.delayOperator = value === "not-contains" ? "not-contains" : "contains";
                 void this.reloadShowData();
             });
-            const delaysDropdown = new DropdownComponent(searchBar.controlEl);
+            const delaysDropdown = new DropdownComponent(delayControl);
             this.addOrderedOptions(delaysDropdown, delays);
             delaysDropdown.setValue(this.delay || "");
             delaysDropdown.onChange((value) => { this.delay = value; void this.reloadShowData(); });
         }
 
-        // [搜索行] 搜索框
-        this.searchEl = new SearchComponent(searchBar.controlEl);
+        const searchWrap = chromeEl.createDiv("hide-modal__search");
+        this.searchEl = new SearchComponent(searchWrap);
+        this.searchEl.inputEl.setAttribute("aria-label", t("通用_搜索_文本"));
         this.searchEl.onChange((value: string) => { this.searchText = value; void this.reloadShowData(); });
     }
 

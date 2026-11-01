@@ -6607,14 +6607,18 @@ export class ManagerModal extends Modal {
         this.pageEl.empty();
         const scopeHost = this.pageEl.createDiv("manager-ribbon-scope");
         this.renderDeviceScope(scopeHost, 'ribbon');
-        this.renderOverviewHeading();
+        if (!this.ribbonPage) this.ribbonPage = new RibbonModal(this.app, this.manager);
+        this.manager.ribbonModal = this.ribbonPage;
+        // Ribbon 页的概览标题改成 Ribbon 自己的过滤栏（全部/显示/隐藏 + 搜索）。
+        this.ribbonPage.setExternalFilterBar(true);
+        const overview = this.pageEl.createDiv("manager-overview-heading");
+        overview.dataset.page = "ribbon";
+        this.ribbonPage.mountFilterBar(overview);
         const page = this.pageEl.createDiv("manager-ribbon-page ribbon-manager-modal");
         page.createDiv({
             cls: "manager-ribbon-page__loading",
             text: this.manager.translator.t("Ribbon_标题"),
         });
-        if (!this.ribbonPage) this.ribbonPage = new RibbonModal(this.app, this.manager);
-        this.manager.ribbonModal = this.ribbonPage;
         await this.ribbonPage.syncRibbonItems();
         if (!this.isRenderCurrent(renderGeneration, "ribbon")) return;
         this.ribbonPage.display(page, false);

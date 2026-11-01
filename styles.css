@@ -15665,3 +15665,91 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
     color: var(--text-warning) !important;
     border-color: color-mix(in srgb, var(--color-orange) 60%, var(--background-modifier-border)) !important;
 }
+
+/* 隐藏插件弹窗：标题栏 + 带标签的过滤区 */
+.manager-hide-modal .modal-title.hide-modal__title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.manager-hide-modal .hide-modal__close {
+    flex: 0 0 auto;
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+}
+
+.hide-modal__chrome {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+}
+
+.hide-modal__filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 16px;
+}
+
+.hide-modal__field {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.hide-modal__label {
+    color: var(--text-muted);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.hide-modal__control {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    min-width: 0;
+}
+
+.hide-modal__search .search-input-container {
+    width: 100%;
+}
+
+.manager-hide-modal .manager-item-container {
+    padding: 8px 14px;
+}
+
+/* 隐藏插件标题：强调色图标 + 文本，与 BPM 品牌一致 */
+.hide-modal__title-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.hide-modal__title-icon {
+    display: inline-flex;
+    flex: 0 0 18px;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    color: var(--text-accent);
+}
+
+.hide-modal__title-icon svg {
+    width: 18px;
+    height: 18px;
+    stroke-width: 2.1;
+}
