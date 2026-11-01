@@ -15826,17 +15826,14 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
 /* 多选筛选：数量徽标覆盖右侧 chevron，把宽度留给摘要文本 */
 .manager-container .manager-multiselect-filter__trigger {
     position: relative;
-    padding-right: 24px;
+    padding-right: 8px;
 }
 
-.manager-container .manager-multiselect-filter__trigger:has(.manager-multiselect-filter__count:not(.is-empty)) {
-    padding-right: 22px;
-}
-
+/* 数量气泡与 chevron 完全重叠：以 chevron 的右边缘为基准 */
 .manager-container .manager-multiselect-filter__count {
     position: absolute;
     top: 50%;
-    right: 3px;
+    right: 6px;
     transform: translateY(-50%);
     margin: 0;
 }
