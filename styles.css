@@ -15487,3 +15487,21 @@ body .manager-setting__tabs .manager-setting__tabs-item[data-state="active"] .ma
     width: 18px;
     height: 18px;
 }
+
+/* 设置分页：悬停与选中同样式，带过渡 */
+body .manager-setting__tabs .manager-setting__tabs-item {
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+body .manager-setting__tabs .manager-setting__tabs-item:hover,
+body .manager-setting__tabs .manager-setting__tabs-item:focus-visible {
+    border-color: var(--background-modifier-border) !important;
+    background: var(--interactive-normal) !important;
+    color: var(--text-accent) !important;
+    box-shadow: none !important;
+}
+
+body .manager-setting__tabs .manager-setting__tabs-item:hover .manager-setting__tabs-icon,
+body .manager-setting__tabs .manager-setting__tabs-item:focus-visible .manager-setting__tabs-icon {
+    color: var(--text-accent);
+}
