@@ -9054,6 +9054,11 @@ body.is-tablet .ribbon-manager-control-visibility button {
         gap: 8px;
     }
 
+    .ribbon-manager-modal .ribbon-manager-item-order {
+        color: var(--text-normal);
+        font-size: 14px;
+    }
+
     .ribbon-manager-modal .ribbon-manager-item-title-line {
         align-items: flex-start;
     }
