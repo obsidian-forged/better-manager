@@ -15895,3 +15895,36 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
 .manager-toolbar--hover-labels.manager-toolbar--labels-active .manager-toolbar__tab:not(.is-active):not([aria-selected="true"]):not([data-state="active"]):hover .manager-toolbar__tab-label {
     display: inline;
 }
+
+/* 顶栏功能项改为在可用区域内均分填充，视觉上始终居中 */
+.manager-container.manager-container--main:not(.manager-container--mobile) .manager-toolbar {
+    position: static;
+    padding-right: 0;
+    min-height: 36px;
+    gap: 8px;
+}
+
+.manager-container.manager-container--main:not(.manager-container--mobile) .manager-toolbar__tabs {
+    position: static;
+    left: auto;
+    top: auto;
+    transform: none;
+    flex: 1 1 auto !important;
+    width: auto !important;
+    max-width: none !important;
+    min-width: 0;
+    justify-content: stretch !important;
+}
+
+.manager-container.manager-container--main:not(.manager-container--mobile) .manager-toolbar__tabs .manager-toolbar__tab {
+    flex: 1 1 0 !important;
+    width: auto !important;
+    min-width: max-content !important;
+}
+
+.manager-container.manager-container--main:not(.manager-container--mobile) .manager-toolbar .manager-global-tools {
+    position: static;
+    transform: none;
+    margin: 0;
+    flex: 0 0 auto;
+}
