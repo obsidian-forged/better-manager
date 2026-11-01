@@ -36,6 +36,7 @@ export class RibbonModal extends Modal {
     // 过滤和搜索
     private currentFilter = "all";
     private externalFilterBar = false;
+    private externalFilterHost?: HTMLElement;
     private groupsCollapsed = false;
     private showGroupedItems = false;
     private searchQuery = "";
@@ -57,11 +58,24 @@ export class RibbonModal extends Modal {
     }
 
     /** 嵌入式页面把过滤栏放到外部标题里时使用。 */
-    setExternalFilterBar(value: boolean): void { this.externalFilterBar = value; }
+    setExternalFilterBar(value: boolean): void {
+        this.externalFilterBar = value;
+        if (!value) this.externalFilterHost = undefined;
+    }
 
-    mountFilterBar(containerEl: HTMLElement): void { this.buildFilterBar(containerEl, () => this.displayWithoutSearch()); }
+    mountFilterBar(containerEl: HTMLElement): void {
+        this.externalFilterHost = containerEl;
+        containerEl.empty();
+        this.buildFilterBar(containerEl, () => this.displayWithoutSearch());
+    }
+
+    /** 列表与外置筛选栏共用一次刷新，避免高亮和数量停在旧状态；Refresh external controls with the list. */
+    private refreshExternalFilterBar(): void {
+        if (this.externalFilterBar && this.externalFilterHost?.isConnected) this.mountFilterBar(this.externalFilterHost);
+    }
 
     async onOpen() {
+        this.manager.beginSettingsEditing(this);
         this.scrollbars?.destroy();
         this.scrollbars = new FloatingScrollbars(this.modalEl);
         if (!this.manager.isRibbonManagerEnabled()) {
@@ -125,7 +139,7 @@ export class RibbonModal extends Modal {
         contentEl.empty();
         if (!this.manager.isRibbonManagerEnabled()) return;
 
-        this.renderScopeBar(contentEl);
+        if (showToolbar) this.renderScopeBar(contentEl);
         // 手机端把「边栏编排 / Ribbon 分组」窗口化，列表占满剩余高度。
         if (showToolbar) {
             this.externalFilterBar = false;
@@ -134,6 +148,7 @@ export class RibbonModal extends Modal {
         }
         if (!Platform.isMobileApp) this.renderGroups(contentEl);
         this.renderDraggableList(contentEl);
+        this.refreshExternalFilterBar();
     }
 
     private renderToolbar(containerEl: HTMLElement) {
@@ -343,7 +358,7 @@ export class RibbonModal extends Modal {
         contentEl.empty();
         if (!this.manager.isRibbonManagerEnabled()) return;
 
-        this.renderScopeBar(contentEl);
+        if (showToolbar) this.renderScopeBar(contentEl);
         // 手机端把「边栏编排 / Ribbon 分组」窗口化，列表占满剩余高度。
         if (showToolbar) {
             if (Platform.isMobileApp) this.renderMobileSectionsBar(contentEl);
@@ -351,6 +366,7 @@ export class RibbonModal extends Modal {
         }
         if (!Platform.isMobileApp) this.renderGroups(contentEl);
         this.renderDraggableList(contentEl);
+        this.refreshExternalFilterBar();
     }
 
     /** 过滤按钮组 + 搜索框；嵌入式 ribbon 页把它挂到概览标题里。 */
@@ -380,6 +396,7 @@ export class RibbonModal extends Modal {
             if (index === 3 && filters.length > 3) filterGroup.createSpan({ cls: "ribbon-filter-divider" });
             const btn = new ButtonComponent(filterGroup);
             btn.buttonEl.addClass("ribbon-filter-btn");
+            btn.buttonEl.setAttribute('aria-pressed', `${this.currentFilter === filter.key}`);
             if (this.currentFilter === filter.key) {
                 btn.buttonEl.addClass("is-active");
             }
@@ -789,6 +806,7 @@ export class RibbonModal extends Modal {
         this.scopeBar?.close();
         this.manager.ribbonModal = null;
         // 弹窗关闭时结束设备预设投影，避免编辑值残留在内存。
-        void this.manager.devices?.flushProjection().catch(error => this.manager.devices?.report(error));
+        void this.manager.devices.flushProjection().then(() => this.manager.endSettingsEditing(this))
+            .catch(error => this.manager.devices.report(error));
     }
 }

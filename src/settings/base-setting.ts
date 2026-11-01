@@ -10,11 +10,11 @@ export default abstract class BaseSetting {
 	public containerEl: HTMLElement;
 	protected app: App;
 
-	constructor(obj: ManagerSettingTab) {
+	constructor(obj: ManagerSettingTab, containerEl: HTMLElement = obj.contentEl) {
 		this.settingTab = obj;
 		this.manager = obj.manager;
 		this.settings = obj.manager.settings;
-		this.containerEl = obj.contentEl;
+		this.containerEl = containerEl;
 		this.app = obj.app;
 	}
 

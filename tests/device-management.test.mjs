@@ -73,6 +73,50 @@ async function fixture(options = {}) {
     return { manager, settings, calls, getLocal: () => local, setLocal: (value) => { local = value; } };
 }
 
+test('reapplying an unchanged appearance does not write or reload native styles', async () => {
+    const { manager, settings } = await fixture();
+    const calls = [];
+    manager.app.customCss = { theme: 'Current', enabledSnippets: new Set(['base']),
+        setTheme() { calls.push('theme-write'); }, setCssEnabledStatus() { calls.push('snippet-write'); },
+        async loadTheme() { calls.push('theme-load'); }, async loadSnippets() { calls.push('snippet-load'); } };
+    settings.DEVICE_MANAGEMENT.enabled = true;
+    firstOf(settings, 'computer').appearance = { theme: 'Current', snippets: { base: true, disabled: false } };
+    await manager.devices.apply(); await manager.devices.apply();
+    assert.deepEqual(calls, []);
+});
+
+test('external settings changes keep live object references and never reload interface or styles', async () => {
+    const adapter = memoryAdapter(); const { manager } = await fixture({ adapter });
+    const path = '.obsidian/plugins/self/data.json';
+    adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
+    manager.saveData = async value => { adapter.files[path] = JSON.stringify(value); };
+    await manager.loadSettings();
+    const current = manager.settings;
+    let renders = 0;
+    manager.managerModal = { modalEl: { isConnected: true }, refreshStyleSettings() { renders++; }, reloadShowData() { renders++; } };
+    manager.app.customCss = { async loadTheme() { renders++; }, async loadSnippets() { renders++; } };
+    const editor = {};
+    manager.beginSettingsEditing(editor);
+    const previousWindow = globalThis.window;
+    globalThis.window = { setTimeout, clearTimeout };
+    try {
+        for (const days of [8, 9, 10]) {
+            const remote = JSON.parse(adapter.files[path]); remote.RECENT_INSTALL_DAYS = days;
+            adapter.files[path] = JSON.stringify(remote);
+            await manager.refreshSettingsQuietly();
+            assert.equal(manager.settings, current);
+            assert.equal(manager.settings.RECENT_INSTALL_DAYS, 7);
+        }
+        assert.ok(Object.keys(adapter.files).some(path => path.endsWith('.cache')));
+        manager.settings.RECENT_INSTALL_DAYS = 14; await manager.saveSettings();
+        assert.equal(JSON.parse(adapter.files[path]).RECENT_INSTALL_DAYS, 10);
+        manager.endSettingsEditing(editor); await manager.settingsSaveQueue;
+        assert.equal(manager.settings, current);
+        assert.equal(JSON.parse(adapter.files[path]).RECENT_INSTALL_DAYS, 14);
+        assert.equal(renders, 0);
+    } finally { globalThis.window = previousWindow; }
+});
+
 test('three types migrate into at least one independent named preset each', async () => {
     const { settings } = await fixture();
     const data = settings.DEVICE_MANAGEMENT;

@@ -2019,9 +2019,20 @@ body.is-tablet .manager-container--mobile .setting-item:not(.manager-item) > .se
 }
 
 .manager-container--mobile .bpm-active-filter-chip__close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 14px;
     width: 14px;
     height: 14px;
+    line-height: 1;
     opacity: 0.8;
+}
+
+.manager-container--mobile .bpm-active-filter-chip__close svg {
+    width: 12px;
+    height: 12px;
+    display: block;
 }
 
 /* 筛选面板展开动画 */
@@ -3185,7 +3196,7 @@ body.is-tablet .manager-container--mobile .bpm-mobile-filter-fields .manager-fil
     height: 18px;
     padding: 0 5px;
     border-radius: 9px;
-    background: color-mix(in srgb, var(--interactive-accent) 16%, transparent);
+    background: transparent;
     color: var(--text-accent);
     font-size: 11px;
     font-weight: 700;
@@ -16040,174 +16051,110 @@ body.is-phone .manager-container--mobile .manager-page-tools .setting-item-contr
     background-clip: padding-box;
 }
 
-/* 手机端概览工具行：压过概览专用规则，允许换行而不是滚动隐藏 */
-body.is-phone .manager-container--mobile .manager-overview-heading .manager-page-tools {
-    width: 100%;
-    overflow-x: visible;
-}
-
-body.is-phone .manager-container--mobile .manager-overview-heading .manager-page-tools .manager-bar__action {
-    width: 100%;
-    max-width: 100%;
-}
-
-body.is-phone .manager-container--mobile .manager-overview-heading .manager-page-tools .setting-item-control {
-    display: flex;
+/* 手机概览共用一个换行流，保留原生按钮与事件；Flatten wrappers into one left-aligned button flow. */
+body.is-phone .manager-container.manager-container--main.manager-container--mobile .manager-overview-heading {
+    flex-direction: row;
     flex-wrap: wrap;
-    justify-content: center;
-    width: 100%;
-    max-width: 100%;
-    min-width: 0;
+    align-items: center;
+    justify-content: flex-start;
+    gap: var(--size-4-2);
 }
-
-/* 个性化 BPM：复用管理器顶栏的 tabs / tools 结构 */
-.manager-personalize {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    padding: 4px 0 12px;
+body.is-phone .manager-container.manager-container--main.manager-container--mobile .manager-overview-heading .manager-food,
+body.is-phone .manager-container.manager-container--main.manager-container--mobile .manager-overview-heading .manager-page-tools,
+body.is-phone .manager-container.manager-container--main.manager-container--mobile .manager-overview-heading .manager-bar__action,
+body.is-phone .manager-container.manager-container--main.manager-container--mobile .manager-overview-heading .setting-item-control {
+    display: contents;
 }
-
-.manager-personalize .manager-toolbar__tabs {
-    width: fit-content;
-    max-width: 100%;
-    overflow-x: auto;
-}
-
-.manager-personalize .manager-toolbar__tools {
-    width: fit-content;
-    max-width: 100%;
-}
-
-.manager-personalize .manager-bar__action {
-    width: fit-content;
-    padding: 0;
-    border: 0;
-}
-
-.manager-personalize .manager-bar__action .setting-item-info {
+body.is-phone .manager-container.manager-container--main.manager-container--mobile .manager-overview-heading .setting-item-info,
+body.is-phone .manager-container.manager-container--main.manager-container--mobile .manager-overview-heading .bpm-scroll-strip__track {
     display: none;
 }
 
-.manager-personalize .manager-bar__action .setting-item-control {
+/* 个性化设置按可用宽度换行，不继承顶栏的固定高度与 max-content 最小宽度。 */
+.manager-personalize {
+    --bpm-border: var(--background-modifier-border);
+    --bpm-radius-sm: var(--radius-s);
     display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    min-width: 0;
+    max-width: 100%;
+    gap: var(--size-4-2);
+    padding: var(--size-2-1) 0 var(--size-4-2);
+}
+.manager-personalize .manager-personalize__features,
+.manager-personalize .manager-personalize__tools {
+    display: flex;
+    flex: 0 1 auto;
     flex-wrap: wrap;
     justify-content: flex-start;
-    gap: 6px;
-    width: auto;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    height: auto;
+    margin: 0;
+    padding: var(--size-4-1) var(--size-4-2);
+    gap: var(--size-4-1);
+    overflow: visible;
 }
-
-/* 个性化 BPM：选中项高亮（复用顶栏结构时补齐设置页的激活样式） */
-.manager-personalize .manager-toolbar__tab {
-    border: 1px solid transparent;
-}
-
-body .manager-personalize .manager-toolbar__tab.is-active {
-    border-color: color-mix(in srgb, var(--interactive-accent) 45%, var(--bpm-border)) !important;
-    background: color-mix(in srgb, var(--interactive-accent) 12%, var(--background-primary)) !important;
-    color: var(--text-accent) !important;
-}
-
-.manager-personalize .manager-tool {
+.manager-personalize .manager-personalize__feature {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    height: auto;
+    min-height: var(--input-height);
+    padding: var(--size-4-1) var(--size-4-2);
     display: inline-flex;
     align-items: center;
-    justify-content: center;
-    width: 34px;
-    height: 34px;
-    min-width: 34px;
-    min-height: 34px;
+    gap: var(--size-4-1);
+    white-space: normal;
+    font-size: var(--font-ui-small);
+    border: 1px solid transparent;
+}
+.manager-personalize .manager-personalize__label { white-space: normal; overflow-wrap: anywhere; }
+.manager-personalize .manager-personalize__icon { display: inline-flex; flex-shrink: 0; }
+.manager-personalize .manager-personalize__icon svg,
+.manager-personalize .manager-personalize__tool svg { width: var(--icon-s); height: var(--icon-s); }
+.manager-personalize .manager-personalize__actions {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
     padding: 0;
-    border: 1px solid var(--background-modifier-border);
+    border: 0;
+}
+.manager-personalize .manager-personalize__actions .setting-item-info { display: none; }
+.manager-personalize .manager-personalize__actions .setting-item-control {
+    display: flex;
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    gap: var(--size-4-1);
+}
+.manager-personalize .manager-personalize__tool {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: var(--input-height);
+    height: var(--input-height);
+    min-width: var(--input-height);
+    padding: 0;
+    border: 1px solid var(--bpm-border);
     border-radius: var(--bpm-radius-sm);
     background: transparent;
     color: var(--text-muted);
     box-shadow: none;
-    cursor: pointer;
 }
-
-.manager-personalize .manager-tool:hover {
-    background: var(--background-modifier-hover);
-    color: var(--text-normal);
-}
-
-.manager-personalize .manager-tool.is-active {
+.manager-personalize .manager-personalize__tool:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+body .manager-personalize .manager-personalize__feature.is-active,
+.manager-personalize .manager-personalize__tool.is-active {
     border-color: color-mix(in srgb, var(--interactive-accent) 45%, var(--bpm-border));
     background: color-mix(in srgb, var(--interactive-accent) 14%, var(--background-primary));
     color: var(--text-accent);
-}
-
-.manager-personalize .manager-tool svg {
-    width: 18px;
-    height: 18px;
-}
-
-/* 设置弹窗里 BPM 变量可能未定义，为个性化区块提供回退值 */
-.manager-personalize {
-    --bpm-border: var(--background-modifier-border);
-    --bpm-radius-sm: var(--radius-s);
-}
-
-/* 个性化 BPM：更紧凑、靠左 */
-.manager-personalize {
-    align-items: flex-start;
-    gap: 6px;
-    padding: 2px 0 8px;
-}
-
-.manager-personalize .manager-toolbar__tabs {
-    justify-content: flex-start !important;
-    width: fit-content !important;
-    margin: 0 !important;
-    padding: 0;
-    gap: 4px;
-    border: 0;
-}
-
-.manager-personalize .manager-toolbar__tab {
-    flex: 0 0 auto !important;
-    height: 30px;
-    padding: 0 8px;
-    gap: 4px;
-    font-size: 13px;
-}
-
-.manager-personalize .manager-toolbar__tab-icon {
-    flex: 0 0 16px;
-    width: 16px;
-    height: 16px;
-}
-
-.manager-personalize .manager-toolbar__tab-icon svg {
-    width: 16px;
-    height: 16px;
-}
-
-.manager-personalize .manager-toolbar__tools {
-    margin: 0 !important;
-    padding: 0;
-    gap: 4px;
-}
-
-.manager-personalize .manager-tool {
-    width: 30px;
-    height: 30px;
-    min-width: 30px;
-    min-height: 30px;
-}
-
-.manager-personalize .manager-tool svg {
-    width: 16px;
-    height: 16px;
-}
-
-.manager-personalize .manager-bar__action .setting-item-control {
-    gap: 4px;
-}
-
-/* 个性化 BPM：模块行与功能行使用相同内边距，内容左边界一致 */
-.manager-personalize .manager-toolbar__tabs,
-.manager-personalize .manager-toolbar__tools {
-    padding: 4px 8px !important;
 }
 
 /* 设置页标题（settings-item-heading）的下外边距收紧 */
@@ -16234,6 +16181,37 @@ body .manager-personalize .manager-toolbar__tab.is-active {
     max-width: 100%;
 }
 .manager-setting__tabs-wrap .manager-setting__tabs { width: 100%; }
+
+/* 搜索占满原顶栏，结果跳转到原生设置；Search replaces the entire tab bar. */
+.manager-setting__topbar--search { gap: var(--size-4-2); }
+.manager-setting__topbar--search .manager-setting-search__input {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+}
+.manager-setting-search__trigger,
+.manager-setting__topbar--search > button { flex: 0 0 auto; }
+.manager-setting-search__results { display: flex; flex-direction: column; gap: var(--size-4-2); }
+.manager-setting-search__status { color: var(--text-muted); font-size: var(--font-ui-small); }
+button.manager-setting-search__result {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--size-4-1);
+    width: 100%;
+    height: auto;
+    padding: var(--size-4-3);
+    text-align: start;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    background: var(--background-secondary);
+    box-shadow: none;
+}
+button.manager-setting-search__result:hover { background: var(--background-modifier-hover); }
+.manager-setting-search__name { font-weight: var(--font-semibold); }
+.manager-setting-search__page,
+.manager-setting-search__description { color: var(--text-muted); font-size: var(--font-ui-small); }
+.manager-setting-search__target { outline: 1px solid var(--interactive-accent); outline-offset: var(--size-4-1); }
 
 /* 提高优先级，压过各顶栏的原生滚动条规则；Override native scrollbar rules for all managed strips. */
 body .bpm-scroll-strip.bpm-scroll-strip {

@@ -1,4 +1,6 @@
 import type { ReleaseHighlightsModal } from './modal/release-highlights-modal';
+import { SyncUpdateGuard } from './ui/sync-update-guard';
+import { SettingsSessionStore } from './settings/session-store';
 import { DeviceManager } from './devices/device-manager';
 import { OverviewState } from './overview-state';
 import { featureEnabled, toolEnabled } from './features';
@@ -114,6 +116,10 @@ export default class Manager extends Plugin {
     /** Serialize settings writes and remember the last successful payload. */
     private settingsSaveQueue: Promise<void> = Promise.resolve();
     private persistedSettingsJson = '';
+    private readonly syncUpdateGuard = new SyncUpdateGuard();
+    private settingsTab?: ManagerSettingTab;
+    private settingsSession?: SettingsSessionStore;
+    private readonly settingsEditors = new Set<object>();
     private noteTip!: NoteTipFeature;
     public settings!: ManagerSettings;
     public devices!: DeviceManager;
@@ -240,7 +246,8 @@ export default class Manager extends Plugin {
         this.noteTip = new NoteTipFeature(this, ribbonEl);
         this.noteTip.start();
         // 初始化设置界面
-        this.addSettingTab(new ManagerSettingTab(this.app, this));
+        this.settingsTab = new ManagerSettingTab(this.app, this);
+        this.addSettingTab(this.settingsTab);
         const pluginsChanged = this.settings.DELAY
             ? this.enableDelay({ save: false })
             : this.disableDelay({ save: false });
@@ -318,6 +325,9 @@ export default class Manager extends Plugin {
     public onunload() {
         // 卸载后一切延迟回调必须停手，否则会在已卸载的插件上继续操作 ribbon
         this.isUnloaded = true;
+        this.managerModal?.close();
+        this.ribbonModal?.close();
+        this.settingsTab?.hide();
         this.releaseHighlightsModal?.close();
         this.releaseHighlightsModal = undefined;
         this.delayWaitNotice?.stop();
@@ -885,8 +895,66 @@ export default class Manager extends Plugin {
     }
 
     public async loadSettings() {
-        this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+        const storage = this.app as unknown as { loadLocalStorage(key: string): unknown; saveLocalStorage(key: string, value: unknown): void };
+        const stored = storage.loadLocalStorage('bpm-settings-cache-owner');
+        const owner = typeof stored === 'string' && /^[a-z0-9-]{8,80}$/.test(stored) ? stored
+            : globalThis.crypto?.randomUUID?.() ?? `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+        if (stored !== owner) storage.saveLocalStorage('bpm-settings-cache-owner', owner);
+        const adapter = this.app.vault.adapter;
+        const folder = `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
+        const cachePath = `${folder}/data-${owner}.cache`;
+        this.settingsSession = new SettingsSessionStore({
+            readShared: async () => this.normalizeSettings(await adapter.exists(`${folder}/data.json`)
+                ? JSON.parse(await adapter.read(`${folder}/data.json`)) as unknown : await this.loadData()),
+            writeShared: value => this.saveData(value),
+            readCache: async () => await adapter.exists(cachePath) ? JSON.parse(await adapter.read(cachePath)) as unknown : null,
+            writeCache: value => adapter.write(cachePath, JSON.stringify(value, null, 2)),
+            removeCache: async () => { if (await adapter.exists(cachePath)) await adapter.remove(cachePath); },
+        }, owner);
+        this.settings = this.normalizeSettings(await this.settingsSession.load()) as unknown as ManagerSettings;
         this.persistedSettingsJson = JSON.stringify(this.settings);
+    }
+
+    private normalizeSettings(value: unknown): Record<string, unknown> {
+        if (value !== null && value !== undefined && (typeof value !== 'object' || Array.isArray(value))) throw new Error('Invalid BPM settings file');
+        return { ...DEFAULT_SETTINGS, ...value };
+    }
+
+    /** 保持设置对象引用，外部更新只替换数据，不驱动视图/外观重建；Preserve references without redrawing. */
+    private adoptSettings(value: object): void {
+        const next = this.normalizeSettings(value) as unknown as ManagerSettings;
+        const devices = this.settings.DEVICE_MANAGEMENT?.devices;
+        if (next.DEVICE_MANAGEMENT) next.DEVICE_MANAGEMENT = { ...next.DEVICE_MANAGEMENT, devices: devices ?? [] };
+        const target = this.settings as unknown as Record<string, unknown>;
+        const incoming = next as unknown as Record<string, unknown>;
+        for (const key of Object.keys(target)) if (!(key in incoming)) delete target[key];
+        Object.assign(this.settings, next);
+        this.persistedSettingsJson = JSON.stringify(this.devices?.persistedSettings() ?? this.settings);
+    }
+
+    private queueSettingsOperation<T>(operation: () => Promise<T>): Promise<T> {
+        const pending = this.settingsSaveQueue.then(operation);
+        this.settingsSaveQueue = pending.then(() => undefined, () => undefined);
+        return pending;
+    }
+
+    public beginSettingsEditing(editor: object): void {
+        this.settingsEditors.add(editor);
+        this.settingsSession?.begin();
+    }
+
+    public endSettingsEditing(editor: object): void {
+        this.settingsEditors.delete(editor);
+        if (this.settingsEditors.size || this.isUnloaded) return;
+        void this.queueSettingsOperation(async () => {
+            if (this.settingsEditors.size || this.isUnloaded) return;
+            const merged = await this.settingsSession?.finish(this.devices?.persistedSettings() ?? this.settings,
+                () => this.settingsEditors.size === 0 && !this.isUnloaded);
+            if (merged) this.adoptSettings(merged);
+        }).catch(error => {
+            if (this.settings.DEBUG) console.error('[BPM] Restoring shared settings failed', error);
+            new Notice(this.translator.t('同步_缓存恢复失败'), 10_000);
+        });
     }
 
     /**
@@ -903,32 +971,24 @@ export default class Manager extends Plugin {
     private async refreshSettingsQuietly(): Promise<void> {
         // 等本机正在进行的保存与 350ms 防抖落盘，避免把刚输入的值回滚。
         await new Promise<void>(resolve => window.setTimeout(resolve, 400));
-        await this.settingsSaveQueue.catch(() => undefined);
+        if (this.isUnloaded) return;
         try {
-            // loadData() 可能返回缓存；外部改动必须直接读磁盘。
-            const configDir = this.app.vault.configDir;
-            const path = `${configDir}/plugins/${this.manifest.id}/data.json`;
-            let data: unknown;
-            try {
-                data = JSON.parse(await this.app.vault.adapter.read(path));
-            } catch {
-                data = await this.loadData();
-            }
-            if (!data || typeof data !== "object") return;
-            const liveDevices = this.settings?.DEVICE_MANAGEMENT?.devices;
-            const next = Object.assign({}, DEFAULT_SETTINGS, data) as ManagerSettings;
-            if (next.DEVICE_MANAGEMENT) {
-                next.DEVICE_MANAGEMENT = {
-                    ...next.DEVICE_MANAGEMENT,
-                    devices: Array.isArray(liveDevices) ? liveDevices : [],
-                };
-            }
-            this.settings = next;
-            // 磁盘内容就是新的基线，避免下一次保存重复写盘。
-            this.persistedSettingsJson = JSON.stringify(this.devices?.persistedSettings() ?? next);
-            if (this.settings.DEBUG) console.log("[BPM] external data.json changes applied without redrawing");
+            await this.queueSettingsOperation(async () => {
+                if (this.isUnloaded) return;
+                const path = `${this.app.vault.configDir}/plugins/${this.manifest.id}/data.json`;
+                const incoming = this.normalizeSettings(JSON.parse(await this.app.vault.adapter.read(path)) as unknown);
+                const result = this.settingsSession?.external(incoming);
+                const visible = this.settingsEditors.size > 0;
+                if (this.syncUpdateGuard.observe(visible, result?.changed ?? false) && !this.settingsSession?.usingCache) {
+                    await this.settingsSession?.activateCache(this.devices?.persistedSettings() ?? this.settings);
+                    new Notice(this.translator.t('同步_频繁更新提醒'), 10_000);
+                }
+                if (result?.apply) this.adoptSettings(result.apply);
+                if (this.settings.DEBUG) console.log('[BPM] External settings buffered without changing the interface');
+            });
         } catch (error) {
             if (this.settings?.DEBUG) console.error("[BPM] external settings refresh failed", error);
+            new Notice(this.translator.t('同步_缓存更新失败'), 10_000);
         }
     }
 
@@ -941,12 +1001,11 @@ export default class Manager extends Plugin {
             const settings = this.devices?.persistedSettings() ?? this.settings;
             const serialized = JSON.stringify(settings);
             if (serialized === this.persistedSettingsJson) return;
-            await this.saveData(settings);
+            if (this.settingsSession) await this.settingsSession.save(settings);
+            else await this.saveData(settings);
             this.persistedSettingsJson = serialized;
         };
-        const pending = this.settingsSaveQueue.then(save);
-        this.settingsSaveQueue = pending.catch(() => undefined);
-        await pending;
+        await this.queueSettingsOperation(save);
     }
 
     /** 打开管理器：命令、功能区图标共用，已打开时先关闭旧实例避免多个弹窗叠加。 */

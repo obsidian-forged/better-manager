@@ -14,7 +14,7 @@ export default class ManagerBasis extends BaseSetting {
                 .setName(this.manager.translator.t(key));
         };
 
-        // 功能模块与独立功能合并为「个性化 BPM」，用多选高亮按钮呈现。
+        // 功能开关使用独立的换行控件，不继承导航顶栏的单行尺寸；Wrap personalization controls independently of navigation.
         heading('功能开关_个性化');
         const t0 = (key: string) => this.manager.translator.t(key);
         const FEATURE_ICONS: Record<string, string> = {
@@ -26,16 +26,16 @@ export default class ManagerBasis extends BaseSetting {
             catalog: 'compass', pluginMarket: 'store', appearanceMarket: 'store', appearanceProfiles: 'plus',
         };
         const personalizeEl = this.containerEl.createDiv('manager-personalize');
-        const featureBar = personalizeEl.createDiv('manager-toolbar__tabs');
+        const featureBar = personalizeEl.createDiv('manager-personalize__features');
         featureBar.setAttribute('role', 'group');
         featureBar.setAttribute('aria-label', t0('功能开关_模块'));
         for (const id of FEATURE_IDS) {
-            const button = featureBar.createEl('button', { cls: 'manager-toolbar__tab' });
+            const button = featureBar.createEl('button', { cls: 'manager-personalize__feature' });
             button.type = 'button';
             button.setAttribute('aria-pressed', `${featureEnabled(this.settings, id)}`);
             button.toggleClass('is-active', featureEnabled(this.settings, id));
-            setIcon(button.createSpan('manager-toolbar__tab-icon'), FEATURE_ICONS[id] || 'blocks');
-            button.createSpan({ cls: 'manager-toolbar__tab-label', text: t0('功能开关_' + id) });
+            setIcon(button.createSpan('manager-personalize__icon'), FEATURE_ICONS[id] || 'blocks');
+            button.createSpan({ cls: 'manager-personalize__label', text: t0('功能开关_' + id) });
             button.addEventListener('click', () => {
                 const next = !featureEnabled(this.settings, id);
                 void (async () => {
@@ -55,10 +55,10 @@ export default class ManagerBasis extends BaseSetting {
             });
         }
 
-        const toolsWrap = personalizeEl.createDiv('manager-toolbar__tools manager-page-tools');
-        const toolsSetting = new Setting(toolsWrap).setClass('manager-bar__action').setName('');
+        const toolsWrap = personalizeEl.createDiv('manager-personalize__tools');
+        const toolsSetting = new Setting(toolsWrap).setClass('manager-personalize__actions').setName('');
         for (const id of TOOL_IDS.filter(toolAvailable)) {
-            const button = toolsSetting.controlEl.createEl('button', { cls: 'manager-tool manager-tool--plugin' });
+            const button = toolsSetting.controlEl.createEl('button', { cls: 'manager-personalize__tool' });
             button.type = 'button';
             button.setAttribute('aria-label', t0('功能开关_' + id));
             button.toggleClass('is-active', toolEnabled(this.settings, id));

@@ -1,6 +1,8 @@
 import { FloatingScrollbars } from '../ui/floating-scrollbars';
-import { App, PluginSettingTab, setIcon } from 'obsidian';
+import { App, ButtonComponent, PluginSettingTab, setIcon } from 'obsidian';
+import { SettingsSearch, SettingsSearchPage } from './search-view';
 import Manager from "../main";
+import type BaseSetting from './base-setting';
 
 import ManagerBasis from './ui/manager-basis';
 import ManagerStyle from './ui/manager-style';
@@ -15,8 +17,14 @@ class ManagerSettingTab extends PluginSettingTab {
     app: App;
     contentEl!: HTMLDivElement;
     private scrollbars?: FloatingScrollbars;
+    private search?: SettingsSearch;
+    public isVisible = false;
 
-    hide(): void { this.scrollbars?.destroy(); this.scrollbars = undefined; }
+    hide(): void {
+        this.isVisible = false;
+        this.scrollbars?.destroy(); this.scrollbars = undefined; this.search = undefined;
+        this.manager.endSettingsEditing(this);
+    }
 
     constructor(app: App, manager: Manager) {
         super(app, manager);
@@ -25,6 +33,8 @@ class ManagerSettingTab extends PluginSettingTab {
     }
 
     display(): void {
+        this.isVisible = true;
+        this.manager.beginSettingsEditing(this);
         this.renderSettings();
     }
 
@@ -43,6 +53,7 @@ class ManagerSettingTab extends PluginSettingTab {
 
     renderSettings(): void {
         const { containerEl } = this;
+        this.search = undefined;
         const scroller = this.scrollContainer();
         const scrollTop = scroller?.scrollTop ?? 0;
         // 分页内容自身也是滚动容器，改配置触发的重绘要沿用它的位置。
@@ -66,6 +77,22 @@ class ManagerSettingTab extends PluginSettingTab {
         const brand = topbar.createDiv('manager-setting__brand');
         setIcon(brand.createSpan('manager-setting__brand-icon'), 'settings');
         brand.createSpan({ cls: 'manager-setting__brand-label', text: this.manager.translator.t('管理器_BPM设置_短') });
+        const searchButton = new ButtonComponent(topbar).setIcon('search').setTooltip(this.manager.translator.t('设置_搜索_标题'));
+        searchButton.buttonEl.addClass('manager-setting-search__trigger');
+        searchButton.onClick(() => {
+            this.search = new SettingsSearch(this, this.searchPages(), (page, ordinal) => {
+                if (page !== undefined) this.activeTabIndex = page;
+                this.renderSettings();
+                if (ordinal !== undefined) {
+                    const target = SettingsSearch.rows(this.contentEl)[ordinal];
+                    target?.addClass('manager-setting-search__target');
+                    target?.scrollIntoView({ block: 'center' });
+                    const control = target?.querySelector<HTMLElement>('input, select, textarea, button');
+                    control?.focus({ preventScroll: true });
+                } else this.containerEl.querySelector<HTMLButtonElement>('.manager-setting-search__trigger')?.focus();
+            });
+            this.search.open(topbar);
+        });
         const tabsWrap = topbar.createEl('div');
         tabsWrap.addClass('manager-setting__tabs-wrap');
         const tabsEl = tabsWrap.createEl('div');
@@ -123,6 +150,17 @@ class ManagerSettingTab extends PluginSettingTab {
         });
         this.scrollbars = new FloatingScrollbars(containerEl);
         restore();
+    }
+    private searchPages(): SettingsSearchPage[] {
+        const pages: Array<{ key: string; view: new (tab: ManagerSettingTab, container?: HTMLElement) => BaseSetting }> = [
+            { key: '设置_基础设置_前缀', view: ManagerBasis },
+            { key: '设置_主页面功能_前缀', view: ManagerMainPage },
+            { key: '设置_样式设置_前缀', view: ManagerStyle },
+            { key: '设置_分组设置_前缀', view: ManagerGroup },
+            { key: '设置_标签设置_前缀', view: ManagerTag },
+        ];
+        if (this.manager.settings.DELAY) pages.push({ key: '设置_延迟设置_前缀', view: ManagerDelay });
+        return pages.map(page => ({ label: this.manager.translator.t(page.key), render: container => new page.view(this, container).render() }));
     }
     basisDisplay() { this.contentEl.empty(); new ManagerBasis(this).render(); }
     mainPageDisplay() { this.contentEl.empty(); new ManagerMainPage(this).render(); }

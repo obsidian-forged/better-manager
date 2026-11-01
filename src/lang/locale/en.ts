@@ -1,4 +1,12 @@
 export default {
+    "同步_频繁更新提醒": "Frequent external settings updates detected. BPM is using a device-specific cache to keep this interface stable. Changes will merge back when BPM is closed. Consider temporarily turning off real-time sync.",
+    "同步_缓存恢复失败": "BPM could not merge changes back into data.json. The recovery cache has been kept. Pause real-time sync and reopen and close BPM to retry.",
+    "同步_缓存更新失败": "BPM could not read or cache an external settings update. Your current interface has been kept. Pause real-time sync and try again.",
+    "设置_搜索_标题": "Search settings",
+    "设置_搜索_占位": "Search setting names and descriptions",
+    "设置_搜索_关闭": "Close search",
+    "设置_搜索_结果": "Matching settings",
+    "设置_搜索_无结果": "No matching settings",
     "更新介绍_标题": "Major interface improvements",
     "更新介绍_简介": "A clearer workspace for plugins, appearance and devices. Explore the redesigned interface and its main workflows.",
     "更新介绍_页面": "Explore the interface",

@@ -929,6 +929,13 @@ export class DeviceManager {
         try {
             // 绑定切换也不能把会话覆盖写盘；Rebinding preserves the permanent appearance baseline.
             const persistent = this.manager.overview.persistentAppearance(appearance, this.boundPresetId);
+            const live = this.readLiveAppearance();
+            const sameAppearance = (other: ScopedAppearance): boolean => live.theme === other.theme
+                && Array.from(new Set([...Object.keys(live.snippets), ...Object.keys(other.snippets)]))
+                    .every(id => Boolean(live.snippets[id]) === Boolean(other.snippets[id]));
+            // 相同预设不重复调用原生外观 setter/loader，避免无内容变化的样式闪动。
+            // Identical appearance must not trigger native CSS writes or reloads.
+            if (sameAppearance(appearance) && sameAppearance(persistent)) return;
             if (customCss.theme !== persistent.theme) customCss.setTheme?.(persistent.theme);
             const snippetIds = new Set([...Object.keys(this.readLiveAppearance().snippets), ...Object.keys(persistent.snippets)]);
             const enabled = new Set(Object.entries(persistent.snippets).filter(([, flag]) => flag).map(([id]) => id));

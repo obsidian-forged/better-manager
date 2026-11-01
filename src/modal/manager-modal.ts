@@ -8204,6 +8204,7 @@ export class ManagerModal extends Modal {
     }
 
     public onOpen() {
+        this.manager.beginSettingsEditing(this);
         this.scrollbars?.destroy();
         this.scrollbars = new FloatingScrollbars(this.modalEl);
         void this.openAsync();
@@ -8239,7 +8240,8 @@ export class ManagerModal extends Modal {
         this.catalogModal = undefined;
         this.clearScheduledSearchWork();
         // 关闭时结束外域投影，避免预览中的其他预设值留在内存里。
-        void this.manager.devices?.flushProjection().catch(error => this.manager.devices?.report(error));
+        void this.manager.devices.flushProjection().then(() => this.manager.endSettingsEditing(this))
+            .catch(error => this.manager.devices.report(error));
         if (this.settings.PERSISTENCE && this.settings.FILTER_SEARCH !== this.searchText) {
             this.settings.FILTER_SEARCH = this.searchText;
             void this.manager.saveSettings();
