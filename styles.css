@@ -16204,3 +16204,8 @@ body .manager-personalize .manager-toolbar__tab.is-active {
 .manager-personalize .manager-toolbar__tools {
     padding: 4px 8px !important;
 }
+
+/* 设置页首个标题的下外边距收紧 */
+.manager-setting__content > div:nth-child(1) {
+    margin-bottom: 4px;
+}
