@@ -2784,6 +2784,7 @@ export class ManagerModal extends Modal {
             });
             return el;
         };
+        this.renderSyncNotice(parent);
         createIconTool('settings', t('管理器_插件设置_描述'), () => this.openSettingsTab(this.manager.manifest.id));
         const more = createIconTool('more-vertical', t('管理器_更多操作_描述'), (event) => {
             const menu = new Menu();
@@ -2805,7 +2806,6 @@ export class ManagerModal extends Modal {
         });
         more.setAttribute('aria-haspopup', 'menu');
         more.addClass('manager-global-more');
-        this.renderSyncGuardBadge(more);
         this.taskCenterView = new TaskCenterView(this.manager, parent, more);
         const close = createIconTool('x', t('通用_关闭窗口'), () => this.close());
         close.addClass('manager-modal-close');
@@ -3021,7 +3021,6 @@ export class ManagerModal extends Modal {
         more.buttonEl.addClass('manager-tool--mobile-more');
         more.setIcon('more-vertical').setTooltip(t('管理器_更多操作_描述'));
         more.buttonEl.setAttribute('aria-label', t('管理器_更多操作_描述'));
-        this.renderSyncGuardBadge(more.buttonEl);
         more.onClick(event => {
             const menu = new Menu();
             for (const action of mobileOverflowActions) {
@@ -3332,7 +3331,6 @@ export class ManagerModal extends Modal {
 
         // 更多按钮
         const moreBtn = createFooterBtn("more-horizontal", t("管理器_更多操作_描述"), () => { });
-        this.renderSyncGuardBadge(moreBtn);
         moreBtn.addEventListener("click", (ev) => {
             const menu = new Menu();
             menu.addItem((item) => item.setTitle(t("管理器_重载插件_描述")).setIcon("refresh-ccw").onClick(async () => {
@@ -8411,16 +8409,45 @@ export class ManagerModal extends Modal {
         }
     }
 
-    /** 同步循环保护开启时，在全局“更多”按钮上显示 cloud-alert 角标。 */
-    private renderSyncGuardBadge(button: HTMLElement): void {
-        button.querySelector(".manager-sync-guard-badge")?.remove();
+    /** 齿轮左侧的同步提示：平时宽度为 0，暂停自动保存时显示 144px 可点击通知。 */
+    private renderSyncNotice(parent: HTMLElement): void {
+        parent.querySelector(".manager-sync-notice")?.remove();
+        const notice = parent.createDiv({
+            cls: "manager-sync-notice manager-global-tool",
+            attr: { role: "status", "aria-live": "polite" },
+        });
         if (!this.manager.automaticSavesSuppressed) return;
-        button.addClass("manager-tool--sync-guard");
-        const badge = button.createSpan({ cls: "manager-sync-guard-badge" });
-        setIcon(badge, "cloud-alert");
-        const label = this.manager.translator.t("同步_循环保护_标题");
-        badge.setAttribute("aria-label", label);
-        badge.setAttribute("title", label);
+        notice.addClass("is-active");
+        notice.setAttribute("role", "button");
+        notice.setAttribute("tabindex", "0");
+        notice.setAttribute("aria-label", this.manager.translator.t("同步_循环保护_标题"));
+        notice.setAttribute("title", this.manager.translator.t("同步_循环保护_说明"));
+        setIcon(notice.createSpan({ cls: "manager-sync-notice__icon" }), "cloud-alert");
+        notice.createSpan({ cls: "manager-sync-notice__text", text: this.manager.translator.t("同步_循环保护_短") });
+        const openDetail = (event?: Event) => {
+            event?.preventDefault();
+            event?.stopPropagation();
+            this.openSyncNoticeDetail();
+        };
+        notice.addEventListener("click", openDetail);
+        notice.addEventListener("keydown", (event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            openDetail(event);
+        });
+    }
+
+    private openSyncNoticeDetail(): void {
+        const t = (key: string) => this.manager.translator.t(key);
+        const modal = new Modal(this.app);
+        modal.titleEl.setText(t("同步_循环保护_标题"));
+        modal.contentEl.createEl("p", { text: t("同步_循环保护_说明") });
+        modal.contentEl.createEl("p", { text: t("同步_循环保护_建议") });
+        new Setting(modal.contentEl).addButton((button) => {
+            button.setButtonText(t("通用_关闭_文本"));
+            button.setCta();
+            button.onClick(() => modal.close());
+        });
+        modal.open();
     }
 
     public refreshDevicePanelIfOpen(): void {

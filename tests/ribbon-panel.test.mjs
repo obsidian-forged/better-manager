@@ -256,9 +256,10 @@ test('global toolbar keeps settings, More and close, with native contact submenu
     modal.openSettingsTab = id => actions.push(id);
     modal.close = () => actions.push('close');
     modal.renderGlobalTools(host);
-    assert.deepEqual(host.children.map(child => child.icon), ['settings', 'more-vertical', 'x']);
-    host.children[0].listeners.click({}); assert.deepEqual(actions, ['bpm']);
-    const more = host.children[1]; more.listeners.click({});
+    assert.equal(host.children.length, 4);
+    assert.deepEqual(host.children.slice(1).map(child => child.icon), ['settings', 'more-vertical', 'x']);
+    host.children[1].listeners.click({}); assert.deepEqual(actions, ['bpm']);
+    const more = host.children[2]; more.listeners.click({});
     const contacts = lastMenu.items.find(item => item.title === '管理器_联系方式');
     assert.equal(contacts.submenu.items.length, 3);
     assert.ok(contacts.submenu.items.some(item => item.title === '管理器_GITHUB_描述'));
@@ -266,10 +267,10 @@ test('global toolbar keeps settings, More and close, with native contact submenu
     lastMenu.items.find(item => item.title === '任务_标题').click();
     assert.equal(more.attributes['aria-expanded'], 'true');
     assert.equal(lastMenu.items.some(item => item.title === '通用_关闭窗口'), false);
-    host.children[2].listeners.click({});
+    host.children[3].listeners.click({});
     assert.deepEqual(actions, ['bpm', 'close']);
     modal.taskCenterView.destroy();
-    assert.equal(host.children.length, 3); assert.equal(body.children.length, 0); assert.equal(unsubscribe, 1);
+    assert.equal(host.children.length, 4); assert.equal(body.children.length, 0); assert.equal(unsubscribe, 1);
 });
 
 test('recent installs lead the status options and support the shared window, multi-select and exclusion', async () => {

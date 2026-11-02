@@ -1,7 +1,9 @@
 export default {
     "同步_外部更新提醒": "Settings changed outside BPM. Temporarily turn off external real-time sync to avoid repeated overwrites. Open views stay in place; plugin, appearance and Ribbon changes that require reapplication take effect after BPM views close.",
     "同步_循环保护_标题": "Auto-save paused",
+    "同步_循环保护_短": "Sync issue",
     "同步_循环保护_说明": "A sync plugin keeps reloading BPM, so automatic saving is paused to stop the write-back loop. Manual changes still save normally.",
+    "同步_循环保护_建议": "Temporarily pause real-time config sync, or make sure both devices run the same Better Manager version. Reopen the manager after that to restore automatic saving.",
     "同步_外部已应用": "Merged and applied settings updates from another device.",
     "同步_外域更新延后": "You are editing a preset for another device type; external updates will be merged when you leave this scope.",
     "同步_缓存恢复失败": "BPM could not merge changes back into data.json. The recovery cache has been kept. Pause real-time sync and reopen and close BPM to retry.",

@@ -17399,7 +17399,19 @@ body .manager-container.manager-container--main .manager-overview-heading.bpm-re
     }
 }
 
-/* 同步循环保护：全局“更多”按钮角标 */
-.manager-tool--sync-guard { position: relative; }
-.manager-sync-guard-badge { position: absolute; top: -3px; right: -3px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-warning, var(--color-orange)); background: var(--background-primary); border-radius: 50%; pointer-events: none; }
-.manager-sync-guard-badge svg { width: 12px; height: 12px; }
+/* 同步循环保护：齿轮左侧的自适应通知按钮，最大 150px */
+.manager-global-tools .manager-sync-notice { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: flex-start; width: 0 !important; max-width: 0 !important; height: var(--bpm-action-size); padding: 0 !important; gap: 0; overflow: hidden; opacity: 0; border: 0 !important; border-radius: var(--bpm-radius-sm); background: transparent; color: var(--color-orange); white-space: nowrap; }
+.manager-global-tools .manager-sync-notice.is-active { width: auto !important; max-width: 150px !important; padding: 0 var(--size-2-2) !important; gap: var(--size-2-2); opacity: 1; border: 1px solid var(--background-modifier-border) !important; cursor: pointer; }
+.manager-global-tools .manager-sync-notice.is-active:hover { background: var(--background-modifier-hover); }
+.manager-sync-notice__icon { display: inline-flex; flex: 0 0 18px; align-items: center; justify-content: center; }
+.manager-sync-notice__icon svg { width: 18px; height: 18px; }
+.manager-sync-notice__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* 顶栏栏目菜单保持居中；空间不足时允许自身横向滚动 */
+.manager-container:not(.manager-container--mobile) .manager-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); justify-content: normal; }
+.manager-container:not(.manager-container--mobile) .manager-toolbar__tabs { grid-column: 2; justify-self: center; justify-content: center !important; max-width: 100%; }
+.manager-container:not(.manager-container--mobile) .manager-global-tools { grid-column: 3; justify-self: end; margin-inline-start: 0; }
+
+/* 桌面端顶栏跨整行，栏目菜单以整个弹窗为基准居中；标题保持最左 */
+.manager-container.manager-container--main:not(.manager-container--mobile) .manager-modal-chrome > .manager-section--actions { grid-column: 1 / -1; grid-row: 1; background: transparent; }
+.manager-container.manager-container--main:not(.manager-container--mobile) .manager-modal-chrome > .manager-header { position: relative; z-index: 2; }
