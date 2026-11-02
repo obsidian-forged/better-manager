@@ -1032,3 +1032,25 @@ test('rewriting an unchanged device record is skipped', async () => {
     await manager.devices.persistOwnDevice();
     assert.equal(writes, 0);
 });
+
+test('device file changes are merged from adapter events without polling', async () => {
+    const adapter = memoryAdapter();
+    adapter.onFileChange = () => undefined;
+    const { manager } = await fixture({ adapter });
+    manager.settings.DEVICE_MANAGEMENT.enabled = true;
+    const devices = manager.devices;
+    let calls = 0;
+    const original = devices.mergeDeviceRecords.bind(devices);
+    devices.mergeDeviceRecords = async () => { calls++; return false; };
+    try {
+        adapter.onFileChange(`${DEVICES_DIR}probe.json`);
+        await new Promise(resolve => setTimeout(resolve, 250));
+        assert.equal(calls, 1);
+        adapter.onFileChange('.obsidian/plugins/self/data/other.json');
+        await new Promise(resolve => setTimeout(resolve, 250));
+        assert.equal(calls, 1);
+    } finally {
+        devices.mergeDeviceRecords = original;
+        devices.dispose();
+    }
+});

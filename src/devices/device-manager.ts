@@ -34,6 +34,39 @@ type CustomCssLike = {
     loadTheme?(): Promise<void>;
 };
 type CapacitorDevice = { getId?(): Promise<{ identifier?: string }> };
+type DeviceFileAdapter = { onFileChange?: (path: string) => void };
+type DeviceFileHookState = { original?: (path: string) => void; listeners: Set<(path: string) => void> };
+const DEVICE_FILE_HOOK = '__bpmDeviceFileHook';
+
+/** 监听适配器的文件变更事件；不接管全局 handler，也不做轮询。 */
+function registerDeviceFileListener(adapter: DeviceFileAdapter | undefined, listener: (path: string) => void): () => void {
+    if (!adapter) return () => undefined;
+    const hooked = adapter as DeviceFileAdapter & { [DEVICE_FILE_HOOK]?: DeviceFileHookState };
+    let state = hooked[DEVICE_FILE_HOOK];
+    if (!state) {
+        const original = adapter.onFileChange;
+        state = { original, listeners: new Set() };
+        hooked[DEVICE_FILE_HOOK] = state;
+        adapter.onFileChange = function (path: string) {
+            try {
+                state?.original?.call(adapter, path);
+            } finally {
+                for (const callback of state?.listeners ?? []) {
+                    try { callback(path); } catch { /* 单个监听器失败不影响其他监听 / Isolate listeners. */ }
+                }
+            }
+        };
+    }
+    state.listeners.add(listener);
+    return () => {
+        state?.listeners.delete(listener);
+        if (state && state.listeners.size === 0) {
+            if (state.original) adapter.onFileChange = state.original;
+            else delete adapter.onFileChange;
+            delete hooked[DEVICE_FILE_HOOK];
+        }
+    };
+}
 interface StoredIdentity { id?: unknown; type?: unknown; platformId?: unknown; presetId?: unknown; }
 interface LiveSnapshot {
     ribbon: RibbonItem[];
@@ -62,7 +95,7 @@ export class DeviceManager {
     /** 每个栏目独立记住作用域，切页不会串用其他页的选择。 */
     private selections: Partial<Record<ScopePage, string>> = {};
     private projection?: Projection;
-    private syncTimer?: number;
+    private stopDeviceFileWatch?: () => void;
 
     constructor(private readonly manager: Manager) {}
     get data(): DeviceManagement {
@@ -115,26 +148,48 @@ export class DeviceManager {
         await this.mergeDeviceRecords();
         await this.bootstrapDeviceFiles();
         await this.persistOwnDevice();
-        this.startSyncTimer();
+        this.startDeviceFileWatch();
     }
 
-    /** 设备记录不走 data.json，开启设备管理时定时轻量合并，实现双向近实时同步。 */
-    private startSyncTimer(): void {
-        if (this.syncTimer !== undefined) return;
-        const timer = globalThis.setInterval(() => {
-            if (!this.ready || this.busy || !this.data.enabled) return;
-            void this.mergeDeviceRecords()
-                .then(changed => { if (changed) this.manager.managerModal?.refreshDevicePanelIfOpen(); })
-                .catch(error => this.report(error));
-        }, 30_000);
-        // Node 测试里不阻塞进程；浏览器没有 unref，保持原样。
-        (timer as unknown as { unref?: () => void }).unref?.();
-        this.syncTimer = timer as unknown as number;
+    /** 设备记录只靠文件变更事件同步；不轮询、不主动扫描目录。 */
+    private startDeviceFileWatch(): void {
+        if (this.stopDeviceFileWatch) return;
+        const adapter = this.manager.app?.vault?.adapter as DeviceFileAdapter | undefined;
+        const configDir = this.manager.app?.vault?.configDir;
+        const prefix = this.deviceFilePrefix();
+        if (!adapter || !configDir || !prefix) return;
+        let timer: number | undefined;
+        const schedule = () => {
+            if (timer !== undefined) globalThis.clearTimeout(timer);
+            timer = globalThis.setTimeout(() => {
+                timer = undefined;
+                if (!this.ready || this.busy || !this.data.enabled) return;
+                void this.mergeDeviceRecords()
+                    .then(changed => { if (changed) this.manager.managerModal?.refreshDevicePanelIfOpen(); })
+                    .catch(error => this.report(error));
+            }, 150) as unknown as number;
+        };
+        const isDeviceFile = (path: string): boolean =>
+            path.startsWith(prefix) || path.startsWith(`${configDir}/better-plugins-manager-device-`);
+        const hasFileChangeEvent = typeof adapter.onFileChange === 'function';
+        const unregister = registerDeviceFileListener(adapter, path => { if (isDeviceFile(path)) schedule(); });
+        const win = typeof globalThis.window === 'object' ? globalThis.window : undefined;
+        const doc = typeof globalThis.document === 'object' ? globalThis.document : undefined;
+        const onFocus = () => { if (!hasFileChangeEvent) schedule(); };
+        const onVisibility = () => { if (doc?.visibilityState === 'visible') onFocus(); };
+        win?.addEventListener('focus', onFocus);
+        doc?.addEventListener('visibilitychange', onVisibility);
+        this.stopDeviceFileWatch = () => {
+            unregister();
+            if (timer !== undefined) globalThis.clearTimeout(timer);
+            win?.removeEventListener('focus', onFocus);
+            doc?.removeEventListener('visibilitychange', onVisibility);
+        };
     }
 
     public dispose(): void {
-        if (this.syncTimer !== undefined) globalThis.clearInterval(this.syncTimer);
-        this.syncTimer = undefined;
+        this.stopDeviceFileWatch?.();
+        this.stopDeviceFileWatch = undefined;
     }
 
     /* ---------- 预设复用 / Reuse ---------- */
