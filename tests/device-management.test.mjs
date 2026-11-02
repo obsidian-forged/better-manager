@@ -949,7 +949,8 @@ test('a stale or default snapshot cannot replace a preset configured remotely', 
     const { manager } = await fixture({ adapter });
     const path = '.obsidian/plugins/self/data.json';
     adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
-    manager.saveData = async value => { adapter.files[path] = JSON.stringify(value); };
+    let writes = 0;
+    manager.saveData = async value => { writes++; adapter.files[path] = JSON.stringify(value); };
     await manager.loadSettings();
 
     const localPreset = manager.settings.DEVICE_MANAGEMENT.presets.computer[0];
@@ -974,9 +975,8 @@ test('a stale or default snapshot cannot replace a preset configured remotely', 
         assert.equal(protectedPreset.configured, true);
         assert.equal(protectedPreset.plugins.a.enabled, true);
         assert.equal(protectedPreset.updatedAt, 200);
-        const healed = JSON.parse(adapter.files[path]).DEVICE_MANAGEMENT.presets.computer[0];
-        assert.equal(healed.configured, true);
-        assert.equal(healed.plugins.a.enabled, true);
+        // 外部快照只合并到内存，不再回声写盘；否则会与配置同步插件形成死循环。
+        assert.equal(writes, 0);
     } finally { globalThis.window = previousWindow; }
 });
 

@@ -147,6 +147,9 @@ export default class Manager extends Plugin {
     private updateProgressTask: BackgroundTaskHandle | null = null;
     private pendingExternalDeviceApply = false;
     private externalDeviceApplyRunning = false;
+    /** 最近一次外部设置快照时间；自动保存遇到同步回声时让路，避免写回死循环。 */
+    private lastExternalSettingsAt = 0;
+    private automaticSaveTimer: number | undefined;
 
 
     // 拖拽隐藏功能相关状态
@@ -354,6 +357,8 @@ export default class Manager extends Plugin {
         void this.devices?.flushProjection().catch(() => { /* 卸载阶段无法提示 */ });
         this.startupTimers.forEach(handle => window.clearTimeout(handle));
         this.startupTimers.clear();
+        if (this.automaticSaveTimer !== undefined) globalThis.clearTimeout(this.automaticSaveTimer);
+        this.automaticSaveTimer = undefined;
         // 打断延时启动队列：清掉休眠/让出句柄，让排空循环立即退出
         this.cancelDelayQueue();
         this.stopRibbonRuntimeFeatures();
@@ -480,7 +485,7 @@ export default class Manager extends Plugin {
                     settingsDirty = true;
                 }
             });
-            if (settingsDirty) void this.saveSettings({ captureDevice: false });
+            if (settingsDirty) void this.saveSettings({ captureDevice: false, automatic: true });
 
             // 2. 写原生状态：BPM 权威，覆盖原生显隐与顺序
             let ribbonChanged = false;
@@ -945,20 +950,17 @@ export default class Manager extends Plugin {
     private adoptSettings(value: object): void {
         const next = this.normalizeSettings(value) as unknown as ManagerSettings;
         // 同步快照不能覆盖刚配置好的本机预设；Never let a stale snapshot replace a newer local preset.
-        const protectedPresets = preserveNewerPresets(next.DEVICE_MANAGEMENT, this.settings.DEVICE_MANAGEMENT);
+        preserveNewerPresets(next.DEVICE_MANAGEMENT, this.settings.DEVICE_MANAGEMENT);
         const devices = this.settings.DEVICE_MANAGEMENT?.devices;
         if (next.DEVICE_MANAGEMENT) next.DEVICE_MANAGEMENT = { ...next.DEVICE_MANAGEMENT, devices: devices ?? [] };
         const target = this.settings as unknown as Record<string, unknown>;
         const incoming = next as unknown as Record<string, unknown>;
         for (const key of Object.keys(target)) if (!(key in incoming)) delete target[key];
         Object.assign(this.settings, next);
-        this.persistedSettingsJson = protectedPresets ? '' : JSON.stringify(this.devices?.persistedSettings() ?? this.settings);
-        if (protectedPresets) {
-            // 把受保护的预设写回共享文件，避免下一轮同步继续传播旧快照。
-            void this.saveSettings({ captureDevice: false }).catch(error => {
-                if (this.settings.DEBUG) console.error('[BPM] Persisting protected presets failed', error);
-            });
-        }
+        const persisted = this.devices?.persistedSettings() ?? this.settings;
+        this.persistedSettingsJson = JSON.stringify(persisted);
+        // 接受合并结果为基线，但不写盘；外部同步回声不能触发下一次写入。
+        this.settingsSession?.markAdopted(persisted);
     }
 
     /** 外部合并后，用磁盘快照决定下次保存是否真的需要写盘。 */
@@ -1034,6 +1036,7 @@ export default class Manager extends Plugin {
                 const visible = this.settingsEditors.size > 0;
                 const changed = this.settingsSession?.hasExternalChange(incoming)
                     ?? settingsFingerprint(incoming) !== settingsFingerprint(this.settings);
+                if (changed) this.lastExternalSettingsAt = Date.now();
                 if (this.syncUpdateGuard.observe(changed)) {
                     new Notice(this.translator.t('同步_外部更新提醒'), 10_000);
                 }
@@ -1067,7 +1070,12 @@ export default class Manager extends Plugin {
         }
     }
 
-    public async saveSettings(options: { captureDevice?: boolean } = {}) {
+    public async saveSettings(options: { captureDevice?: boolean; automatic?: boolean } = {}) {
+        // 外部同步刚写入时，自动保存先让路，避免“同步写入 → BPM 写回 → ACK”死循环。
+        if (options.automatic && Date.now() - this.lastExternalSettingsAt < 2000) {
+            this.scheduleAutomaticSave();
+            return;
+        }
         const save = async () => {
             if (options.captureDevice !== false) this.devices?.capture();
             // 其他设备同步过来的设备记录只存在于磁盘，先并回内存再整份写回。
@@ -1082,6 +1090,20 @@ export default class Manager extends Plugin {
             this.persistedSettingsJson = serialized;
         };
         await this.queueSettingsOperation(save);
+    }
+
+    /** 外部同步静默 2 秒后再补一次自动保存；期间持续收到回波则继续等待。 */
+    private scheduleAutomaticSave(): void {
+        if (this.automaticSaveTimer !== undefined || this.isUnloaded) return;
+        this.automaticSaveTimer = globalThis.setTimeout(() => {
+            this.automaticSaveTimer = undefined;
+            if (this.isUnloaded) return;
+            if (Date.now() - this.lastExternalSettingsAt < 2000) {
+                this.scheduleAutomaticSave();
+                return;
+            }
+            void this.saveSettings({ captureDevice: false, automatic: true });
+        }, 2000) as unknown as number;
     }
 
     /** 打开管理器：命令、功能区图标共用，已打开时先关闭旧实例避免多个弹窗叠加。 */
