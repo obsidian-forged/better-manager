@@ -2,7 +2,7 @@ import { Notice, Platform } from 'obsidian';
 import type Manager from '../main';
 import { featureEnabled } from '../features';
 import { pluginStorage } from '../storage/plugin-storage';
-import { mergeSettings } from '../settings/session-store';
+import { mergeSettings, settingsFingerprint } from '../settings/session-store';
 import type { RibbonGroup, RibbonItem } from '../data/types';
 import { applyPresetToSettings, capturePreset, cloneAppearance, clonePreset,
     allPresets, detectDeviceType, detectSystemPlatform, DEVICE_TYPES, DeviceManagement, DevicePluginFilters, DevicePluginState, DevicePreset, DeviceScope, DeviceType,
@@ -383,11 +383,11 @@ export class DeviceManager {
         this.persistIdentity();
     }
 
-    /** 绑定预设的指纹，用于判断远端是否真的改了本机当前配置。 */
-    public boundFingerprint(): string {
+    /** 筛选只影响视图，不能触发运行态重载；View filters must not reapply plugin/theme/Ribbon state. */
+    public boundRuntimeFingerprint(): string {
         const bound = this.boundPreset();
         if (!bound) return '';
-        return JSON.stringify([bound.plugins, bound.filters, bound.ribbon, bound.ribbonGroups, bound.ribbonEnabled, bound.appearance]);
+        return settingsFingerprint([bound.plugins, bound.ribbon, bound.ribbonGroups, bound.ribbonEnabled, bound.appearance]);
     }
 
     effectiveForScope(scope: DeviceScope): DevicePreset {
@@ -1063,12 +1063,13 @@ export class DeviceManager {
         return changed;
     }
 
-    async apply(): Promise<void> { await this.run(() => this.applyCurrent()); }
+    async apply(options: { refreshViews?: boolean; persist?: boolean } = {}): Promise<void> { await this.run(() => this.applyCurrent(options)); }
 
     /** 应用本机绑定的预设：投影设置、重算插件运行态，再把新登记的项写回。 */
-    private async applyCurrent(): Promise<void> {
+    private async applyCurrent(options: { refreshViews?: boolean; persist?: boolean } = {}): Promise<void> {
         await this.applyEffective();
-        await this.manager.applyDeviceConfiguration();
+        await this.manager.applyDeviceConfiguration(options);
+        if (options.persist === false) return;
         const bound = this.boundPreset();
         if (bound) this.captureInto(bound, { appearance: this.readLiveAppearance() });
         await this.manager.saveSettings({ captureDevice: false });

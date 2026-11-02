@@ -14,6 +14,7 @@ import {
     DropdownComponent,
     ExtraButtonComponent,
     Menu,
+    MenuItem,
     Modal,
     Notice,
     PluginManifest,
@@ -113,7 +114,7 @@ type PluginDateMeta = {
     updatedAt?: number;
 };
 
-type StatusFilterValue = "all" | "enabled" | "disabled" | "grouped" | "ungrouped" | "tagged" | "untagged" | "noted" | "has-update" | "hidden";
+type StatusFilterValue = "all" | "recently-installed" | "enabled" | "disabled" | "grouped" | "ungrouped" | "tagged" | "untagged" | "noted" | "has-update" | "hidden";
 
 type MultiSelectFilterControl = {
     rootEl: HTMLElement;
@@ -555,6 +556,7 @@ export class ManagerModal extends Modal {
     private getStatusFilterOptions(): Record<string, string> {
         const t = (key: string) => this.manager.translator.t(key);
         return {
+            "recently-installed": t("管理器_最近安装"),
             "all": t("筛选_全部_描述"),
             "enabled": t("筛选_仅启用_描述"),
             "disabled": t("筛选_仅禁用_描述"),
@@ -943,6 +945,8 @@ export class ManagerModal extends Modal {
 
         const matchesStatus = (status: string) => {
             switch (status) {
+                case "recently-installed":
+                    return this.isRecentlyInstalled(this.readRecentInstallTimestamp(manifest.id));
                 case "enabled":
                     return isEnabled;
                 case "disabled":
@@ -1074,22 +1078,25 @@ export class ManagerModal extends Modal {
 
         const renderOptions = () => {
             menuEl.empty();
-            const allOption = menuEl.createEl("button", { cls: "manager-multiselect-filter__option" });
-            allOption.type = "button";
-            allOption.setAttribute("role", "option");
-            allOption.setAttribute("aria-selected", `${selectedValues.length === 0}`);
-            allOption.toggleClass("is-selected", selectedValues.length === 0);
-            const allCheck = allOption.createSpan({ cls: "manager-multiselect-filter__check" });
-            setIcon(allCheck, selectedValues.length === 0 ? "check" : "circle");
-            allOption.createSpan({ cls: "manager-multiselect-filter__option-label", text: allLabel });
-            allOption.addEventListener("click", () => {
-                selectedValues = [];
-                renderOptions();
-                emitChange();
-            });
+            const renderAllOption = () => {
+                const allOption = menuEl.createEl("button", { cls: "manager-multiselect-filter__option" });
+                allOption.type = "button";
+                allOption.setAttribute("role", "option");
+                allOption.setAttribute("aria-selected", `${selectedValues.length === 0}`);
+                allOption.toggleClass("is-selected", selectedValues.length === 0);
+                const allCheck = allOption.createSpan({ cls: "manager-multiselect-filter__check" });
+                setIcon(allCheck, selectedValues.length === 0 ? "check" : "circle");
+                allOption.createSpan({ cls: "manager-multiselect-filter__option-label", text: allLabel });
+                allOption.addEventListener("click", () => {
+                    selectedValues = [];
+                    renderOptions();
+                    emitChange();
+                });
+            };
+            if (!currentOptions.some(([value]) => value === allValue)) renderAllOption();
 
             for (const [value, label] of currentOptions) {
-                if (value === allValue) continue;
+                if (value === allValue) { renderAllOption(); continue; }
                 const selected = selectedValues.includes(value);
                 const optionEl = menuEl.createEl("button", { cls: "manager-multiselect-filter__option" });
                 optionEl.type = "button";
@@ -1202,7 +1209,8 @@ export class ManagerModal extends Modal {
         ) => {
             const operatorControl = createOperatorToggle(container, getOperator(), operatorLabel, setOperator);
             if (type === "status") this.statusOperatorControl = operatorControl;
-            const control = this.createMultiSelectFilter(container, options, getValues(), allValue, options[0]?.[1] || t("筛选_全部_描述"), ariaLabel, values => {
+            const allLabel = options.find(([value]) => value === allValue)?.[1] || t("筛选_全部_描述");
+            const control = this.createMultiSelectFilter(container, options, getValues(), allValue, allLabel, ariaLabel, values => {
                 setValues(values);
                 refreshLayout();
                 void this.reloadShowData();
@@ -1952,14 +1960,23 @@ export class ManagerModal extends Modal {
         parent.querySelector('.manager-item__versions')?.insertAdjacentElement('afterend', badge);
     }
 
-    /** Mark plugins installed inside the configured window / 标记在配置窗口内安装的插件。 */
+    private getRecentInstallDays(): number {
+        const days = this.settings.RECENT_INSTALL_DAYS;
+        return Number.isFinite(days) && days >= 0 ? Math.floor(days) : 7;
+    }
+
+    private isRecentlyInstalled(installedAt?: number, now = Date.now()): boolean {
+        const days = this.getRecentInstallDays();
+        if (!installedAt || !Number.isFinite(installedAt) || days <= 0) return false;
+        const age = now - installedAt;
+        return age >= 0 && age <= days * 24 * 60 * 60 * 1000;
+    }
+
+    /** Badge and status filter share the same installation window. */
     private renderRecentInstallBadge(parent: HTMLElement, installedAt?: number): void {
         parent.querySelector(".manager-plugin-card__recent-install")?.remove();
-        const configuredDays = this.settings.RECENT_INSTALL_DAYS;
-        const days = Number.isFinite(configuredDays) && configuredDays >= 0 ? Math.floor(configuredDays) : 7;
-        if (!installedAt || days <= 0) return;
-        const age = Date.now() - installedAt;
-        if (age < 0 || age > days * 24 * 60 * 60 * 1000) return;
+        const days = this.getRecentInstallDays();
+        if (!this.isRecentlyInstalled(installedAt)) return;
         const badge = parent.createSpan({ cls: "manager-plugin-card__recent-install" });
         setIcon(badge.createSpan({ cls: "manager-plugin-card__recent-install-icon" }), "clock-4");
         badge.createSpan({ text: this.manager.translator.t("管理器_最近安装") });
@@ -2487,13 +2504,10 @@ export class ManagerModal extends Modal {
         const identity = titleBar.createDiv("manager-header__identity");
         const mark = identity.createDiv("manager-header__mark");
         mark.setAttribute("aria-hidden", "true");
-        setIcon(mark, "blocks");
         const titleGroup = identity.createDiv("manager-header__title-group");
-        titleGroup.createDiv({ cls: "manager-header__eyebrow", text: "BPM" });
-        titleGroup.createEl("h2", {
-            cls: "manager-header__title",
-            text: this.manager.translator.t("通用_管理器_文本"),
-        });
+        titleGroup.createDiv({ cls: "manager-header__eyebrow", text: "Better Manager" });
+        titleGroup.createDiv({ cls: "manager-header__title" });
+        this.syncHeaderIdentity();
         this.footEl = createDiv("manager-food manager-header__stats");
         this.updateStats();
 
@@ -2669,20 +2683,27 @@ export class ManagerModal extends Modal {
             return el;
         };
         createIconTool('settings', t('管理器_插件设置_描述'), () => this.openSettingsTab(this.manager.manifest.id));
-        const contacts = createIconTool('message-circle', t('管理器_联系方式'), (event) => {
+        const more = createIconTool('more-vertical', t('管理器_更多操作_描述'), (event) => {
             const menu = new Menu();
-            menu.addItem(item => item.setTitle(t('管理器_视频教程_描述')).setIcon('book-open')
+            menu.addItem(item => item.setTitle(t('任务_标题')).setIcon('cloud-download')
+                .onClick(() => { this.taskCenterView?.show(); }));
+            menu.addSeparator();
+            menu.addItem(item => {
+                item.setTitle(t('管理器_联系方式')).setIcon('message-circle');
+                // Obsidian's native submenu supplies the arrow, placement and touch/keyboard handling.
+                const contacts = (item as MenuItem & { setSubmenu(): Menu }).setSubmenu();
+                contacts.addItem(item => item.setTitle(t('管理器_视频教程_描述')).setIcon('book-open')
                 .onClick(() => { window.open('https://www.bilibili.com/video/BV1WyrkYMEce/'); }));
-            menu.addItem(item => item.setTitle(t('管理器_GITHUB_描述')).setIcon('github')
+                contacts.addItem(item => item.setTitle(t('管理器_GITHUB_描述')).setIcon('github')
                 .onClick(() => { window.open('https://github.com/eondrcode/obsidian-manager'); }));
-            menu.addItem(item => item.setTitle(SUPPORT_QQ_GROUP_TOOLTIP).setIcon('message-circle')
+                contacts.addItem(item => item.setTitle(SUPPORT_QQ_GROUP_TOOLTIP).setIcon('message-circle')
                 .onClick(() => this.openSupportQQGroup()));
+            });
             menu.showAtMouseEvent(event);
         });
-        contacts.setAttribute('aria-haspopup', 'menu');
-        // 后台下载/检查任务入口，和全局工具同一行。
-        this.taskCenterView = new TaskCenterView(this.manager, parent);
-        // 关闭按钮统一用移动端那颗，原生关闭按钮由样式隐藏。
+        more.setAttribute('aria-haspopup', 'menu');
+        more.addClass('manager-global-more');
+        this.taskCenterView = new TaskCenterView(this.manager, parent, more);
         const close = createIconTool('x', t('通用_关闭窗口'), () => this.close());
         close.addClass('manager-modal-close');
     }
@@ -4440,8 +4461,26 @@ export class ManagerModal extends Modal {
         });
     }
 
+    private syncHeaderIdentity(): void {
+        const header = this.modalChromeEl?.querySelector('.manager-header__identity');
+        if (!header) return;
+        const page = this.activePage === 'sources' ? 'install' : this.activePage;
+        const current = this.getPageNavigationItems().find(item => item.page === page);
+        const mark = header.querySelector<HTMLElement>('.manager-header__mark');
+        const title = header.querySelector<HTMLElement>('.manager-header__title');
+        const icon = current?.icon ?? 'blocks';
+        if (mark && mark.dataset.icon !== icon) {
+            mark.empty();
+            setIcon(mark, icon);
+            mark.dataset.icon = icon;
+        }
+        const label = current?.label ?? this.manager.translator.t('通用_管理器_文本');
+        if (title && title.textContent !== label) title.setText(label);
+    }
+
     private syncPageChrome() {
         this.ensureAllowedActivePage();
+        this.syncHeaderIdentity();
         this.syncToolVisibility();
         const isPlugins = this.activePage === "plugins";
         const isThemes = this.activePage === "themes";

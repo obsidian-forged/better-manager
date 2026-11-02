@@ -111,19 +111,18 @@ export class SettingsSessionStore {
         return settingsFingerprint(value) !== this.observed;
     }
 
-    /**
-     * 外部修改与当前本地配置做三方合并后立即返回：
-     * 本机未保存字段优先，其他设备修改的独立字段直接落地。
-     * base 更新为远端快照，后续同步仍能区分本地编辑。
-     */
+    /** Open editors retain their snapshot; finish merges local edits with the latest shared file. */
     external(value: object, local: object): { changed: boolean; apply?: SettingsRecord } {
         const incoming = record(clone(value));
         const fingerprint = settingsFingerprint(incoming);
         if (fingerprint === this.observed) return { changed: false };
-        const merged = mergeSettings(this.base, record(clone(local)), incoming);
         this.observed = fingerprint;
+        if (this.editing || this.cached) {
+            this.pending = true;
+            return { changed: true };
+        }
+        const merged = mergeSettings(this.base, record(clone(local)), incoming);
         this.base = incoming;
-        this.pending = this.editing || this.cached;
         return { changed: true, apply: merged };
     }
 

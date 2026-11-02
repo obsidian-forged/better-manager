@@ -16383,6 +16383,49 @@ body .bpm-scroll-strip.bpm-scroll-strip::-webkit-scrollbar {
 }
 .manager-plugin-card.is-disabled .manager-plugin-card__icon[data-bpm-icon] { opacity: 0.65; }
 
+/* The embedded Ribbon heading shares the standalone filter width constraints. */
+.ribbon-manager-filter-bar {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+}
+.ribbon-manager-filter-group {
+    box-sizing: border-box;
+    max-width: 100%;
+}
+.manager-overview-heading[data-page="ribbon"] {
+    min-width: 0;
+    max-width: 100%;
+}
+@media (max-width: 760px) {
+    .manager-container .ribbon-manager-filter-bar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .manager-container .ribbon-manager-filter-group {
+        width: 100%;
+        flex: 0 1 auto;
+        touch-action: pan-x pan-y;
+    }
+    .manager-container .ribbon-manager-filter-right {
+        width: 100%;
+        min-width: 0;
+        margin-inline-start: 0;
+        justify-content: space-between;
+    }
+    .manager-container .ribbon-manager-search-container,
+    .manager-container .ribbon-search-wrapper,
+    .manager-container .ribbon-search-input {
+        box-sizing: border-box;
+        min-width: 0;
+        max-width: 100%;
+        width: 100%;
+    }
+}
+.manager-global-more { position: relative; }
+.manager-global-more.has-running .manager-setting__tasks-dot { opacity: 1; }
+
 /* 设置顶栏：后台在线任务入口与浮动进度面板 / Background task entry and floating progress panel */
 .manager-setting__tasks {
     position: relative;

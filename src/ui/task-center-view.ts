@@ -23,7 +23,9 @@ let panelSequence = 0;
 export class TaskCenterView {
     private readonly doc: Document;
     private readonly win: Window | null;
-    private readonly button: HTMLButtonElement;
+    private readonly button: HTMLElement;
+    private readonly externalAnchor: boolean;
+    private readonly dot: HTMLElement;
     private readonly panel: HTMLElement;
     private readonly listEl: HTMLElement;
     private readonly emptyEl: HTMLElement;
@@ -32,16 +34,16 @@ export class TaskCenterView {
     private open = false;
     private destroyed = false;
 
-    constructor(private manager: Manager, host: HTMLElement) {
+    constructor(private manager: Manager, host: HTMLElement, anchor?: HTMLElement) {
         this.doc = host.ownerDocument;
         this.win = this.doc.defaultView;
-        const wrap = host.createDiv("manager-setting__tasks");
-        this.button = wrap.createEl("button", {
+        this.externalAnchor = !!anchor;
+        this.button = anchor ?? host.createDiv("manager-setting__tasks").createEl("button", {
             cls: "manager-setting__tasks-button manager-global-tool",
             attr: { type: "button", "aria-haspopup": "true", "aria-expanded": "false" },
         });
-        setIcon(this.button, TASK_ICON);
-        this.button.createSpan("manager-setting__tasks-dot");
+        if (!anchor) setIcon(this.button, TASK_ICON);
+        this.dot = this.button.createSpan("manager-setting__tasks-dot");
 
         const panelId = `bpm-task-panel-${++panelSequence}`;
         this.button.setAttribute("aria-controls", panelId);
@@ -56,7 +58,7 @@ export class TaskCenterView {
         this.listEl = this.panel.createDiv("manager-setting__task-list");
         this.emptyEl = this.listEl.createDiv({ cls: "manager-setting__task-empty", text: this.t("任务_空") });
 
-        this.button.addEventListener("click", this.onButtonClick);
+        if (!anchor) this.button.addEventListener("click", this.onButtonClick);
         this.unsubscribe = this.manager.tasks.subscribe(this.onTasksChanged);
         this.onTasksChanged();
     }
@@ -68,8 +70,12 @@ export class TaskCenterView {
         this.unsubscribe();
         this.button.removeEventListener("click", this.onButtonClick);
         this.panel.remove();
-        this.button.parentElement?.remove();
+        this.dot.remove();
+        this.button.removeClass('has-running');
+        if (!this.externalAnchor) this.button.parentElement?.remove();
     }
+
+    public show(): void { if (!this.destroyed) this.setOpen(true); }
 
     private t(key: string, vars?: Record<string, string | number>): string {
         return this.manager.translator.t(key, vars);
@@ -83,7 +89,7 @@ export class TaskCenterView {
         if (this.destroyed) return;
         const running = this.manager.tasks.runningCount();
         this.button.toggleClass("has-running", running > 0);
-        this.button.setAttribute("aria-label", running > 0 ? `${this.t("任务_标题")} · ${running}` : this.t("任务_标题"));
+        if (!this.externalAnchor) this.button.setAttribute("aria-label", running > 0 ? `${this.t("任务_标题")} · ${running}` : this.t("任务_标题"));
         if (this.open) {
             this.renderList();
             this.positionPanel();

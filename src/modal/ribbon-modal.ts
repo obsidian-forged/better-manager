@@ -428,6 +428,7 @@ export class RibbonModal extends Modal {
                 if (filter.key === "all") this.statusFilters.clear();
                 else if (this.statusFilters.has(filter.key)) this.statusFilters.delete(filter.key);
                 else this.statusFilters.add(filter.key);
+                if (this.statusFilters.size === 3) this.statusFilters.clear();
                 this.displayWithoutSearch();
             });
         });

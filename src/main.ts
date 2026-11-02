@@ -143,8 +143,8 @@ export default class Manager extends Plugin {
     public updateStatus: Record<string, UpdateStatus> = {};
     private updateProgressNotice: Notice | null = null;
     private updateProgressTask: BackgroundTaskHandle | null = null;
-    private lastSyncAppliedNotice = 0;
-    private lastSyncDeferredNotice = 0;
+    private pendingExternalDeviceApply = false;
+    private externalDeviceApplyRunning = false;
 
 
     // 拖拽隐藏功能相关状态
@@ -885,7 +885,7 @@ export default class Manager extends Plugin {
         if (!Platform.isPhone) this.setupDragToHideObserver();
     }
 
-    public async refreshRibbonManagerFeature() {
+    public async refreshRibbonManagerFeature(options: { refreshViews?: boolean } = {}) {
         if (this.isRibbonManagerEnabled()) {
             this.startRibbonRuntimeFeatures();
         } else {
@@ -894,19 +894,16 @@ export default class Manager extends Plugin {
             // 关闭接管 = 停止写入。原生状态无法与用户自己的改动区分，故不做回滚；
             // 只剥掉旧机制可能残留在元素上的 inline 覆盖
             this.clearLegacyRibbonOverrides();
-            try {
-                this.ribbonModal?.close?.();
-            } catch {
-                // ignore
+            if (options.refreshViews !== false) {
+                try { this.ribbonModal?.close?.(); }
+                catch (error) { if (this.settings.DEBUG) console.error('[BPM] Closing Ribbon view failed', error); }
+                this.ribbonModal = null;
             }
-            this.ribbonModal = null;
         }
 
-        try {
-            await this.managerModal?.refreshRibbonFeatureAvailability?.();
-        } catch {
-            // ignore
-        }
+        if (options.refreshViews === false || !this.managerModal?.modalEl.isConnected) return;
+        try { await this.managerModal.refreshRibbonFeatureAvailability(); }
+        catch (error) { if (this.settings.DEBUG) console.error('[BPM] Refreshing Ribbon view failed', error); }
     }
 
     public async loadSettings() {
@@ -979,28 +976,42 @@ export default class Manager extends Plugin {
         if (this.settingsEditors.size || this.isUnloaded) return;
         void this.queueSettingsOperation(async () => {
             if (this.settingsEditors.size || this.isUnloaded) return;
+            const beforeBound = this.devices?.boundRuntimeFingerprint() ?? '';
             const merged = await this.settingsSession?.finish(this.devices?.persistedSettings() ?? this.settings,
                 () => this.settingsEditors.size === 0 && !this.isUnloaded);
             if (merged) this.adoptSettings(merged);
-        }).catch(error => {
+            if (beforeBound !== (this.devices?.boundRuntimeFingerprint() ?? '') && this.devices?.data.enabled) {
+                this.pendingExternalDeviceApply = true;
+            }
+        }).then(() => this.flushExternalDeviceConfiguration()).catch(error => {
             if (this.settings.DEBUG) console.error('[BPM] Restoring shared settings failed', error);
             new Notice(this.translator.t('同步_缓存恢复失败'), 10_000);
         });
     }
 
-    /**
-     * data.json 被外部修改（同步、手改、另一实例）时静默吸收新数据：
-     * 只替换内存设置，不重绘界面、不重新应用外观、不重放 Ribbon 顺序，
-     * 用户正在 BPM 里修改配置时也不会看到任何重建。
-     * 本机设备记录只存在独立文件里，刷新时保留内存中的列表，不会被清空。
-     * Absorb external data.json updates quietly: update settings in memory only.
-     */
+    /** External data changes never rebuild or close an open BPM editor. */
     public onExternalSettingsChange(): void {
         void this.refreshSettingsQuietly();
     }
 
+    private flushExternalDeviceConfiguration(): void {
+        if (!this.pendingExternalDeviceApply || this.externalDeviceApplyRunning || this.settingsEditors.size || this.isUnloaded) return;
+        this.pendingExternalDeviceApply = false;
+        if (!this.devices?.data.enabled) return;
+        this.devices.reconcileAfterExternal();
+        this.externalDeviceApplyRunning = true;
+        void this.devices.apply({ refreshViews: false, persist: false }).then(() => {
+            this.externalDeviceApplyRunning = false;
+            this.flushExternalDeviceConfiguration();
+        }).catch(error => {
+            this.externalDeviceApplyRunning = false;
+            this.pendingExternalDeviceApply = true;
+            this.devices.report(error);
+        });
+    }
+
     private async refreshSettingsQuietly(): Promise<void> {
-        // 等本机正在进行的保存与 350ms 防抖落盘，避免把刚输入的值回滚。
+        // Wait for local saves before classifying a disk event as external.
         await new Promise<void>(resolve => window.setTimeout(resolve, 400));
         if (this.isUnloaded) return;
         try {
@@ -1008,50 +1019,38 @@ export default class Manager extends Plugin {
                 if (this.isUnloaded) return;
                 const path = `${this.app.vault.configDir}/plugins/${this.manifest.id}/data.json`;
                 const incoming = this.normalizeSettings(JSON.parse(await this.app.vault.adapter.read(path)) as unknown);
-                // 外域作用域只保存预设；此时不把远端值塞进投影，退出作用域时由 finish 合并。
+                const visible = this.settingsEditors.size > 0;
+                const changed = this.settingsSession?.hasExternalChange(incoming)
+                    ?? settingsFingerprint(incoming) !== settingsFingerprint(this.settings);
+                if (this.syncUpdateGuard.observe(changed)) {
+                    new Notice(this.translator.t('同步_外部更新提醒'), 10_000);
+                }
+                // Protect local edits on the first external change, not after a frequency threshold.
+                if (changed && visible) await this.settingsSession?.activateCache(this.devices?.persistedSettings() ?? this.settings);
                 if (this.devices?.isProjectingForeign()) {
                     const recordsChanged = await this.devices.mergeDeviceRecords();
-                    if (recordsChanged) this.managerModal?.refreshDevicePanelIfOpen();
-                    if (this.settingsSession?.hasExternalChange(incoming)) {
-                        const now = Date.now();
-                        if (now - this.lastSyncDeferredNotice > 30_000) {
-                            this.lastSyncDeferredNotice = now;
-                            new Notice(this.translator.t('同步_外域更新延后'), 8000);
-                        }
-                    }
+                    if (recordsChanged && !visible) this.managerModal?.refreshDevicePanelIfOpen();
                     return;
                 }
-                const beforeBound = this.devices?.boundFingerprint() ?? '';
+                const beforeBound = this.devices?.boundRuntimeFingerprint() ?? '';
                 const result = this.settingsSession?.external(incoming, this.settings);
-                const visible = this.settingsEditors.size > 0;
-                const frequent = this.syncUpdateGuard.observe(visible, result?.changed ?? false)
-                    && !this.settingsSession?.usingCache;
                 if (result?.apply) {
                     this.adoptSettings(result.apply);
                     this.markExternalPersistence(incoming);
                     const recordsChanged = await this.devices?.mergeDeviceRecords();
-                    this.devices?.reconcileAfterExternal();
-                    if (recordsChanged) this.managerModal?.refreshDevicePanelIfOpen();
-                    const afterBound = this.devices?.boundFingerprint() ?? '';
-                    if (beforeBound && afterBound && beforeBound !== afterBound && this.devices?.data.enabled) {
-                        void this.devices.apply().catch(error => this.devices?.report(error));
-                    }
-                    const now = Date.now();
-                    if (now - this.lastSyncAppliedNotice > 10_000) {
-                        this.lastSyncAppliedNotice = now;
-                        new Notice(this.translator.t('同步_外部已应用'), 5000);
-                    }
+                    if (!visible) this.devices?.reconcileAfterExternal();
+                    if (recordsChanged && !visible) this.managerModal?.refreshDevicePanelIfOpen();
+                    const afterBound = this.devices?.boundRuntimeFingerprint() ?? '';
+                    if (beforeBound !== afterBound && this.devices?.data.enabled) this.pendingExternalDeviceApply = true;
                 } else if (!this.settingsSession) {
                     this.adoptSettings(incoming);
                 }
-                if (frequent) {
-                    await this.settingsSession?.activateCache(this.devices?.persistedSettings() ?? this.settings);
-                    new Notice(this.translator.t('同步_频繁更新提醒'), 10_000);
-                }
-                if (this.settings.DEBUG) console.log('[BPM] External settings merged into memory without rebuilding the interface');
+                if (this.settings.DEBUG) console.log('[BPM] External settings merged without rebuilding open views');
             });
+            // Runtime application can save settings, so start it outside the settings I/O queue.
+            this.flushExternalDeviceConfiguration();
         } catch (error) {
-            if (this.settings?.DEBUG) console.error("[BPM] external settings refresh failed", error);
+            if (this.settings?.DEBUG) console.error('[BPM] external settings refresh failed', error);
             new Notice(this.translator.t('同步_缓存更新失败'), 10_000);
         }
     }
@@ -1108,7 +1107,7 @@ export default class Manager extends Plugin {
     }
 
     /** 设备切换仍使用原生启停与既有延迟队列；Reuse native lifecycle and delay scheduling. */
-    public async applyDeviceConfiguration(): Promise<void> {
+    public async applyDeviceConfiguration(options: { refreshViews?: boolean } = {}): Promise<void> {
         this.cancelDelayQueue();
         // 已启动的异步 onload 必须落定后才能换预设；Wait for an in-flight startup to settle.
         while (this.delayQueueRunning && !this.isUnloaded) await new Promise<void>(resolve => window.setTimeout(resolve, 10));
@@ -1143,7 +1142,7 @@ export default class Manager extends Plugin {
             await this.drainDelayQueue();
             failures.push(...this.lastDelayStartReport.filter(item => !item.ok).map(item => item.id));
         }
-        await this.refreshRibbonManagerFeature();
+        await this.refreshRibbonManagerFeature(options);
         if (failures.length) throw new Error(this.translator.t('设备_插件失败', { names: failures.join(', ') }));
     }
 

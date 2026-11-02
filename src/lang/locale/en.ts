@@ -1,5 +1,5 @@
 export default {
-    "同步_频繁更新提醒": "Frequent external settings updates detected. BPM is using a device-specific cache to keep this interface stable. Changes will merge back when BPM is closed. Consider temporarily turning off real-time sync.",
+    "同步_外部更新提醒": "Settings changed outside BPM. Temporarily turn off external real-time sync to avoid repeated overwrites. Open views stay in place; plugin, appearance and Ribbon changes that require reapplication take effect after BPM views close.",
     "同步_外部已应用": "Merged and applied settings updates from another device.",
     "同步_外域更新延后": "You are editing a preset for another device type; external updates will be merged when you leave this scope.",
     "同步_缓存恢复失败": "BPM could not merge changes back into data.json. The recovery cache has been kept. Pause real-time sync and reopen and close BPM to retry.",

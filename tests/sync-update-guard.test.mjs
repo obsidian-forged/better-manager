@@ -6,23 +6,18 @@ const module = { exports: {} };
 new Function('module', 'exports', bundle.outputFiles[0].text)(module, module.exports);
 const { SyncUpdateGuard } = module.exports;
 
-test('warns after three external changes within ten seconds and cools down for one minute', () => {
+test('the first external change warns immediately and repeated updates share a one-minute cooldown', () => {
     let now = 1000; const guard = new SyncUpdateGuard(() => now);
-    assert.equal(guard.observe(true, true), false);
-    now += 2000; assert.equal(guard.observe(true, true), false);
-    now += 2000; assert.equal(guard.observe(true, true), true);
-    for (let i = 0; i < 6; i++) { now += 500; assert.equal(guard.observe(true, true), false); }
+    assert.equal(guard.observe(true), true);
+    for (let i = 0; i < 6; i++) { now += 500; assert.equal(guard.observe(true), false); }
     now += 60_000;
-    assert.equal(guard.observe(true, true), false);
-    now += 100; assert.equal(guard.observe(true, true), false);
-    now += 100; assert.equal(guard.observe(true, true), true);
+    assert.equal(guard.observe(true), true);
 });
-test('hidden views, unchanged content and occasional updates do not warn', () => {
+test('local write echoes and unchanged content do not warn or delay the next external warning', () => {
     let now = 0; const guard = new SyncUpdateGuard(() => now);
-    for (let i = 0; i < 5; i++) assert.equal(guard.observe(false, true), false);
-    assert.equal(guard.observe(true, true), false);
-    for (let i = 0; i < 5; i++) assert.equal(guard.observe(true, false), false);
-    now += 11_000; assert.equal(guard.observe(true, true), false);
-    assert.equal(guard.observe(false, false), false);
-    assert.equal(guard.observe(true, true), false);
+    for (let i = 0; i < 5; i++) assert.equal(guard.observe(false), false);
+    assert.equal(guard.observe(true), true);
+    now += 61_000;
+    assert.equal(guard.observe(false), false);
+    assert.equal(guard.observe(true), true);
 });

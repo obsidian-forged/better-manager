@@ -105,7 +105,7 @@ test('external settings changes keep live object references and never reload int
             adapter.files[path] = JSON.stringify(remote);
             await manager.refreshSettingsQuietly();
             assert.equal(manager.settings, current);
-            assert.equal(manager.settings.RECENT_INSTALL_DAYS, days);
+            assert.equal(manager.settings.RECENT_INSTALL_DAYS, 7);
         }
         assert.ok(Object.keys(adapter.files).some(path => path.endsWith('.cache')));
         manager.settings.RECENT_INSTALL_DAYS = 14; await manager.saveSettings();
@@ -117,13 +117,13 @@ test('external settings changes keep live object references and never reload int
     } finally { globalThis.window = previousWindow; }
 });
 
-test('external merges apply remote fields immediately but keep local unsaved fields', async () => {
+test('external fields wait until close while local unsaved fields remain intact', async () => {
     const adapter = memoryAdapter(); const { manager } = await fixture({ adapter });
     const path = '.obsidian/plugins/self/data.json';
     adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
     manager.saveData = async value => { adapter.files[path] = JSON.stringify(value); };
     await manager.loadSettings();
-    manager.beginSettingsEditing({});
+    const editor = {}; manager.beginSettingsEditing(editor);
     const previousWindow = globalThis.window;
     globalThis.window = { setTimeout, clearTimeout };
     try {
@@ -133,12 +133,105 @@ test('external merges apply remote fields immediately but keep local unsaved fie
         adapter.files[path] = JSON.stringify(remote);
         await manager.refreshSettingsQuietly();
         assert.equal(manager.settings.RECENT_INSTALL_DAYS, 14);
-        assert.equal(manager.settings.LANGUAGE, 'fr');
+        assert.notEqual(manager.settings.LANGUAGE, 'fr');
         await manager.saveSettings();
+        assert.equal(JSON.parse(adapter.files[path]).RECENT_INSTALL_DAYS, 7);
+        manager.endSettingsEditing(editor); await manager.settingsSaveQueue;
         const saved = JSON.parse(adapter.files[path]);
         assert.equal(saved.RECENT_INSTALL_DAYS, 14);
         assert.equal(saved.LANGUAGE, 'fr');
     } finally { globalThis.window = previousWindow; }
+});
+
+test('the first external edit warns and protects an open editor while own save echoes are ignored', async () => {
+    const adapter = memoryAdapter(); const { manager } = await fixture({ adapter });
+    const path = '.obsidian/plugins/self/data.json';
+    adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
+    manager.saveData = async value => { adapter.files[path] = JSON.stringify(value); };
+    await manager.loadSettings();
+    const previousWindow = globalThis.window; globalThis.window = { setTimeout: callback => setTimeout(callback, 0), clearTimeout };
+    const initialNotices = notices.length;
+    try {
+        manager.beginSettingsEditing({});
+        manager.settings.RECENT_INSTALL_DAYS = 12; await manager.saveSettings();
+        await manager.refreshSettingsQuietly();
+        assert.equal(notices.length, initialNotices);
+        assert.equal(Object.keys(adapter.files).some(path => path.endsWith('.cache')), false);
+        const remote = JSON.parse(adapter.files[path]); remote.LANGUAGE = 'fr'; adapter.files[path] = JSON.stringify(remote);
+        await manager.refreshSettingsQuietly();
+        assert.equal(notices[initialNotices], '同步_外部更新提醒');
+        assert.ok(Object.keys(adapter.files).some(path => path.endsWith('.cache')));
+        assert.notEqual(manager.settings.LANGUAGE, 'fr');
+    } finally { globalThis.window = previousWindow; }
+});
+
+test('external preset changes cannot close or rebuild an editor and apply only after the final editor closes', async () => {
+    const adapter = memoryAdapter(); const { manager, settings } = await fixture({ adapter });
+    settings.DEVICE_MANAGEMENT.enabled = true;
+    const path = '.obsidian/plugins/self/data.json'; adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
+    manager.saveData = async value => { adapter.files[path] = JSON.stringify(value); };
+    await manager.loadSettings();
+    let applications = 0, closes = 0, rebuilds = 0;
+    manager.devices.apply = async options => { applications++; assert.equal(options.refreshViews, false); assert.equal(options.persist, false); };
+    manager.managerModal = { modalEl: { isConnected: true }, close() { closes++; }, refreshRibbonFeatureAvailability() { rebuilds++; } };
+    const first = {}, second = {}; manager.beginSettingsEditing(first); manager.beginSettingsEditing(second);
+    const previousWindow = globalThis.window; globalThis.window = { setTimeout: callback => setTimeout(callback, 0), clearTimeout };
+    try {
+        const remote = JSON.parse(adapter.files[path]); firstOf(remote, 'computer').plugins.a.enabled = false;
+        adapter.files[path] = JSON.stringify(remote); await manager.refreshSettingsQuietly();
+        assert.equal(applications, 0); assert.equal(closes, 0); assert.equal(rebuilds, 0);
+        manager.endSettingsEditing(first); await manager.settingsSaveQueue;
+        assert.equal(applications, 0);
+        manager.endSettingsEditing(second); await manager.settingsSaveQueue;
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(applications, 1); assert.equal(closes, 0); assert.equal(rebuilds, 0);
+    } finally { globalThis.window = previousWindow; }
+});
+
+test('remote filter changes never reapply plugin, appearance or Ribbon runtime state', async () => {
+    const adapter = memoryAdapter(); const { manager, settings } = await fixture({ adapter });
+    settings.DEVICE_MANAGEMENT.enabled = true;
+    const path = '.obsidian/plugins/self/data.json'; adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
+    manager.saveData = async value => { adapter.files[path] = JSON.stringify(value); };
+    await manager.loadSettings();
+    let applications = 0; manager.devices.apply = async () => { applications++; };
+    const editor = {}; manager.beginSettingsEditing(editor);
+    const previousWindow = globalThis.window; globalThis.window = { setTimeout: callback => setTimeout(callback, 0), clearTimeout };
+    try {
+        const before = manager.devices.boundRuntimeFingerprint();
+        const remote = JSON.parse(adapter.files[path]); firstOf(remote, 'computer').filters.search = 'remote search';
+        adapter.files[path] = JSON.stringify(remote); await manager.refreshSettingsQuietly();
+        manager.endSettingsEditing(editor); await manager.settingsSaveQueue;
+        assert.equal(manager.devices.boundRuntimeFingerprint(), before);
+        assert.equal(firstOf(manager.settings, 'computer').filters.search, 'remote search');
+        assert.equal(applications, 0);
+    } finally { globalThis.window = previousWindow; }
+});
+
+test('background Ribbon reconciliation preserves views while explicit feature changes can refresh them', async () => {
+    const { manager } = await fixture(); let closes = 0, rebuilds = 0;
+    manager.refreshRibbonManagerFeature = Manager.prototype.refreshRibbonManagerFeature;
+    manager.isRibbonManagerEnabled = () => false;
+    manager.stopRibbonRuntimeFeatures = () => {};
+    manager.clearLegacyRibbonOverrides = () => {};
+    manager.ribbonModal = { close() { closes++; } };
+    manager.managerModal = { modalEl: { isConnected: true }, refreshRibbonFeatureAvailability() { rebuilds++; } };
+    await manager.refreshRibbonManagerFeature({ refreshViews: false });
+    assert.equal(closes, 0); assert.equal(rebuilds, 0);
+    await manager.refreshRibbonManagerFeature();
+    assert.equal(closes, 1); assert.equal(rebuilds, 1);
+});
+
+test('applying an externally synced preset does not capture runtime state or write settings back', async () => {
+    const { manager, settings } = await fixture(); settings.DEVICE_MANAGEMENT.enabled = true;
+    const before = structuredClone(firstOf(settings, 'computer'));
+    const options = []; let saves = 0;
+    manager.applyDeviceConfiguration = async value => { options.push(value); };
+    manager.saveSettings = async () => { saves++; };
+    await manager.devices.apply({ refreshViews: false, persist: false });
+    assert.equal(saves, 0); assert.deepEqual(options[0], { refreshViews: false, persist: false });
+    assert.deepEqual(firstOf(settings, 'computer'), before);
+    await manager.devices.apply(); assert.equal(saves, 1);
 });
 
 test('three types migrate into at least one independent named preset each', async () => {

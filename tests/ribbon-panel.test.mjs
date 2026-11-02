@@ -10,12 +10,15 @@ class Element {
     children = [];
     classes = new Set();
     attributes = {};
+    listeners = {};
     isConnected = true;
     scrollTop = 0;
     createDiv(options = {}) { return this.createEl('div', options); }
     createSpan(options = {}) { return this.createEl('span', options); }
     createEl(tag, options = {}) {
         const child = new Element(); child.tag = tag;
+        child.ownerDocument = this.ownerDocument;
+        child.parentElement = this;
         if (typeof options === 'string') options = { cls: options };
         child.text = options.text ?? '';
         child.addClass(...(options.cls ?? '').split(' ').filter(Boolean));
@@ -30,8 +33,13 @@ class Element {
     querySelector() { return null; }
     querySelectorAll() { return []; }
     setAttribute(name, value) { this.attributes[name] = value; }
+    setText(value) { this.text = value; }
     empty() { this.children = []; }
-    addEventListener() {}
+    addEventListener(name, callback) { this.listeners[name] = callback; }
+    removeEventListener(name) { delete this.listeners[name]; }
+    remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter(child => child !== this); }
+    getBoundingClientRect() { return { left: 0, bottom: 30, top: 0, width: 300, height: 100 }; }
+    setCssStyles() {}
 }
 class Base { constructor(app) { this.app = app; this.contentEl = new Element(); } }
 class Button {
@@ -48,8 +56,20 @@ class Text {
     onChange(callback) { this.change = callback; return this; }
 }
 class Toggle extends Text { setTooltip() { return this; } }
-const obsidian = { Modal: Base, FuzzySuggestModal: Base, SuggestModal: Base, Plugin: Base, PluginSettingTab: Base,
-    ButtonComponent: Button, TextComponent: Text, ToggleComponent: Toggle, Platform: { isMobileApp: true }, setIcon() {} };
+let lastMenu;
+class Menu {
+    items = [];
+    constructor() { lastMenu = this; }
+    addItem(callback) {
+        const item = { setTitle(value) { this.title = value; return this; }, setIcon() { return this; }, onClick(value) { this.click = value; return this; },
+            setSubmenu() { this.submenu = new Menu(); return this.submenu; } };
+        callback(item); this.items.push(item); return this;
+    }
+    addSeparator() { return this; }
+    showAtMouseEvent() { lastMenu = this; }
+}
+const obsidian = { Modal: Base, FuzzySuggestModal: Base, SuggestModal: Base, Plugin: Base, PluginSettingTab: Base, Menu,
+    ButtonComponent: Button, TextComponent: Text, ToggleComponent: Toggle, Platform: { isMobileApp: true }, setIcon(el, name) { el.icon = name; } };
 const bundle = await build({ entryPoints: ['src/modal/ribbon-modal.ts'], bundle: true, platform: 'node', format: 'cjs',
     write: false, external: ['obsidian', 'electron'], loader: { '.webp': 'dataurl' }, logLevel: 'silent' });
 const module = { exports: {} };
@@ -80,7 +100,10 @@ test('embedded Ribbon supports multi-select status filters and clears them via A
     buttons(host)[2].click();
     assert.deepEqual(states(), [false, true, true, false]);
     buttons(host)[3].click();
-    assert.deepEqual(states(), [false, true, true, true]);
+    assert.deepEqual(states(), [true, false, false, false]);
+    assert.deepEqual(rendered.at(-1), []);
+    buttons(host)[3].click();
+    assert.deepEqual(states(), [false, false, false, true]);
     buttons(host)[0].click();
     assert.deepEqual(states(), [true, false, false, false]);
     assert.deepEqual(pressed(), ['true', 'false', 'false', 'false']);
@@ -91,4 +114,70 @@ test('standalone mobile Ribbon keeps its own single device selector', () => {
     const { panel, scopes } = fixture();
     panel.display(new Element());
     assert.equal(scopes(), 1);
+});
+
+test('global toolbar keeps settings, More and close, with native contact submenu and background tasks in More', async () => {
+    const built = await build({ entryPoints: ['src/modal/manager-modal.ts'], bundle: true, platform: 'node', format: 'cjs', write: false,
+        external: ['obsidian', 'electron'], loader: { '.webp': 'dataurl' }, logLevel: 'silent' });
+    const loaded = { exports: {} };
+    new Function('require', 'module', 'exports', built.outputFiles[0].text)(name => name === 'obsidian' ? obsidian : name === 'electron' ? {} : nativeRequire(name), loaded, loaded.exports);
+    const modal = Object.create(loaded.exports.ManagerModal.prototype);
+    const host = new Element(), body = new Element(); host.ownerDocument.body = body; body.ownerDocument = host.ownerDocument;
+    const actions = [];
+    let unsubscribe = 0;
+    modal.manager = { manifest: { id: 'bpm' }, translator: { t: key => key }, tasks: {
+        subscribe: () => () => { unsubscribe++; }, runningCount: () => 0, snapshots: () => [],
+    } };
+    modal.bindLongPressTooltip = () => {};
+    modal.openSettingsTab = id => actions.push(id);
+    modal.close = () => actions.push('close');
+    modal.renderGlobalTools(host);
+    assert.deepEqual(host.children.map(child => child.icon), ['settings', 'more-vertical', 'x']);
+    host.children[0].listeners.click({}); assert.deepEqual(actions, ['bpm']);
+    const more = host.children[1]; more.listeners.click({});
+    const contacts = lastMenu.items.find(item => item.title === '管理器_联系方式');
+    assert.equal(contacts.submenu.items.length, 3);
+    assert.ok(contacts.submenu.items.some(item => item.title === '管理器_GITHUB_描述'));
+    assert.equal(lastMenu.items.some(item => item.title === '管理器_GITHUB_描述'), false);
+    lastMenu.items.find(item => item.title === '任务_标题').click();
+    assert.equal(more.attributes['aria-expanded'], 'true');
+    assert.equal(lastMenu.items.some(item => item.title === '通用_关闭窗口'), false);
+    host.children[2].listeners.click({});
+    assert.deepEqual(actions, ['bpm', 'close']);
+    modal.taskCenterView.destroy();
+    assert.equal(host.children.length, 3); assert.equal(body.children.length, 0); assert.equal(unsubscribe, 1);
+});
+
+test('recent installs lead the status options and support the shared window, multi-select and exclusion', async () => {
+    const built = await build({ entryPoints: ['src/modal/manager-modal.ts'], bundle: true, platform: 'node', format: 'cjs', write: false,
+        external: ['obsidian', 'electron'], loader: { '.webp': 'dataurl' }, logLevel: 'silent' });
+    const loaded = { exports: {} };
+    new Function('require', 'module', 'exports', built.outputFiles[0].text)(name => name === 'obsidian' ? obsidian : name === 'electron' ? {} : nativeRequire(name), loaded, loaded.exports);
+    const modal = Object.create(loaded.exports.ManagerModal.prototype);
+    modal.manager = { translator: { t: key => key } };
+    modal.settings = { RECENT_INSTALL_DAYS: 7 };
+    assert.deepEqual(Object.keys(modal.getStatusFilterOptions()).slice(0, 3), ['recently-installed', 'all', 'enabled']);
+    const now = Date.now(), day = 86400000;
+    assert.equal(modal.isRecentlyInstalled(now - 7 * day, now), true);
+    for (const time of [undefined, NaN, now + 1, now - 7 * day - 1]) assert.equal(modal.isRecentlyInstalled(time, now), false);
+    modal.pluginDateMetaById = new Map([['new', { installedAt: now - day }], ['old', { installedAt: now - 30 * day }]]);
+    const plugin = { group: '', tags: [], note: '' };
+    assert.equal(modal.matchesStatusFilter(plugin, { id: 'new' }, true, ['recently-installed'], 'contains'), true);
+    assert.equal(modal.matchesStatusFilter(plugin, { id: 'old' }, true, ['recently-installed'], 'contains'), false);
+    assert.equal(modal.matchesStatusFilter(plugin, { id: 'old' }, false, ['recently-installed', 'disabled'], 'contains'), true);
+    assert.equal(modal.matchesStatusFilter(plugin, { id: 'new' }, true, ['recently-installed'], 'not-contains'), false);
+    modal.settings.RECENT_INSTALL_DAYS = 0;
+    assert.equal(modal.isRecentlyInstalled(now - day, now), false);
+    const labels = [];
+    modal.bindLongPressTooltip = () => {};
+    modal.createMultiSelectFilter = (_parent, options, _values, allValue, allLabel) => { labels.push({ options, allValue, allLabel }); return {}; };
+    for (const name of ['Status', 'Group', 'Tag']) {
+        modal[`get${name}FilterValues`] = () => [];
+        modal[`get${name}FilterOperator`] = () => 'contains';
+    }
+    modal.getGroupFilterOptions = () => [['', 'All groups']];
+    modal.getTagFilterOptions = () => [['', 'All tags']];
+    modal.renderPluginFilterControls({ status: new Element(), group: new Element(), tag: new Element() }, () => {});
+    assert.equal(labels[0].allLabel, '筛选_全部_描述');
+    assert.equal(labels[0].options[0][0], 'recently-installed');
 });
