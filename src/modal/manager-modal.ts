@@ -2805,6 +2805,7 @@ export class ManagerModal extends Modal {
         });
         more.setAttribute('aria-haspopup', 'menu');
         more.addClass('manager-global-more');
+        this.renderSyncGuardBadge(more);
         this.taskCenterView = new TaskCenterView(this.manager, parent, more);
         const close = createIconTool('x', t('通用_关闭窗口'), () => this.close());
         close.addClass('manager-modal-close');
@@ -3020,6 +3021,7 @@ export class ManagerModal extends Modal {
         more.buttonEl.addClass('manager-tool--mobile-more');
         more.setIcon('more-vertical').setTooltip(t('管理器_更多操作_描述'));
         more.buttonEl.setAttribute('aria-label', t('管理器_更多操作_描述'));
+        this.renderSyncGuardBadge(more.buttonEl);
         more.onClick(event => {
             const menu = new Menu();
             for (const action of mobileOverflowActions) {
@@ -3330,6 +3332,7 @@ export class ManagerModal extends Modal {
 
         // 更多按钮
         const moreBtn = createFooterBtn("more-horizontal", t("管理器_更多操作_描述"), () => { });
+        this.renderSyncGuardBadge(moreBtn);
         moreBtn.addEventListener("click", (ev) => {
             const menu = new Menu();
             menu.addItem((item) => item.setTitle(t("管理器_重载插件_描述")).setIcon("refresh-ccw").onClick(async () => {
@@ -8406,6 +8409,18 @@ export class ManagerModal extends Modal {
         if (selectedVault) {
             this.renderVaultDetail(workspace, selectedVault, snapshot.vaults, plugins, themes);
         }
+    }
+
+    /** 同步循环保护开启时，在全局“更多”按钮上显示 cloud-alert 角标。 */
+    private renderSyncGuardBadge(button: HTMLElement): void {
+        button.querySelector(".manager-sync-guard-badge")?.remove();
+        if (!this.manager.automaticSavesSuppressed) return;
+        button.addClass("manager-tool--sync-guard");
+        const badge = button.createSpan({ cls: "manager-sync-guard-badge" });
+        setIcon(badge, "cloud-alert");
+        const label = this.manager.translator.t("同步_循环保护_标题");
+        badge.setAttribute("aria-label", label);
+        badge.setAttribute("title", label);
     }
 
     public refreshDevicePanelIfOpen(): void {

@@ -150,6 +150,7 @@ export default class Manager extends Plugin {
     /** 最近一次外部设置快照时间；自动保存遇到同步回声时让路，避免写回死循环。 */
     private lastExternalSettingsAt = 0;
     private automaticSaveTimer: number | undefined;
+    private suppressAutomaticSaves = false;
 
 
     // 拖拽隐藏功能相关状态
@@ -191,6 +192,7 @@ export default class Manager extends Plugin {
     public async onload() {
         this.appPlugins = (this.app as ObsidianAppWithInternals).plugins;
         this.appWorkspace = this.app.workspace;
+        this.detectReloadLoop();
 
         console.log(`%c ${this.manifest.name} %c v${this.manifest.version} `, `padding: 2px; border-radius: 2px 0 0 2px; color: #fff; background: #5B5B5B;`, `padding: 2px; border-radius: 0 2px 2px 0; color: #fff; background: #409EFF;`);
         await this.loadSettings();
@@ -214,6 +216,7 @@ export default class Manager extends Plugin {
         // 物化当前语言表：en / zh_cn 已常驻，其余语言在这里懒加载完成，
         // 后续 t() 才能直接命中；不 await 会让切换到 ru/ja/... 的用户先看到英文
         await this.translator.ensureLanguage(this.settings.LANGUAGE);
+        this.notifyAutomaticSaveSuppressed();
         let builtinTagsChanged = false;
         const tagCountBeforeBpmEnsure = this.settings.TAGS.length;
         ensureBpmTagExists(this);
@@ -274,7 +277,7 @@ export default class Manager extends Plugin {
 
         if (settingsDirty) {
             // 迁移/登记只落共享设置，不触碰设备预设；Startup migrations must not capture device state.
-            await this.saveSettings({ captureDevice: false });
+            await this.saveSettings({ captureDevice: false, automatic: true });
         }
 
         this.agreement = new Agreement(this);
@@ -1072,9 +1075,12 @@ export default class Manager extends Plugin {
 
     public async saveSettings(options: { captureDevice?: boolean; automatic?: boolean } = {}) {
         // 外部同步刚写入时，自动保存先让路，避免“同步写入 → BPM 写回 → ACK”死循环。
-        if (options.automatic && Date.now() - this.lastExternalSettingsAt < 2000) {
-            this.scheduleAutomaticSave();
-            return;
+        if (options.automatic) {
+            if (this.suppressAutomaticSaves) return;
+            if (Date.now() - this.lastExternalSettingsAt < 2000) {
+                this.scheduleAutomaticSave();
+                return;
+            }
         }
         const save = async () => {
             if (options.captureDevice !== false) this.devices?.capture();
@@ -1104,6 +1110,44 @@ export default class Manager extends Plugin {
             }
             void this.saveSettings({ captureDevice: false, automatic: true });
         }, 2000) as unknown as number;
+    }
+
+    /** 30 秒内反复重载说明被同步插件热重载；本会话停止自动保存，避免写回循环。 */
+    private detectReloadLoop(): void {
+        try {
+            const key = 'better-plugins-manager-load-times';
+            const now = Date.now();
+            const raw = window.localStorage.getItem(key);
+            const parsed: unknown = raw ? JSON.parse(raw) : [];
+            const recent = Array.isArray(parsed)
+                ? parsed.filter((value): value is number => typeof value === 'number'
+                    && Number.isFinite(value) && now - value >= 0 && now - value < 30_000)
+                : [];
+            recent.push(now);
+            window.localStorage.setItem(key, JSON.stringify(recent.slice(-8)));
+            this.suppressAutomaticSaves = recent.length >= 2;
+        } catch {
+            this.suppressAutomaticSaves = false;
+        }
+    }
+
+    /** 供管理器在“更多”按钮上显示同步保护标记。 */
+    public get automaticSavesSuppressed(): boolean {
+        return this.suppressAutomaticSaves;
+    }
+
+    /** 停止自动保存时提示一次，避免用户以为设置丢失。 */
+    private notifyAutomaticSaveSuppressed(): void {
+        if (!this.suppressAutomaticSaves) return;
+        try {
+            const key = 'better-plugins-manager-loop-notice';
+            const last = Number(window.localStorage.getItem(key) || 0);
+            if (Number.isFinite(last) && Date.now() - last < 5 * 60 * 1000) return;
+            window.localStorage.setItem(key, String(Date.now()));
+        } catch {
+            // localStorage 不可用时仍然提示，避免静默失败。
+        }
+        new Notice(this.translator.t("同步_循环保护_说明"), 10_000);
     }
 
     /** 打开管理器：命令、功能区图标共用，已打开时先关闭旧实例避免多个弹窗叠加。 */
@@ -1396,7 +1440,7 @@ export default class Manager extends Plugin {
             await this.checkBetaSource(source);
         }
 
-        await this.saveSettings({ captureDevice: false });
+        await this.saveSettings({ captureDevice: false, automatic: true });
         const count = sources.filter((source) => this.sourceHasUpdate(source)).length;
         if (count > 0) {
             new Notice(this.translator.t("通知_来源可更新数量", { count }), 5000);
@@ -1469,7 +1513,7 @@ export default class Manager extends Plugin {
                 if (this.settings.DEBUG) console.error("[BPM] beta source auto update failed", source.repo, e);
             }
         }
-        await this.saveSettings({ captureDevice: false });
+        await this.saveSettings({ captureDevice: false, automatic: true });
     }
 
     public ensureBpmTagAndRecords(): boolean {

@@ -17398,3 +17398,8 @@ body .manager-container.manager-container--main .manager-overview-heading.bpm-re
         min-width: 160px;
     }
 }
+
+/* 同步循环保护：全局“更多”按钮角标 */
+.manager-tool--sync-guard { position: relative; }
+.manager-sync-guard-badge { position: absolute; top: -3px; right: -3px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-warning, var(--color-orange)); background: var(--background-primary); border-radius: 50%; pointer-events: none; }
+.manager-sync-guard-badge svg { width: 12px; height: 12px; }
