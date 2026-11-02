@@ -36,6 +36,8 @@ export interface DevicePreset {
     ribbonGroups: RibbonGroup[];
     ribbonEnabled: boolean;
     appearance: ScopedAppearance;
+    /** 预设内容最后修改时间；同步合并时保护较新的本机配置 / Last local content revision. */
+    updatedAt?: number;
 }
 
 /** 设备记录只用于展示与手动纠正类型，不再承载单设备配置。 */
@@ -199,7 +201,21 @@ export function clonePreset(preset: DevicePreset): DevicePreset {
         ribbonGroups: normalizeRibbonGroups(preset.ribbonGroups),
         ribbonEnabled: preset.ribbonEnabled,
         appearance: cloneAppearance(preset.appearance),
+        updatedAt: typeof preset.updatedAt === 'number' && Number.isFinite(preset.updatedAt) ? preset.updatedAt : undefined,
     };
+}
+
+/** 预设内容签名：时间戳和名称不参与，避免空保存刷新 revision。 */
+export function presetContentFingerprint(preset: DevicePreset): string {
+    return JSON.stringify([
+        Object.keys(preset.plugins).sort().map(id => [id, preset.plugins[id].enabled, preset.plugins[id].delay]),
+        preset.filters,
+        preset.ribbon,
+        preset.ribbonGroups,
+        preset.ribbonEnabled,
+        preset.appearance.theme,
+        Object.keys(preset.appearance.snippets).sort().map(id => [id, preset.appearance.snippets[id]]),
+    ]);
 }
 
 function normalizeFilterValues(value: unknown): string[] {
@@ -251,6 +267,7 @@ export interface PresetMeta {
     id?: string;
     name?: string;
     configured?: boolean;
+    updatedAt?: number;
 }
 /** 快照当前运行设置；外观由调用方补充 / Snapshot runtime settings. */
 export function snapshotPreset(settings: ManagerSettings, extras: PresetExtras = {}, meta: PresetMeta = {}): DevicePreset {
@@ -264,6 +281,7 @@ export function snapshotPreset(settings: ManagerSettings, extras: PresetExtras =
         ribbonGroups: settings.RIBBON_GROUPS,
         ribbonEnabled: settings.RIBBON_MANAGER_ENABLED,
         appearance: extras.appearance ?? { theme: '', snippets: {} },
+        updatedAt: meta.updatedAt,
     });
 }
 
@@ -286,6 +304,7 @@ function normalizePreset(raw: unknown, baseline: DevicePreset, type: DeviceType,
         if (Array.isArray(raw.ribbonGroups)) preset.ribbonGroups = normalizeRibbonGroups(raw.ribbonGroups);
         preset.filters = normalizeFilters(raw.filters, preset.filters);
         preset.appearance = normalizeAppearance(raw.appearance, preset.appearance);
+        if (typeof raw.updatedAt === 'number' && Number.isFinite(raw.updatedAt)) preset.updatedAt = raw.updatedAt;
         if (typeof raw.name === 'string' && raw.name.trim()) preset.name = raw.name.trim();
         if (typeof raw.id === 'string' && raw.id.trim()) preset.id = raw.id.trim();
     }
@@ -317,6 +336,39 @@ function settingsEqual(a: DevicePreset, b: DevicePreset): boolean {
         snippets: Object.keys(preset.appearance.snippets).sort().map(id => [id, preset.appearance.snippets[id]]),
     });
     return canonical(a) === canonical(b);
+}
+
+/**
+ * 外部同步合并后，保护本机内容更新时间更晚的预设。
+ * A stale or default snapshot must not replace a preset that was just configured.
+ */
+export function preserveNewerPresets(merged: DeviceManagement | undefined, local: DeviceManagement | undefined): boolean {
+    if (!merged || !local) return false;
+    let changed = false;
+    for (const type of DEVICE_TYPES) {
+        const localById = new Map(local.presets[type].map(preset => [preset.id, preset]));
+        for (const target of merged.presets[type]) {
+            const source = localById.get(target.id);
+            if (!source) continue;
+            const localStamp = typeof source.updatedAt === 'number' && Number.isFinite(source.updatedAt) ? source.updatedAt : 0;
+            const mergedStamp = typeof target.updatedAt === 'number' && Number.isFinite(target.updatedAt) ? target.updatedAt : 0;
+            const localConfigured = source.configured === true;
+            const mergedConfigured = target.configured === true;
+            const mergedEmpty = Object.keys(target.plugins).length === 0 && target.ribbon.length === 0;
+            const localHasContent = Object.keys(source.plugins).length > 0 || source.ribbon.length > 0;
+            if (localStamp > mergedStamp
+                || (localStamp === mergedStamp && localConfigured && !mergedConfigured)
+                || (localStamp === mergedStamp && localConfigured && mergedConfigured && mergedEmpty && localHasContent)) {
+                if (presetContentFingerprint(target) !== presetContentFingerprint(source)
+                    || target.configured !== source.configured
+                    || target.updatedAt !== source.updatedAt) {
+                    Object.assign(target, clonePreset(source));
+                    changed = true;
+                }
+            }
+        }
+    }
+    return changed;
 }
 
 /** 只接纳固定类型及合法字段；兼容旧版「每类一份预设」的数据。 */

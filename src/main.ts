@@ -5,6 +5,7 @@ import { PluginIcons } from './icons/plugin-icons';
 import { pluginStorage } from './storage/plugin-storage';
 import { BackgroundTaskCenter, BackgroundTaskHandle } from './tasks/task-center';
 import { DeviceManager } from './devices/device-manager';
+import { preserveNewerPresets } from './devices/device-presets';
 import { OverviewState } from './overview-state';
 import { featureEnabled, toolEnabled } from './features';
 import { DelayWaitNotice } from './delay-wait-notice';
@@ -269,7 +270,8 @@ export default class Manager extends Plugin {
         Commands(this.app, this);
 
         if (settingsDirty) {
-            await this.saveSettings();
+            // 迁移/登记只落共享设置，不触碰设备预设；Startup migrations must not capture device state.
+            await this.saveSettings({ captureDevice: false });
         }
 
         this.agreement = new Agreement(this);
@@ -299,7 +301,8 @@ export default class Manager extends Plugin {
                 }
                 try {
                     if (this.settings.DEVICE_MANAGEMENT?.enabled) {
-                        await this.devices.apply().catch(error => this.devices.report(error));
+                        // 启动只应用，不把当前运行态回写预设；Opening BPM must not rewrite presets or data.json.
+                        await this.devices.apply({ refreshViews: false, persist: false }).catch(error => this.devices.report(error));
                     } else if (this.settings.DELAY) await this.drainDelayQueue();
                 } catch (error) {
                     this.delayWaitNotice?.stop();
@@ -477,7 +480,7 @@ export default class Manager extends Plugin {
                     settingsDirty = true;
                 }
             });
-            if (settingsDirty) void this.saveSettings();
+            if (settingsDirty) void this.saveSettings({ captureDevice: false });
 
             // 2. 写原生状态：BPM 权威，覆盖原生显隐与顺序
             let ribbonChanged = false;
@@ -941,13 +944,21 @@ export default class Manager extends Plugin {
     /** 保持设置对象引用，外部更新只替换数据，不驱动视图/外观重建；Preserve references without redrawing. */
     private adoptSettings(value: object): void {
         const next = this.normalizeSettings(value) as unknown as ManagerSettings;
+        // 同步快照不能覆盖刚配置好的本机预设；Never let a stale snapshot replace a newer local preset.
+        const protectedPresets = preserveNewerPresets(next.DEVICE_MANAGEMENT, this.settings.DEVICE_MANAGEMENT);
         const devices = this.settings.DEVICE_MANAGEMENT?.devices;
         if (next.DEVICE_MANAGEMENT) next.DEVICE_MANAGEMENT = { ...next.DEVICE_MANAGEMENT, devices: devices ?? [] };
         const target = this.settings as unknown as Record<string, unknown>;
         const incoming = next as unknown as Record<string, unknown>;
         for (const key of Object.keys(target)) if (!(key in incoming)) delete target[key];
         Object.assign(this.settings, next);
-        this.persistedSettingsJson = JSON.stringify(this.devices?.persistedSettings() ?? this.settings);
+        this.persistedSettingsJson = protectedPresets ? '' : JSON.stringify(this.devices?.persistedSettings() ?? this.settings);
+        if (protectedPresets) {
+            // 把受保护的预设写回共享文件，避免下一轮同步继续传播旧快照。
+            void this.saveSettings({ captureDevice: false }).catch(error => {
+                if (this.settings.DEBUG) console.error('[BPM] Persisting protected presets failed', error);
+            });
+        }
     }
 
     /** 外部合并后，用磁盘快照决定下次保存是否真的需要写盘。 */
@@ -1363,7 +1374,7 @@ export default class Manager extends Plugin {
             await this.checkBetaSource(source);
         }
 
-        await this.saveSettings();
+        await this.saveSettings({ captureDevice: false });
         const count = sources.filter((source) => this.sourceHasUpdate(source)).length;
         if (count > 0) {
             new Notice(this.translator.t("通知_来源可更新数量", { count }), 5000);
@@ -1436,7 +1447,7 @@ export default class Manager extends Plugin {
                 if (this.settings.DEBUG) console.error("[BPM] beta source auto update failed", source.repo, e);
             }
         }
-        await this.saveSettings();
+        await this.saveSettings({ captureDevice: false });
     }
 
     public ensureBpmTagAndRecords(): boolean {

@@ -7,7 +7,8 @@ import type { RibbonGroup, RibbonItem } from '../data/types';
 import { applyPresetToSettings, capturePreset, cloneAppearance, clonePreset,
     allPresets, detectDeviceType, detectSystemPlatform, DEVICE_TYPES, DeviceManagement, DevicePluginFilters, DevicePluginState, DevicePreset, DeviceScope, DeviceType,
     findPreset, isDeviceType, normalizeDeviceManagement, parseScopeKey, scopeKey, ScopedAppearance,
-    ScopePage, snapshotPreset, normalizeRibbonGroups, ManagedDevice, PresetConfigParts, ALL_PRESET_CONFIG_PARTS } from './device-presets';
+    ScopePage, snapshotPreset, normalizeRibbonGroups, ManagedDevice, PresetConfigParts, ALL_PRESET_CONFIG_PARTS,
+    presetContentFingerprint } from './device-presets';
 
 /** 磁盘上的设备记录在写回前要校验，避免坏数据进入设置 / Validate records read back from disk. */
 const isManagedDevice = (value: unknown): value is ManagedDevice => {
@@ -82,6 +83,15 @@ export class DeviceManager {
         if (!featureEnabled(settings, 'devices')) settings.DEVICE_MANAGEMENT.enabled = false;
         const stored = await this.loadIdentity();
         this.migrateDeviceRecord(typeof stored?.id === 'string' ? stored.id : '');
+        // 先读回自己的记录文件，避免每次启动都当成新设备重建并刷新时间戳。
+        const ownFromFile = await this.loadOwnDeviceFile();
+        if (ownFromFile) {
+            const existing = this.data.devices.find(device => device.id === this.id);
+            const fileStamp = ownFromFile.updatedAt ?? ownFromFile.lastSeen;
+            const existingStamp = existing ? existing.updatedAt ?? existing.lastSeen : -1;
+            if (!existing) this.data.devices.push(ownFromFile);
+            else if (fileStamp > existingStamp) Object.assign(existing, ownFromFile);
+        }
         const known = this.data.devices.find(device => device.id === this.id);
         const now = Date.now();
         if (known) {
@@ -116,7 +126,7 @@ export class DeviceManager {
             void this.mergeDeviceRecords()
                 .then(changed => { if (changed) this.manager.managerModal?.refreshDevicePanelIfOpen(); })
                 .catch(error => this.report(error));
-        }, 10_000);
+        }, 30_000);
         // Node 测试里不阻塞进程；浏览器没有 unref，保持原样。
         (timer as unknown as { unref?: () => void }).unref?.();
         this.syncTimer = timer as unknown as number;
@@ -156,6 +166,7 @@ export class DeviceManager {
         target.ribbonEnabled = copy.ribbonEnabled;
         target.appearance = copy.appearance;
         target.configured = true;
+        target.updatedAt = Date.now();
         new Notice(this.manager.translator.t('设备_自动复用', { type: this.label(type), source: source.name }));
     }
 
@@ -200,6 +211,7 @@ export class DeviceManager {
 
     /** 只覆盖用户勾选的部分，其余配置保持目标预设原样。 */
     private applyPresetConfigParts(target: DevicePreset, source: DevicePreset, parts: PresetConfigParts): void {
+        const before = presetContentFingerprint(target);
         const copy = clonePreset(source);
         if (parts.plugins) target.plugins = copy.plugins;
         if (parts.filters) target.filters = copy.filters;
@@ -210,9 +222,11 @@ export class DeviceManager {
         }
         if (parts.appearance) target.appearance = copy.appearance;
         target.configured = true;
+        this.touchPreset(target, before);
     }
 
     private replacePresetConfig(target: DevicePreset, source: DevicePreset): void {
+        const before = presetContentFingerprint(target);
         const copy = clonePreset(source);
         target.plugins = copy.plugins;
         target.filters = copy.filters;
@@ -221,6 +235,7 @@ export class DeviceManager {
         target.ribbonEnabled = copy.ribbonEnabled;
         target.appearance = copy.appearance;
         target.configured = true;
+        this.touchPreset(target, before);
     }
 
     label(type: DeviceType): string { return this.manager.translator.t(`设备_${type}`); }
@@ -341,7 +356,7 @@ export class DeviceManager {
             const source = (sourceId ? list.find(item => item.id === sourceId) : undefined) ?? bound ?? list[0];
             const base = source ? clonePreset(source) : snapshotPreset(this.manager.settings, { appearance: this.readLiveAppearance() });
             const id = `preset-${type}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-            list.push({ ...base, id, name: this.uniquePresetName(type, `${this.label(type)} ${list.length + 1}`), configured: true });
+            list.push({ ...base, id, name: this.uniquePresetName(type, `${this.label(type)} ${list.length + 1}`), configured: true, updatedAt: Date.now() });
             this.data.presets[type] = list;
             await this.manager.saveSettings({ captureDevice: false });
             return id;
@@ -354,7 +369,7 @@ export class DeviceManager {
             const list = this.presetsFor(found.type);
             const copyId = `preset-${found.type}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
             const name = this.uniquePresetName(found.type, `${found.preset.name} ${this.manager.translator.t('设备_副本后缀')}`);
-            list.push({ ...clonePreset(found.preset), id: copyId, name, configured: true });
+            list.push({ ...clonePreset(found.preset), id: copyId, name, configured: true, updatedAt: Date.now() });
             this.data.presets[found.type] = list;
             await this.manager.saveSettings({ captureDevice: false });
             return copyId;
@@ -371,6 +386,7 @@ export class DeviceManager {
         const found = this.presetById(id);
         if (!found || !name.trim()) throw new Error(this.manager.translator.t('设备_名称为空'));
         found.preset.name = name.trim();
+        found.preset.updatedAt = Date.now();
         await this.manager.saveSettings();
     }
     async deletePreset(id: string): Promise<void> {
@@ -537,10 +553,15 @@ export class DeviceManager {
      * live 仅在投影时传入：预设里没有记录的插件，只有用户在外域明确改过才写入，
      * 避免「仅保存」打开一次就把本机的插件状态带进另一台设备的预设。
      */
+    /** 只有内容真的变化才刷新预设 revision，避免打开 BPM 就制造“新文件”。 */
+    private touchPreset(preset: DevicePreset, before: string): void {
+        if (before !== presetContentFingerprint(preset)) preset.updatedAt = Date.now();
+    }
+
     private storeSnapshot(presetId: string, snapshot: LiveSnapshot, live?: LiveSnapshot): void {
         const found = this.presetById(presetId);
         if (!found) return;
-        const before = JSON.stringify([found.preset.plugins, found.preset.filters, found.preset.ribbon, found.preset.ribbonGroups, found.preset.ribbonEnabled]);
+        const before = presetContentFingerprint(found.preset);
         found.preset.ribbon = cloneRibbon(snapshot.ribbon);
         found.preset.ribbonGroups = normalizeRibbonGroups(snapshot.ribbonGroups);
         found.preset.ribbonEnabled = snapshot.ribbonEnabled;
@@ -554,21 +575,25 @@ export class DeviceManager {
         }
         found.preset.plugins = mergedPlugins;
         found.preset.filters = snapshot.filters;
-        if (!found.preset.configured && before !== JSON.stringify([found.preset.plugins, found.preset.filters, found.preset.ribbon, found.preset.ribbonGroups, found.preset.ribbonEnabled])) {
+        const changed = before !== presetContentFingerprint(found.preset);
+        if (!found.preset.configured && changed) {
             found.preset.configured = true;
         }
+        if (changed) found.preset.updatedAt = Date.now();
     }
 
     /** 捕获时只有值真的变了才标记“已配置”，避免空保存把新类型锁死。 */
     private captureInto(preset: DevicePreset, extras: { appearance?: ScopedAppearance }, markConfigured = true): void {
-        const before = JSON.stringify([preset.plugins, preset.filters, preset.ribbon, preset.ribbonGroups, preset.ribbonEnabled, preset.appearance]);
+        const before = presetContentFingerprint(preset);
         capturePreset(preset, this.manager.settings, extras);
         preset.plugins = this.manager.overview.persistentPlugins(preset.plugins, preset.id);
         preset.appearance = this.manager.overview.persistentAppearance(preset.appearance, preset.id);
         preset.filters = this.pluginFilters();
-        if (markConfigured && !preset.configured && before !== JSON.stringify([preset.plugins, preset.filters, preset.ribbon, preset.ribbonGroups, preset.ribbonEnabled, preset.appearance])) {
+        const changed = before !== presetContentFingerprint(preset);
+        if (markConfigured && !preset.configured && changed) {
             preset.configured = true;
         }
+        if (changed) preset.updatedAt = Date.now();
     }
 
     private pluginStates(): Record<string, DevicePluginState> {
@@ -632,8 +657,10 @@ export class DeviceManager {
             Object.assign(next.snippets, patch.snippets ?? {});
             const found = this.presetById(scope.presetId);
             if (found) {
+                const before = presetContentFingerprint(found.preset);
                 found.preset.appearance = cloneAppearance(next);
                 found.preset.configured = true;
+                this.touchPreset(found.preset, before);
             }
             await this.manager.saveSettings({ captureDevice: false });
         });
@@ -760,6 +787,7 @@ export class DeviceManager {
             }
         }
         target.configured = true;
+        target.updatedAt = Date.now();
         if (this.manager.settings.DEBUG) console.log('[BPM] Migrated legacy device overrides into preset', target.id);
     }
 
@@ -873,6 +901,7 @@ export class DeviceManager {
             const changed = before !== JSON.stringify([target.plugins, target.filters, target.ribbon, target.ribbonGroups, target.ribbonEnabled, target.appearance]);
             if (changed) {
                 target.configured = true;
+                target.updatedAt = Date.now();
                 new Notice(this.manager.translator.t('设备_关闭期间已合并'), 6000);
             }
         } catch (error) { this.report(error); }
@@ -968,6 +997,21 @@ export class DeviceManager {
 
     /* ---------- 设备记录文件 / Device record files ---------- */
 
+    /** 读回本机自己的记录文件，启动时不重建、不刷新 mtime。 */
+    private async loadOwnDeviceFile(): Promise<ManagedDevice | undefined> {
+        const path = this.deviceFilePath(this.id);
+        const adapter = this.manager.app?.vault?.adapter;
+        if (!path || !adapter) return undefined;
+        try {
+            if (!(await adapter.exists(path))) return undefined;
+            const parsed: unknown = JSON.parse(await adapter.read(path));
+            return isManagedDevice(parsed) && parsed.id === this.id ? parsed : undefined;
+        } catch (error) {
+            this.report(error);
+            return undefined;
+        }
+    }
+
     /** 设备记录归入用户数据目录；兼容读取旧版配置根目录。 */
     private deviceFilePath(id: string): string | undefined {
         const configDir = this.manager.app?.vault?.configDir;
@@ -987,6 +1031,8 @@ export class DeviceManager {
         if (!path || !adapter) return;
         const serialized = JSON.stringify(device, null, 2);
         try {
+            // 内容未变不写盘，避免仅打开 BPM 就刷新 mtime 并制造同步冲突。
+            if (await adapter.exists(path) && await adapter.read(path) === serialized) return;
             await pluginStorage(this.manager).write('data', `devices/${encodeURIComponent(device.id)}.json`, serialized);
         } catch (error) { this.report(error); }
     }

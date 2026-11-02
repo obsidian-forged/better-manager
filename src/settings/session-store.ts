@@ -38,10 +38,21 @@ function keyed(items: unknown[]): Map<string, unknown> | undefined {
     return result;
 }
 
+/** updatedAt 是对象级 revision；预设和设备记录必须整份保留较新的一份。 */
+const revision = (value: unknown): number | undefined =>
+    isRecord(value) && typeof value.updatedAt === 'number' && Number.isFinite(value.updatedAt)
+        ? value.updatedAt
+        : undefined;
+
 /** 仅本机改过的字段优先；按 ID 合并预设/插件，保留远端独立新增项；Three-way merge local edits. */
 function mergeValue(base: unknown, local: unknown, remote: unknown): unknown {
     if (equal(local, base)) return clone(remote);
     if (equal(remote, base) || equal(local, remote)) return clone(local);
+    const localRevision = revision(local);
+    const remoteRevision = revision(remote);
+    if (localRevision !== undefined && remoteRevision !== undefined && localRevision !== remoteRevision) {
+        return clone(localRevision > remoteRevision ? local : remote);
+    }
     if (isRecord(base) && isRecord(local) && isRecord(remote)) {
         const merged: SettingsRecord = {};
         for (const key of new Set([...Object.keys(base), ...Object.keys(remote), ...Object.keys(local)])) {

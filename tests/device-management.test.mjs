@@ -943,3 +943,92 @@ test('renaming this device rewrites its own record file', async () => {
     const own = JSON.parse(adapter.files[`${DEVICES_DIR}${manager.devices.id}.json`]);
     assert.equal(own.name, 'Renamed device');
 });
+
+test('a stale or default snapshot cannot replace a preset configured remotely', async () => {
+    const adapter = memoryAdapter();
+    const { manager } = await fixture({ adapter });
+    const path = '.obsidian/plugins/self/data.json';
+    adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
+    manager.saveData = async value => { adapter.files[path] = JSON.stringify(value); };
+    await manager.loadSettings();
+
+    const localPreset = manager.settings.DEVICE_MANAGEMENT.presets.computer[0];
+    localPreset.configured = true;
+    localPreset.plugins.a = { enabled: true, delay: '' };
+    localPreset.updatedAt = 200;
+
+    const remote = JSON.parse(adapter.files[path]);
+    const stale = remote.DEVICE_MANAGEMENT.presets.computer[0];
+    stale.configured = false;
+    stale.plugins = {};
+    stale.ribbon = [];
+    delete stale.updatedAt;
+    adapter.files[path] = JSON.stringify(remote);
+
+    const previousWindow = globalThis.window;
+    globalThis.window = { setTimeout, clearTimeout };
+    try {
+        await manager.refreshSettingsQuietly();
+        await manager.settingsSaveQueue;
+        const protectedPreset = manager.settings.DEVICE_MANAGEMENT.presets.computer[0];
+        assert.equal(protectedPreset.configured, true);
+        assert.equal(protectedPreset.plugins.a.enabled, true);
+        assert.equal(protectedPreset.updatedAt, 200);
+        const healed = JSON.parse(adapter.files[path]).DEVICE_MANAGEMENT.presets.computer[0];
+        assert.equal(healed.configured, true);
+        assert.equal(healed.plugins.a.enabled, true);
+    } finally { globalThis.window = previousWindow; }
+});
+
+test('preset protection accepts a genuinely newer remote revision', async () => {
+    const adapter = memoryAdapter();
+    const { manager } = await fixture({ adapter });
+    const path = '.obsidian/plugins/self/data.json';
+    adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
+    manager.saveData = async value => { adapter.files[path] = JSON.stringify(value); };
+    await manager.loadSettings();
+
+    const localPreset = manager.settings.DEVICE_MANAGEMENT.presets.computer[0];
+    localPreset.configured = true;
+    localPreset.plugins.a = { enabled: true, delay: '' };
+    localPreset.updatedAt = 200;
+
+    const remote = JSON.parse(adapter.files[path]);
+    const newer = remote.DEVICE_MANAGEMENT.presets.computer[0];
+    newer.configured = true;
+    newer.plugins = { b: { enabled: false, delay: '' } };
+    newer.updatedAt = 300;
+    adapter.files[path] = JSON.stringify(remote);
+
+    const previousWindow = globalThis.window;
+    globalThis.window = { setTimeout, clearTimeout };
+    try {
+        await manager.refreshSettingsQuietly();
+        await manager.settingsSaveQueue;
+        const mergedPreset = manager.settings.DEVICE_MANAGEMENT.presets.computer[0];
+        assert.equal(mergedPreset.updatedAt, 300);
+        assert.equal(mergedPreset.plugins.a, undefined);
+        assert.equal(mergedPreset.plugins.b.enabled, false);
+    } finally { globalThis.window = previousWindow; }
+});
+
+test('startup apply does not capture or rewrite presets', async () => {
+    const adapter = memoryAdapter();
+    const { manager, settings, calls } = await fixture({ adapter });
+    settings.DEVICE_MANAGEMENT.enabled = true;
+    const before = JSON.stringify(settings.DEVICE_MANAGEMENT.presets);
+    calls.length = 0;
+    await manager.devices.apply({ refreshViews: false, persist: false });
+    assert.equal(calls.some(call => call[0] === 'save'), false);
+    assert.equal(JSON.stringify(settings.DEVICE_MANAGEMENT.presets), before);
+});
+
+test('rewriting an unchanged device record is skipped', async () => {
+    const adapter = memoryAdapter();
+    const { manager } = await fixture({ adapter });
+    let writes = 0;
+    const write = adapter.write.bind(adapter);
+    adapter.write = async (path, data) => { writes++; return write(path, data); };
+    await manager.devices.persistOwnDevice();
+    assert.equal(writes, 0);
+});
