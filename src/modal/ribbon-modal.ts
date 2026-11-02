@@ -137,6 +137,12 @@ export class RibbonModal extends Modal {
         return Boolean(plugin && plugin.enabled === false);
     }
 
+    /** Disabled plugins form a separate state, regardless of their saved visibility. */
+    private getRibbonItemStatus(item: RibbonItem): RibbonStatusFilter {
+        if (this.isRibbonItemPluginDisabled(item)) return "disabled";
+        return item.visible ? "visible" : "hidden";
+    }
+
     private renderRibbonItemIcon(iconEl: HTMLElement, item: RibbonItem) {
         iconEl.empty();
         const icon = item.icon?.trim();
@@ -396,9 +402,10 @@ export class RibbonModal extends Modal {
         const memberIds = new Set(this.manager.settings.RIBBON_GROUPS.flatMap(group => group.members));
         const ungroupedItems = allItems.filter(item => !memberIds.has(item.bpmUniqueId));
         const scopedItems = this.showGroupedItems ? allItems : ungroupedItems;
-        const visibleCount = scopedItems.filter(item => item.visible).length;
-        const hiddenCount = scopedItems.filter(item => !item.visible).length;
-        const disabledCount = scopedItems.filter(item => this.isRibbonItemPluginDisabled(item)).length;
+        const statuses = scopedItems.map(item => this.getRibbonItemStatus(item));
+        const visibleCount = statuses.filter(status => status === "visible").length;
+        const hiddenCount = statuses.filter(status => status === "hidden").length;
+        const disabledCount = statuses.filter(status => status === "disabled").length;
         const filterBar = containerEl.createDiv("ribbon-manager-filter-bar");
 
         // 左侧：过滤按钮组
@@ -474,9 +481,7 @@ export class RibbonModal extends Modal {
         });
     }
 
-    renderFilteredList(containerEl: HTMLElement, listContainer: HTMLElement) {
-        this.closeItemGroupMenus();
-        listContainer.empty();
+    private getFilteredRibbonItems(): RibbonItem[] {
         const allItems = this.manager.settings.RIBBON_SETTINGS;
 
         // 根据过滤器筛选项目
@@ -488,11 +493,7 @@ export class RibbonModal extends Modal {
             else this.groupFilter = "";
         }
         if (this.statusFilters.size) {
-            items = items.filter(item =>
-                (this.statusFilters.has("visible") && item.visible)
-                || (this.statusFilters.has("hidden") && !item.visible)
-                || (this.statusFilters.has("disabled") && this.isRibbonItemPluginDisabled(item))
-            );
+            items = items.filter(item => this.statusFilters.has(this.getRibbonItemStatus(item)));
         }
 
         // 根据搜索词过滤
@@ -505,6 +506,13 @@ export class RibbonModal extends Modal {
             });
         }
 
+        return items;
+    }
+
+    renderFilteredList(containerEl: HTMLElement, listContainer: HTMLElement) {
+        this.closeItemGroupMenus();
+        listContainer.empty();
+        const items = this.getFilteredRibbonItems();
         if (items.length === 0) {
             listContainer.createEl("p", { text: this.manager.translator.t("Ribbon_无项目") });
             return;

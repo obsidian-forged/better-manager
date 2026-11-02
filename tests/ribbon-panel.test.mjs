@@ -116,6 +116,57 @@ test('standalone mobile Ribbon keeps its own single device selector', () => {
     assert.equal(scopes(), 1);
 });
 
+function statusFixture() {
+    const { panel } = fixture();
+    panel.manager.settings.Plugins = [{ id: 'enabled', enabled: true }, { id: 'disabled', enabled: false }];
+    panel.manager.settings.RIBBON_SETTINGS = [
+        { bpmUniqueId: 'enabled', name: 'Visible', visible: true },
+        { bpmUniqueId: 'enabled#2', name: 'Hidden', visible: false },
+        { bpmUniqueId: 'disabled', name: 'Disabled visible', visible: true },
+        { bpmUniqueId: 'disabled#2', name: 'Disabled hidden', visible: false },
+        { bpmUniqueId: 'core', name: 'Core', visible: true },
+        { bpmUniqueId: 'bpm-group:tools', name: 'Group', visible: false },
+    ];
+    return panel;
+}
+
+test('Ribbon status selections exclude disabled plugins from visible and hidden results', () => {
+    const panel = statusFixture();
+    const ids = filters => {
+        panel.statusFilters = new Set(filters);
+        return panel.getFilteredRibbonItems().map(item => item.bpmUniqueId);
+    };
+    assert.deepEqual(ids(['visible']), ['enabled', 'core']);
+    assert.deepEqual(ids(['hidden']), ['enabled#2', 'bpm-group:tools']);
+    assert.deepEqual(ids(['visible', 'hidden']), ['enabled', 'enabled#2', 'core', 'bpm-group:tools']);
+    assert.deepEqual(ids(['disabled']), ['disabled', 'disabled#2']);
+    assert.deepEqual(ids(['visible', 'disabled']), ['enabled', 'disabled', 'disabled#2', 'core']);
+    assert.equal(ids([]).length, 6);
+    // Filtering never rewrites the visibility restored when the plugin is enabled again.
+    panel.manager.settings.Plugins[1].enabled = true;
+    assert.deepEqual(ids(['visible']), ['enabled', 'disabled', 'core']);
+    assert.deepEqual(ids(['hidden']), ['enabled#2', 'disabled#2', 'bpm-group:tools']);
+});
+
+test('Ribbon status counts are disjoint and filtering retains group scope and search', () => {
+    const panel = statusFixture(), host = new Element();
+    panel.mountFilterBar(host);
+    assert.deepEqual(buttons(host).map(button => button.children.at(-1).text), [
+        '通用_全部_文本 6', 'Ribbon_显示 2', 'Ribbon_隐藏 2', 'Ribbon_插件被禁用 2',
+    ]);
+    panel.manager.settings.RIBBON_GROUPS = [{ id: 'tools', name: 'Tools', members: ['enabled#2', 'disabled#2'] }];
+    panel.groupFilter = 'tools';
+    panel.statusFilters = new Set(['hidden']);
+    assert.deepEqual(panel.getFilteredRibbonItems().map(item => item.bpmUniqueId), ['enabled#2']);
+    panel.statusFilters.add('disabled');
+    panel.searchQuery = 'disabled';
+    assert.deepEqual(panel.getFilteredRibbonItems().map(item => item.bpmUniqueId), ['disabled#2']);
+    panel.groupFilter = '';
+    assert.deepEqual(panel.getFilteredRibbonItems().map(item => item.bpmUniqueId), ['disabled']);
+    panel.showGroupedItems = true;
+    assert.deepEqual(panel.getFilteredRibbonItems().map(item => item.bpmUniqueId), ['disabled', 'disabled#2']);
+});
+
 test('global toolbar keeps settings, More and close, with native contact submenu and background tasks in More', async () => {
     const built = await build({ entryPoints: ['src/modal/manager-modal.ts'], bundle: true, platform: 'node', format: 'cjs', write: false,
         external: ['obsidian', 'electron'], loader: { '.webp': 'dataurl' }, logLevel: 'silent' });
