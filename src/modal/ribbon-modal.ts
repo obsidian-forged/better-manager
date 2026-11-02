@@ -77,7 +77,14 @@ export class RibbonModal extends Modal {
     mountFilterBar(containerEl: HTMLElement): void {
         this.externalFilterHost = containerEl;
         containerEl.empty();
-        this.buildFilterBar(containerEl, () => this.displayWithoutSearch());
+        this.buildFilterBar(containerEl, () => this.refreshSearchResults());
+    }
+
+    /** 搜索只更新结果，保留输入焦点、选区与输入法；Keep the input mounted while filtering results. */
+    private refreshSearchResults(): void {
+        const root = this.renderRootEl ?? this.contentEl;
+        const list = root.querySelector<HTMLElement>('.draggable-list-container');
+        if (list) this.renderFilteredList(root, list);
     }
 
     /** 列表与外置筛选栏共用一次刷新，避免高亮和数量停在旧状态；Refresh external controls with the list. */
@@ -365,14 +372,12 @@ export class RibbonModal extends Modal {
 
     renderDraggableList(containerEl: HTMLElement) {
         const t = (k: string) => this.manager.translator.t(k);
-        let listContainer: HTMLElement;
-        const refresh = () => this.renderFilteredList(containerEl, listContainer);
-        if (!this.externalFilterBar) this.buildFilterBar(containerEl, refresh);
+        if (!this.externalFilterBar) this.buildFilterBar(containerEl, () => this.refreshSearchResults());
 
         if (this.showGroupedItems) {
             containerEl.createDiv({ cls: "ribbon-manager-grouped-hint", text: t("Ribbon_显示已分组提示") });
         }
-        listContainer = containerEl.createDiv("draggable-list-container");
+        const listContainer = containerEl.createDiv("draggable-list-container");
         this.renderFilteredList(containerEl, listContainer);
     }
 

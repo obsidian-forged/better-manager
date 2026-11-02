@@ -314,14 +314,39 @@ class ManagerCommandService {
     private refreshDynamicCommands() {
         this.removeDynamicCommands();
         if (!featureEnabled(this.manager.settings, 'plugins')) return;
+        this.registerSelectedPluginToggleCommands();
         if (this.manager.settings.COMMAND_ITEM) this.registerPluginCommands();
         if (this.manager.settings.COMMAND_GROUP) this.registerGroupCommands();
         if (this.manager.settings.COMMAND_TAG) this.registerTagCommands();
         if (this.manager.settings.COMMAND_PROFILE) this.registerProfileCommands();
     }
 
+    private selectedTogglePluginIds(): Set<string> {
+        const ids = Array.isArray(this.manager.settings.COMMAND_TOGGLE_PLUGINS)
+            ? this.manager.settings.COMMAND_TOGGLE_PLUGINS : [];
+        return new Set(ids.filter((id): id is string => typeof id === 'string' && Boolean(id)));
+    }
+
+    private registerSelectedPluginToggleCommands() {
+        const selected = this.selectedTogglePluginIds();
+        if (!selected.size) return;
+        this.getPluginManifests().forEach((plugin) => {
+            if (!selected.has(plugin.id) || !this.isActionablePlugin(plugin.id)) return;
+            const name = plugin.name || plugin.id;
+            this.addDynamicCommand({
+                id: `toggle-${plugin.id}`,
+                name: this.isPluginEnabled(plugin.id)
+                    ? this.t('命令_插件开关_关闭', { name })
+                    : this.t('命令_插件开关_开启', { name }),
+                callback: () => { void this.togglePlugin(plugin.id); },
+            });
+        });
+    }
+
     private registerPluginCommands() {
+        const selected = this.selectedTogglePluginIds();
         this.getPluginManifests()
+            .filter((plugin) => !selected.has(plugin.id))
             .filter((plugin) => this.isActionablePlugin(plugin.id))
             .forEach((plugin) => {
                 const enabled = this.isPluginEnabled(plugin.id);

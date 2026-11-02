@@ -3285,6 +3285,10 @@ body.is-tablet .manager-container--mobile .bpm-mobile-filter-fields .manager-fil
     height: 16px;
 }
 
+.manager-scope-select__icon[hidden] {
+    display: none !important;
+}
+
 .manager-multiselect-filter__option-label {
     flex: 1 1 auto;
     min-width: 0;
@@ -3343,6 +3347,7 @@ body.is-tablet .manager-container--mobile .bpm-mobile-filter-fields .manager-fil
 
 .manager-repo-page__toolbar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
     gap: 10px;
@@ -3465,7 +3470,7 @@ body.is-tablet .manager-container--mobile .bpm-mobile-filter-fields .manager-fil
 }
 
 .manager-repo-page__toolbar .manager-repo-page__stats {
-    flex: 1 1 auto;
+    flex: 1 1 16em;
 }
 
 .manager-repo-page__switcher::-webkit-scrollbar {
@@ -8711,12 +8716,14 @@ body.is-tablet .manager-container--mobile .bpm-mobile-filter-fields .manager-fil
     --bpm-chip-padding: var(--bpm-ui-chip-padding);
 }
 
+/* 分组与条目共用页面滚动，避免列表独立滚动时分组悬停；Scroll groups and items together. */
 .ribbon-manager-modal .draggable-list-container {
     display: flex;
+    flex: 0 0 auto;
     flex-direction: column;
     gap: var(--bpm-item-gap);
     padding: 0;
-    overflow: auto;
+    overflow: visible;
     scrollbar-width: var(--scrollbar-native-width);
     scrollbar-color: var(--scrollbar-thumb-bg) var(--scrollbar-bg);
 }
@@ -15703,14 +15710,31 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
 }
 
 /* 隐藏插件弹窗：标题栏 + 带标签的过滤区 */
+.manager-hide-modal {
+    --bpm-hide-content-inset: var(--size-4-4);
+}
+
+.manager-hide-modal .modal-header.manager-container__header {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+}
+
 .manager-hide-modal .modal-title.hide-modal__title {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
     width: 100%;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--background-modifier-border);
+    min-width: 0;
+    max-width: none;
+    margin: 0;
+    padding: 12px var(--bpm-hide-content-inset);
+    border: 0;
     font-size: 16px;
     font-weight: 700;
 }
@@ -15725,23 +15749,27 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
 .hide-modal__chrome {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--background-modifier-border);
-    background: var(--background-secondary);
+    gap: var(--size-4-2);
+    min-width: 0;
+    padding: 12px var(--bpm-hide-content-inset);
+    border: 0;
+    background: transparent;
 }
 
 .hide-modal__filters {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px 16px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+    align-items: stretch;
+    gap: var(--size-4-2);
+    width: 100%;
+    min-width: 0;
 }
 
 .hide-modal__field {
-    display: flex;
+    display: grid;
+    grid-template-columns: 3em minmax(0, 1fr);
     align-items: center;
-    gap: 6px;
+    gap: var(--size-2-3);
     min-width: 0;
 }
 
@@ -15752,18 +15780,29 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
 }
 
 .hide-modal__control {
-    display: flex;
-    gap: 4px;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    gap: var(--size-2-2);
     align-items: center;
     min-width: 0;
+}
+
+.manager-hide-modal .hide-modal__control > select.dropdown:not(.is-measuring) {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    background-color: transparent;
+    box-shadow: none;
 }
 
 .hide-modal__search .search-input-container {
     width: 100%;
 }
 
-.manager-hide-modal .manager-item-container {
-    padding: 8px 14px;
+.manager-container.manager-hide-modal .modal-content.manager-item-container {
+    padding: 8px var(--bpm-hide-content-inset);
 }
 
 /* 隐藏插件标题：强调色图标 + 文本，与 BPM 品牌一致 */
@@ -15791,13 +15830,13 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
 }
 
 /* 桌面插件卡片：操作按钮移到右下角，标题区拿回整行宽度，避免自定义名/标题/版本被挤换行 */
-.manager-container:not(.manager-container--mobile) .manager-plugin-card {
+.manager-container .manager-plugin-card {
     flex-direction: column;
     align-items: stretch;
     gap: 8px;
 }
 
-.manager-container:not(.manager-container--mobile) .manager-plugin-card > .setting-item-info {
+.manager-container .manager-plugin-card > .setting-item-info {
     width: 100%;
     min-width: 0;
 }
@@ -15808,8 +15847,9 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
 }
 
 /* 插件卡片底部行：日期与标签在左，操作按钮在右 */
-.manager-container:not(.manager-container--mobile) .manager-plugin-card__footer {
+.manager-container .manager-plugin-card__footer {
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-end;
     justify-content: space-between;
     gap: 12px;
@@ -15818,6 +15858,8 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
 }
 
 .manager-plugin-card__footer-meta {
+    flex: 1 1 12em;
+    max-width: 100%;
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -15830,7 +15872,13 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
     flex-wrap: wrap;
 }
 
-.manager-plugin-card__footer .setting-item-control {
+.manager-container .manager-plugin-card__footer > .manager-plugin-card__actions.setting-item-control {
+    min-width: 0;
+    max-width: 100%;
+    flex-wrap: wrap;
+    margin-inline-start: auto;
+    padding-inline-start: 0;
+    border-inline-start: 0;
     flex: 0 0 auto;
     margin: 0;
     align-self: flex-end;
@@ -16074,7 +16122,7 @@ body.is-phone .manager-container.manager-container--main.manager-container--mobi
     display: contents;
 }
 body.is-phone .manager-container.manager-container--main.manager-container--mobile .manager-overview-heading .setting-item-info,
-body.is-phone .manager-container.manager-container--main.manager-container--mobile .manager-overview-heading .bpm-scroll-strip__track {
+body.is-phone .manager-container.manager-container--main.manager-container--mobile .manager-overview-heading:not([data-page="ribbon"]) .bpm-scroll-strip__track {
     display: none;
 }
 
@@ -16308,6 +16356,9 @@ button.manager-setting-search__result:hover { background: var(--background-modif
 .manager-setting-search__target { outline: 1px solid var(--interactive-accent); outline-offset: var(--size-4-1); }
 
 /* 提高优先级，压过各顶栏的原生滚动条规则；Override native scrollbar rules for all managed strips. */
+body .bpm-scroll-strip.bpm-scroll-strip.is-strip-scrollable {
+    touch-action: pan-y pinch-zoom;
+}
 body .bpm-scroll-strip.bpm-scroll-strip {
     position: relative !important;
     scrollbar-width: none !important;
@@ -16746,4 +16797,531 @@ body .bpm-scroll-strip.bpm-scroll-strip::-webkit-scrollbar {
         margin-inline-start: 0;
         justify-content: space-between;
     }
+}
+
+/* 快速应用配置：标题图标、紧凑的配置部分开关 */
+.quick-apply-parts-modal .quick-apply-parts__title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.quick-apply-parts__title-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    color: var(--text-accent);
+}
+
+.quick-apply-parts__title-icon svg {
+    width: 18px;
+    height: 18px;
+}
+
+.quick-apply-parts__summary {
+    margin: 0 0 4px;
+    font-weight: 600;
+}
+
+.quick-apply-parts__effect {
+    margin: 0 0 8px;
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
+}
+
+.quick-apply-parts-modal .mod-warning {
+    margin: 0 0 8px;
+}
+
+.quick-apply-parts-modal .setting-item {
+    min-height: 32px;
+    margin: 0;
+    padding: 2px 0;
+    border: 0;
+}
+
+.quick-apply-parts-modal .setting-item-heading {
+    margin: 8px 0 2px;
+    padding: 0;
+    border: 0;
+}
+
+.quick-apply-parts-modal .modal-button-container {
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+/* 快速应用弹窗：紧凑行高、行内图标、收窄宽度 */
+.modal.quick-apply-parts-modal {
+    width: min(520px, calc(100vw - 32px)) !important;
+    max-width: min(520px, calc(100vw - 32px)) !important;
+}
+
+.quick-apply-parts-modal .setting-item {
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 2px 0 !important;
+    border: 0 !important;
+}
+
+.quick-apply-parts-modal .setting-item::before {
+    display: none !important;
+}
+
+.quick-apply-parts-modal .setting-item-heading {
+    margin: 8px 0 2px !important;
+    padding: 0 !important;
+    border: 0 !important;
+}
+
+.quick-apply-parts__row-name {
+    display: flex !important;
+    align-items: center;
+    gap: 7px;
+}
+
+.quick-apply-parts__row-icon {
+    display: inline-flex;
+    flex: 0 0 16px;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    color: var(--text-muted);
+}
+
+.quick-apply-parts__row-icon svg {
+    width: 16px;
+    height: 16px;
+}
+
+/* 批量选择框移到卡片右上角 */
+.manager-container .manager-plugin-card > .manager-plugin-card__bulk-select {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    order: initial;
+    flex: none;
+    margin: 0;
+    z-index: 3;
+}
+
+.manager-container--bulk-editing .manager-plugin-card__header {
+    padding-inline-end: 38px;
+}
+
+/* 插件卡片：已加入命令面板的按钮高亮 */
+.manager-container .manager-plugin-card__actions .manager-plugin-command-toggle.is-active {
+    border-color: color-mix(in srgb, var(--interactive-accent) 46%, var(--background-modifier-border)) !important;
+    background: color-mix(in srgb, var(--interactive-accent) 14%, var(--background-primary)) !important;
+    color: var(--text-accent) !important;
+}
+
+/* 卡片底部操作贴右下；恢复日期与操作同处底行的布局 */
+.manager-container:not(.manager-container--mobile) .manager-plugin-card__footer .manager-plugin-card__actions.setting-item-control {
+    align-self: flex-end !important;
+    margin-inline-start: auto;
+}
+
+/* 卡片描述/笔记切换 */
+.manager-plugin-card__view-bar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    margin-bottom: 4px;
+}
+
+.manager-plugin-card__view-toggle,
+.manager-plugin-card__view-default {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    height: 24px;
+    padding: 0 8px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s, 6px);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    line-height: 1;
+    box-shadow: none;
+    cursor: pointer;
+}
+
+.manager-plugin-card__view-toggle:hover,
+.manager-plugin-card__view-default:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.manager-plugin-card__view-default {
+    width: 24px;
+    padding: 0;
+}
+
+.manager-plugin-card__view-default.is-default {
+    border-color: color-mix(in srgb, var(--interactive-accent) 46%, var(--background-modifier-border));
+    background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+    color: var(--text-accent);
+}
+
+.manager-plugin-card__view-toggle-icon,
+.manager-plugin-card__view-default-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.manager-plugin-card__view-toggle-icon svg,
+.manager-plugin-card__view-default-icon svg {
+    width: 14px;
+    height: 14px;
+}
+
+.manager-plugin-card__content {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.manager-plugin-card__desc--hidden,
+.manager-plugin-card__note-view--hidden {
+    display: none !important;
+}
+
+.manager-plugin-card__note-view {
+    margin: 0;
+    max-width: 100%;
+    color: var(--text-muted);
+    font-size: var(--bpm-ui-body-size);
+    line-height: 1.4;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+/* 右侧操作按钮统一为左侧标准宽度，避免不同卡片被拉伸 */
+.manager-container:not(.manager-container--mobile) .manager-plugin-card__actions .clickable-icon,
+.manager-container:not(.manager-container--mobile) .manager-plugin-card__actions button {
+    flex: 0 0 34px !important;
+    width: 34px !important;
+    min-width: 34px !important;
+    height: 34px !important;
+    padding: 0;
+}
+
+.manager-container:not(.manager-container--mobile) .manager-plugin-card__actions .checkbox-container {
+    flex: 0 0 40px;
+    width: 40px;
+    min-width: 40px;
+}
+
+/* 去掉操作区左侧分隔线和多余占位 */
+.manager-container:not(.manager-container--mobile) .manager-plugin-card__actions.setting-item-control {
+    padding-left: 0 !important;
+    border-left: 0 !important;
+}
+
+/* 描述/笔记切换改为左侧双向刷新按钮 */
+.manager-plugin-card__view-bar {
+    justify-content: flex-start !important;
+    margin: 0 !important;
+    gap: 4px;
+}
+
+.manager-plugin-card__view-toggle {
+    flex: 0 0 26px !important;
+    width: 26px !important;
+    min-width: 26px !important;
+    padding: 0 !important;
+    gap: 0 !important;
+}
+
+/* 切换按钮与描述文本同一行，开头按钮紧接文本 */
+.manager-container .manager-plugin-card__content {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: flex-start;
+    gap: 6px;
+    min-width: 0;
+}
+
+.manager-container .manager-plugin-card__content > .manager-plugin-card__desc,
+.manager-container .manager-plugin-card__content > .manager-plugin-card__note-view {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.manager-plugin-card__view-bar {
+    flex: 0 0 auto;
+}
+
+/* 描述块上边距稍微收紧 */
+.manager-container .manager-plugin-card__body {
+    margin-block-start: 4px !important;
+}
+
+/* 切换按钮缩小到描述行高，按钮与文字同一行 */
+.manager-plugin-card__view-bar {
+    gap: 3px !important;
+}
+
+.manager-plugin-card__view-toggle,
+.manager-plugin-card__view-default {
+    flex: 0 0 16px !important;
+    width: 16px !important;
+    min-width: 16px !important;
+    height: 16px !important;
+    padding: 0 !important;
+    border-radius: 4px;
+}
+
+.manager-plugin-card__view-toggle-icon svg,
+.manager-plugin-card__view-default-icon svg {
+    width: 11px;
+    height: 11px;
+}
+
+.manager-container .manager-plugin-card__content {
+    gap: 4px;
+}
+
+/* 描述/笔记：按钮独占首行开头，第二行回到最左侧 */
+.manager-container .manager-plugin-card__content--inline-switch {
+    display: block !important;
+    overflow: clip !important;
+    max-height: calc(1.4em * 2) !important;
+}
+
+.manager-plugin-card__content--inline-switch .manager-plugin-card__view-bar {
+    float: left;
+    margin: 0 4px 0 0 !important;
+}
+
+.manager-plugin-card__content--inline-switch > .manager-plugin-card__desc:not(.manager-plugin-card__desc--hidden),
+.manager-plugin-card__content--inline-switch > .manager-plugin-card__note-view:not(.manager-plugin-card__note-view--hidden) {
+    display: inline !important;
+    flex: none !important;
+    width: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    -webkit-line-clamp: unset !important;
+}
+
+/* 插件列表底部留出滚动余量，并为经典滚动条预留宽度（Windows 列表最后几项被裁切） */
+.manager-container:not(.manager-container--mobile) .manager-modal-page.manager-item-container.manager-plugin-overview--list,
+.manager-container:not(.manager-container--mobile) .manager-modal-page.manager-item-container.manager-plugin-overview--two-column {
+    padding-bottom: 24px !important;
+    scroll-padding-bottom: 24px;
+    scrollbar-gutter: stable;
+    overflow-x: hidden;
+}
+
+/* 参考反馈者的 Windows 布局修复：为顶部弹窗留出底部安全距离 */
+body.mod-windows .manager-container.manager-container--main.manager-container__top {
+    margin-top: 10px !important;
+    margin-bottom: 150px !important;
+    max-height: calc(100vh - 160px) !important;
+}
+
+/* 个性化 BPM 的工具图标：独立于管理器容器的固定图标按钮尺寸 */
+.manager-personalize .manager-toolbar__tools .manager-tool {
+    display: inline-flex !important;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    width: 34px !important;
+    height: 34px !important;
+    min-width: 34px !important;
+    min-height: 34px !important;
+    padding: 0 !important;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s, 6px);
+    background: transparent;
+    color: var(--text-muted);
+    box-shadow: none;
+}
+
+.manager-personalize .manager-toolbar__tools .manager-tool svg {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+}
+
+.manager-personalize .manager-toolbar__tools .manager-tool:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.manager-personalize .manager-toolbar__tools .manager-tool.is-active {
+    border-color: color-mix(in srgb, var(--interactive-accent) 46%, var(--background-modifier-border));
+    background: color-mix(in srgb, var(--interactive-accent) 14%, var(--background-primary));
+    color: var(--text-accent);
+}
+
+body.is-tablet .manager-personalize .manager-toolbar__tools .manager-tool {
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
+}
+
+/* 空图标修复：平板 app.css 给 button 的左右内边距会挤压图标 */
+.manager-personalize .manager-personalize__tools .manager-personalize__tool {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 !important;
+}
+
+.manager-personalize .manager-personalize__tools .manager-personalize__tool svg {
+    width: 18px !important;
+    height: 18px !important;
+    flex: 0 0 18px;
+}
+
+/* Mobile install fields keep controls inside the panel, independently of desktop viewport width. */
+.manager-container--mobile .manager-repo-page__toolbar {
+    flex-direction: column;
+    align-items: stretch;
+}
+.manager-container--mobile .manager-repo-page__toolbar .manager-repo-page__switcher {
+    align-self: flex-start;
+    max-width: 100%;
+}
+.manager-container--mobile .manager-repo-page__toolbar .manager-repo-page__stats {
+    flex: 0 1 auto;
+    width: 100%;
+    justify-content: flex-start;
+}
+.manager-container--mobile .manager-install__setting.setting-item {
+    flex-direction: column;
+    align-items: stretch;
+    min-width: 0;
+    max-width: 100%;
+    gap: var(--size-4-2);
+}
+.manager-container--mobile .manager-install__setting > .setting-item-info {
+    min-width: 0;
+    width: 100%;
+    margin-inline-end: 0;
+}
+.manager-container--mobile .manager-install__setting .setting-item-description {
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+.manager-container--mobile .manager-install__setting > .setting-item-control {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-self: stretch;
+    justify-content: flex-start;
+    min-width: 0;
+    max-width: 100%;
+}
+.manager-container--mobile .manager-install__repo-control > input {
+    flex: 1 1 100%;
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
+}
+.manager-container--mobile .manager-install__version-control > input,
+.manager-container--mobile .manager-install__version-control > select {
+    flex: 1 1 10em;
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
+}
+
+/* 根据完整工具栏宽度切换，测量过程不卸载控件；Measure full controls without replacing DOM. */
+.manager-container .manager-page-tools .manager-tool.manager-tool--mobile-more,
+.bpm-responsive-toolbar .manager-overview-stats-menu,
+.bpm-responsive-toolbar .manager-repo-page__navigation-menu,
+.bpm-responsive-toolbar .manager-repo-page__summary-menu {
+    display: none;
+}
+.manager-container.manager-container--main .bpm-responsive-toolbar:is(.is-measuring, .is-compact) {
+    flex-direction: row;
+    align-items: center;
+}
+.bpm-responsive-toolbar.is-measuring > :is(.manager-food, .manager-page-tools, .manager-repo-page__switcher, .manager-repo-page__stats) {
+    display: flex !important;
+    flex: 0 0 auto !important;
+    flex-wrap: nowrap !important;
+    width: max-content !important;
+    max-width: none !important;
+    margin-inline: 0 !important;
+}
+.bpm-responsive-toolbar.is-measuring .manager-page-tools :is(.manager-bar__action, .setting-item-control) {
+    display: flex !important;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    width: max-content;
+    max-width: none;
+}
+.bpm-responsive-toolbar.is-compact:not(.is-measuring) :is(.manager-overview-stats-menu, .manager-repo-page__navigation-menu, .manager-repo-page__summary-menu, .manager-tool--mobile-more) {
+    display: inline-flex;
+}
+.bpm-responsive-toolbar.is-compact:not(.is-measuring) :is(.bpm-stat-chip, .manager-tool--mobile-overflow, .manager-repo-page__switcher, .manager-repo-page__stats) {
+    display: none;
+}
+.bpm-responsive-toolbar.is-compact:not(.is-measuring) .manager-repo-page__switcher {
+    display: none !important;
+}
+.manager-container .manager-repo-page__toolbar.bpm-responsive-toolbar.is-compact {
+    flex-wrap: nowrap;
+    justify-content: space-between;
+}
+.manager-container .manager-repo-page__toolbar.bpm-responsive-toolbar:not(.is-compact) {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+}
+.manager-container .manager-repo-page__toolbar.bpm-responsive-toolbar:not(.is-compact) > :is(.manager-repo-page__switcher, .manager-repo-page__stats) {
+    flex: 0 0 auto;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    width: max-content;
+    margin-inline: 0;
+}
+.manager-container .manager-repo-page__toolbar.bpm-responsive-toolbar:not(.is-compact) > .manager-repo-page__stats {
+    margin-inline-start: auto;
+}
+.bpm-responsive-toolbar .manager-repo-page__navigation-menu {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 70%;
+    margin-inline-end: auto;
+}
+.bpm-responsive-toolbar .manager-repo-page__summary-menu {
+    flex: 0 0 auto;
+    margin-inline-start: auto;
+}
+.manager-scope-select__stat {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+    padding: var(--size-4-2);
+    color: var(--text-normal);
+}
+body .manager-container.manager-container--main .manager-overview-heading.bpm-responsive-toolbar.is-compact {
+    justify-content: flex-start;
+    gap: var(--size-2-2);
+}
+.manager-container.manager-container--main .manager-overview-heading.bpm-responsive-toolbar.is-compact:not(.is-measuring) :is(.manager-food, .manager-page-tools, .manager-bar__action, .setting-item-control) {
+    display: contents;
+}
+.bpm-responsive-toolbar.is-compact .manager-overview-stats-menu {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: calc(100% - 4 * (var(--bpm-touch-size) + var(--size-2-2)));
+}
+.manager-overview-stats-menu.manager-scope-select--compact > .manager-multiselect-filter > button.manager-multiselect-filter__trigger {
+    gap: var(--size-2-2);
+    padding-inline: var(--size-2-2);
 }

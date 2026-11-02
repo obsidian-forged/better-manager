@@ -791,6 +791,24 @@ test('quick apply copies the current editor filters into a target device preset'
     assert.deepEqual(target.filters.delay, ['later']);
 });
 
+test('quick apply can replace only the selected configuration sections', async () => {
+    const { manager, settings } = await fixture();
+    const target = firstOf(settings, 'phone');
+    target.plugins.a.enabled = true;
+    target.filters.search = 'phone';
+    target.ribbon[0].visible = false;
+    settings.Plugins.find(plugin => plugin.id === 'a').enabled = false;
+    settings.FILTER_SEARCH = 'desktop';
+    settings.RIBBON_SETTINGS[0].visible = true;
+
+    await manager.devices.quickApply(target.id, 'ribbon', 'window',
+        { plugins: false, filters: false, ribbon: true, appearance: false });
+
+    assert.equal(target.plugins.a.enabled, true);
+    assert.equal(target.filters.search, 'phone');
+    assert.equal(target.ribbon[0].visible, true);
+});
+
 test('device scope projection applies preset filters and restores the live filters', async () => {
     const { manager, settings } = await fixture();
     const tablet = firstOf(settings, 'tablet');

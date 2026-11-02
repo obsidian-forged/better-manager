@@ -30,9 +30,17 @@ class Element {
     hasClass(name) { return this.classes.has(name); }
     toggleClass(name, enabled) { if (enabled) this.classes.add(name); else this.classes.delete(name); }
     closest() { return null; }
-    querySelector() { return null; }
+    querySelector(selector) {
+        for (const child of this.children) {
+            if (selector.startsWith('.') ? child.classes.has(selector.slice(1)) : child.tag === selector) return child;
+            const nested = child.querySelector(selector);
+            if (nested) return nested;
+        }
+        return null;
+    }
     querySelectorAll() { return []; }
     setAttribute(name, value) { this.attributes[name] = value; }
+    getAttribute(name) { return this.attributes[name] ?? null; }
     setText(value) { this.text = value; }
     empty() { this.children = []; }
     addEventListener(name, callback) { this.listeners[name] = callback; }
@@ -53,7 +61,7 @@ class Text {
     constructor(parent) { this.inputEl = parent.createEl('input'); }
     setPlaceholder() { return this; }
     setValue() { return this; }
-    onChange(callback) { this.change = callback; return this; }
+    onChange(callback) { this.change = callback; this.inputEl.input = callback; return this; }
 }
 class Toggle extends Text { setTooltip() { return this; } }
 let lastMenu;
@@ -165,6 +173,71 @@ test('Ribbon status counts are disjoint and filtering retains group scope and se
     assert.deepEqual(panel.getFilteredRibbonItems().map(item => item.bpmUniqueId), ['disabled']);
     panel.showGroupedItems = true;
     assert.deepEqual(panel.getFilteredRibbonItems().map(item => item.bpmUniqueId), ['disabled', 'disabled#2']);
+});
+
+test('compact menu icons follow selection and summary menus keep their entry icon', async () => {
+    const built = await build({ entryPoints: ['src/ui/scope-select.ts'], bundle: true, platform: 'node', format: 'cjs', write: false, external: ['obsidian'] });
+    const loaded = { exports: {} };
+    new Function('require', 'module', 'exports', built.outputFiles[0].text)(() => obsidian, loaded, loaded.exports);
+    const { ScopeSelect } = loaded.exports;
+    const options = [{ value: 'all', label: 'Total 5', icon: 'layout-grid' }, { value: 'enabled', label: 'Enabled 4', icon: 'circle-check' }];
+    const select = ScopeSelect.compact(new Element(), 'Status', 'all', options, () => {}, 'list-filter');
+    const icon = select.trigger.querySelector('.manager-scope-select__icon');
+    assert.equal(icon.icon, 'layout-grid');
+    select.setValue('enabled');assert.equal(icon.icon, 'circle-check');assert.equal(icon.hidden, false);
+    assert.equal(select.field.querySelector('.manager-scope-select__option-icon').icon, 'layout-grid');
+    const custom = ScopeSelect.compact(new Element(), 'Status', '', options, () => {}, 'list-filter');
+    assert.equal(custom.trigger.querySelector('.manager-scope-select__icon').icon, 'list-filter');
+    const summary = ScopeSelect.summary(new Element(), 'Statistics', [{ value: '5', label: 'Sources', icon: 'radio-tower' }]);
+    assert.equal(summary.trigger.querySelector('.manager-scope-select__icon').icon, 'chart-column');
+    assert.equal(summary.field.querySelector('.manager-scope-select__stat').querySelector('.manager-multiselect-filter__check').icon, 'radio-tower');
+});
+
+test('Ribbon search keeps the same input mounted for consecutive edits in embedded and standalone panels', () => {
+    for (const embedded of [true, false]) {
+        const { panel } = fixture(), host = new Element(), page = new Element(), queries = [];
+        panel.renderFilteredList = (_root, list) => { list.empty(); queries.push(panel.searchQuery); };
+        if (embedded) { panel.setExternalFilterBar(true); panel.mountFilterBar(host); }
+        panel.display(page, !embedded);
+        const controls = embedded ? host : page;
+        const input = controls.querySelector('.ribbon-search-input');
+        const list = page.querySelector('.draggable-list-container');
+        assert.ok(input); assert.ok(list);
+        for (const query of ['s', 'sy', 'sync', '同步', '', 'missing']) {
+            input.input(query);
+            assert.equal(controls.querySelector('.ribbon-search-input'), input);
+            assert.equal(page.querySelector('.draggable-list-container'), list);
+            assert.equal(queries.at(-1), query);
+        }
+        assert.equal(queries.length, 7);
+    }
+});
+
+test('mobile page changes synchronize identity and filters without rebuilding chrome on same-page refreshes', async () => {
+    const built = await build({ entryPoints: ['src/modal/manager-modal.ts'], bundle: true, platform: 'node', format: 'cjs', write: false,
+        external: ['obsidian', 'electron'], loader: { '.webp': 'dataurl' }, logLevel: 'silent' });
+    const loaded = { exports: {} };
+    new Function('require', 'module', 'exports', built.outputFiles[0].text)(name => name === 'obsidian' ? obsidian : name === 'electron' ? {} : nativeRequire(name), loaded, loaded.exports);
+    const modal = Object.create(loaded.exports.ManagerModal.prototype), header = { dataset: { page: 'plugins' } };
+    modal.modalChromeEl = { querySelector: () => header };
+    let chromeRenders = 0, renderedPage;
+    modal.showHeadMobile = () => { chromeRenders++; header.dataset.page = modal.activePage === 'sources' ? 'install' : modal.activePage; };
+    const wasMobile = obsidian.Platform.isMobile; obsidian.Platform.isMobile = true;
+    try {
+        modal.activePage = 'install'; modal.syncMobilePageChrome(); assert.equal(chromeRenders, 1);
+        modal.syncMobilePageChrome(); assert.equal(chromeRenders, 1);
+        modal.activePage = 'sources'; modal.syncMobilePageChrome(); assert.equal(chromeRenders, 1);
+        modal.activePage = 'plugins'; modal.syncMobilePageChrome(); assert.equal(chromeRenders, 2);
+        modal.manager = { devices: { noteActivePage() {} } };
+        modal.installToolbarMenus = [];
+        modal.modalPageEl = new Element(); modal.ensureAllowedActivePage = () => {};
+        modal.getAvailableDesktopPages = () => ['plugins', 'install']; modal.nextRenderGeneration = () => 1;
+        modal.clearPluginOverviewLayoutClass = () => {}; modal.showInstallPanel = () => { renderedPage = modal.activePage; };
+        modal.syncPageChrome = () => modal.syncMobilePageChrome();
+        modal.activePage = 'install'; modal.renderContent();
+        assert.equal(renderedPage, 'install'); assert.equal(header.dataset.page, 'install'); assert.equal(chromeRenders, 3);
+        modal.renderContent(); assert.equal(chromeRenders, 3);
+    } finally { obsidian.Platform.isMobile = wasMobile; }
 });
 
 test('global toolbar keeps settings, More and close, with native contact submenu and background tasks in More', async () => {

@@ -49,6 +49,18 @@ export interface ManagedDevice {
     updatedAt?: number;
 }
 
+/** 快速应用时可选择覆盖哪些配置部分 / Select which preset sections quick apply replaces. */
+export interface PresetConfigParts {
+    plugins: boolean;
+    filters: boolean;
+    ribbon: boolean;
+    appearance: boolean;
+}
+
+export const ALL_PRESET_CONFIG_PARTS: PresetConfigParts = {
+    plugins: true, filters: true, ribbon: true, appearance: true,
+};
+
 export interface DeviceManagement {
     enabled: boolean;
     defaultPresets: Record<DeviceType, string>;

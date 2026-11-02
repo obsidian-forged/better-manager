@@ -1,14 +1,70 @@
-import { Menu, Notice, setIcon } from 'obsidian';
+import { ButtonComponent, Menu, Modal, Notice, Setting, setIcon } from 'obsidian';
 import type Manager from '../main';
-import { confirmWithModal } from '../utils';
 import { ScopeSelect } from '../ui/scope-select';
 import { featureEnabled } from '../features';
-import { DEVICE_TYPES, DeviceScope, ScopePage, scopeKey, DeviceType } from './device-presets';
+import { DEVICE_TYPES, DeviceScope, ScopePage, scopeKey, DeviceType, PresetConfigParts } from './device-presets';
 
 /**
  * 三栏共用的预设选择器：按设备类型分组列出命名预设，复用管理器筛选栏的自定义下拉。
  * Shared preset selector grouped by device type, built from the manager's own dropdown.
  */
+/** 快速应用范围选择：默认全选，可只覆盖 Ribbon 等单个部分。 */
+class QuickApplyPartsModal extends Modal {
+    private parts: PresetConfigParts;
+    private settled = false;
+
+    constructor(app: Manager['app'], private readonly manager: Manager,
+        private readonly sourceLabel: string, private readonly targetLabel: string,
+        private readonly effect: string, private readonly configured: boolean,
+        initial: PresetConfigParts, private readonly resolve: (parts: PresetConfigParts | null) => void) {
+        super(app);
+        this.parts = { ...initial };
+    }
+
+    onOpen(): void {
+        const t = (key: string, vars?: Record<string, string | number>) => this.manager.translator.t(key, vars);
+        this.titleEl.empty();
+        this.titleEl.addClass('quick-apply-parts__title');
+        setIcon(this.titleEl.createSpan('quick-apply-parts__title-icon'), 'copy-check');
+        this.titleEl.createSpan({ text: t('设备_快速应用_保存配置') });
+        this.modalEl.addClass('quick-apply-parts-modal');
+        this.contentEl.empty();
+        this.contentEl.createEl('p', { cls: 'quick-apply-parts__summary', text: `${this.sourceLabel} → ${this.targetLabel}` });
+        this.contentEl.createEl('p', { cls: 'quick-apply-parts__effect', text: this.effect });
+        if (this.configured) this.contentEl.createEl('p', { cls: 'mod-warning', text: t('设备_快速应用_覆盖警告') });
+        new Setting(this.contentEl).setName(t('设备_快速应用_范围')).setDesc(t('设备_快速应用_范围说明')).setHeading();
+        const row = (key: keyof PresetConfigParts, label: string, icon: string) => {
+            const setting = new Setting(this.contentEl).setName(label).addToggle(toggle => toggle
+                .setValue(this.parts[key])
+                .onChange(value => { this.parts = { ...this.parts, [key]: value }; }));
+            setting.nameEl.addClass('quick-apply-parts__row-name');
+            const iconEl = setting.nameEl.createSpan('quick-apply-parts__row-icon');
+            setIcon(iconEl, icon);
+            setting.nameEl.prepend(iconEl);
+        };
+        row('plugins', t('设备_快速应用_范围_插件'), 'blocks');
+        row('filters', t('设备_快速应用_范围_筛选'), 'filter');
+        row('ribbon', t('设备_快速应用_范围_Ribbon'), 'grip-vertical');
+        row('appearance', t('设备_快速应用_范围_外观'), 'palette');
+        const footer = this.contentEl.createDiv('modal-button-container');
+        new ButtonComponent(footer).setButtonText(t('通用_取消_文本')).onClick(() => this.close());
+        new ButtonComponent(footer).setButtonText(t('通用_确认_文本')).setCta().onClick(() => {
+            if (!this.parts.plugins && !this.parts.filters && !this.parts.ribbon && !this.parts.appearance) {
+                new Notice(t('设备_快速应用_范围_未选'));
+                return;
+            }
+            this.settled = true;
+            this.resolve({ ...this.parts });
+            this.close();
+        });
+    }
+
+    onClose(): void {
+        if (!this.settled) this.resolve(null);
+        this.contentEl.empty();
+    }
+}
+
 export class DeviceScopeBar {
     private closeMenu: (() => void) | null = null;
 
@@ -70,30 +126,42 @@ export class DeviceScopeBar {
         typeMenu.showAtMouseEvent(event);
     }
 
+    /** 默认只勾选当前栏目正在编辑的部分。 */
+    private defaultParts(page: ScopePage): PresetConfigParts {
+        if (page === 'plugins') return { plugins: true, filters: true, ribbon: false, appearance: false };
+        if (page === 'themes') return { plugins: false, filters: false, ribbon: false, appearance: true };
+        return { plugins: false, filters: false, ribbon: true, appearance: false };
+    }
+
     private openQuickApplyPresetMenu(event: MouseEvent, page: ScopePage, type: DeviceType): void {
         const devices = this.manager.devices;
         const t = (key: string, vars?: Record<string, string | number>) => this.manager.translator.t(key, vars);
-        const apply = async (presetId: string, presetName: string, source: 'window' | 'scope') => {
-            // 已配置的预设可能正被其他设备使用，覆盖前明确确认。
-            if (devices.presetById(presetId)?.preset.configured) {
-                const confirmed = await confirmWithModal(this.manager.app, this.manager,
-                    t('设备_快速应用确认', { target: presetName }));
-                if (!confirmed) return;
-            }
-            await devices.quickApply(presetId, page, source);
-            new Notice(t('设备_快速应用完成', { target: presetName }));
+        const selectedScope = devices.selectedScope(page);
+        const targetLabel = (name: string) => t('设备_快速应用_目标预设', { name });
+        const apply = async (presetId: string, presetName: string) => {
+            const sourceLabel = `${t('设备_快速应用_当前窗口')}（${t('设备_快速应用_当前窗口说明')}）`;
+            const effect = devices.data.enabled && presetId === devices.boundPresetId
+                ? t('设备_快速应用_立即生效')
+                : t('设备_快速应用_稍后生效');
+            const configured = Boolean(devices.presetById(presetId)?.preset.configured);
+            const parts = await new Promise<PresetConfigParts | null>(resolve => {
+                const modal = new QuickApplyPartsModal(
+                    this.manager.app, this.manager, sourceLabel, targetLabel(presetName), effect, configured,
+                    this.defaultParts(page), resolve);
+                modal.open();
+            });
+            if (!parts) return;
+            await devices.quickApply(presetId, page, 'window', parts);
+            new Notice(t('设备_快速应用完成', { target: targetLabel(presetName) }));
         };
         const presetMenu = new Menu();
         for (const preset of devices.presetsFor(type)) {
-            presetMenu.addItem(item => item.setTitle(preset.name).setIcon('settings-2').onClick(() => {
-                const sourceMenu = new Menu();
-                sourceMenu.addItem(source => source.setTitle(t('设备_快速应用_当前窗口')).setIcon('panels-top-left').onClick(() => {
-                    void apply(preset.id, preset.name, 'window').catch(error => devices.report(error));
-                }));
-                sourceMenu.addItem(source => source.setTitle(t('设备_快速应用_当前作用域')).setIcon('copy').onClick(() => {
-                    void apply(preset.id, preset.name, 'scope').catch(error => devices.report(error));
-                }));
-                sourceMenu.showAtMouseEvent(event);
+            if (preset.id === selectedScope.presetId) {
+                presetMenu.addItem(item => item.setTitle(`${targetLabel(preset.name)} · ${t('设备_快速应用_目标相同')}`).setIcon('settings-2').setDisabled(true));
+                continue;
+            }
+            presetMenu.addItem(item => item.setTitle(targetLabel(preset.name)).setIcon('settings-2').onClick(() => {
+                void apply(preset.id, preset.name).catch(error => devices.report(error));
             }));
         }
         presetMenu.showAtMouseEvent(event);

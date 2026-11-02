@@ -6,6 +6,7 @@ import { DevicePanel } from '../devices/device-panel';
 import { CatalogModal } from '../catalog/catalog-modal';
 import { createBpmFilterField, createBpmFilterSelectField } from '../ui/filter-field';
 import { ScopeSelect } from '../ui/scope-select';
+import { ResponsiveToolbar } from '../ui/responsive-toolbar';
 import { DeviceScopeBar } from '../devices/device-scope-bar';
 import type { DevicePluginFilters, ScopePage } from '../devices/device-presets';
 import {
@@ -320,6 +321,10 @@ class AppearanceProfileModal extends Modal {
 //          侧边栏 对话框 翻译
 // ==============================
 export class ManagerModal extends Modal {
+    /** 桌面端统一收进“更多”菜单的次要操作。 */
+    private static readonly DESKTOP_MORE_ACTION_IDS = new Set<MainPageActionId>([
+        'checkUpdate', 'hide', 'openRepo', 'openDir', 'clearConfig', 'delete', 'hotkeys', 'note', 'copyId',
+    ]);
     private scrollbars?: FloatingScrollbars;
     manager: Manager;
     settings: ManagerSettings;
@@ -395,6 +400,10 @@ export class ManagerModal extends Modal {
     private mobileContentObserver?: ResizeObserver;
     private mobileHeaderObserver?: ResizeObserver;
     private overviewSortSelect?: ScopeSelect;
+    private overviewStatsSelect?: ScopeSelect;
+    private overviewToolbarLayout?: ResponsiveToolbar;
+    private installToolbarLayout?: ResponsiveToolbar;
+    private installToolbarMenus: ScopeSelect[] = [];
     private nativeMobileCloseEl?: HTMLElement;
     private readonly renderBatchSize = 80;
     private readonly desktopPages: ManagerPage[] = SHARED_VAULTS_ENABLED
@@ -1641,8 +1650,8 @@ export class ManagerModal extends Modal {
 
         if (titleRow) {
             this.renderPluginReleaseBadge(titleRow, manifest.version);
-            this.renderRecentInstallBadge(titleRow, this.readRecentInstallTimestamp(pluginId));
         }
+        if (statusChip?.parentElement) this.renderRecentInstallBadge(statusChip.parentElement, this.readRecentInstallTimestamp(pluginId));
 
         const tagsEl = card.querySelector<HTMLElement>(".manager-plugin-card__tags");
         let visibleTagCount = 0;
@@ -1665,9 +1674,17 @@ export class ManagerModal extends Modal {
             }
         }
         const hasDescription = managerPlugin.desc.trim().length > 0;
+        const hasNote = Boolean(managerPlugin.note?.trim().length);
+        const noteView = card.querySelector<HTMLElement>(".manager-plugin-card__note-view");
+        if (hasNote !== Boolean(noteView)) {
+            // 笔记从无到有/从有到无会改变描述区的切换控件，直接重绘卡片列表。
+            void this.reloadShowData();
+            return;
+        }
+        if (noteView && hasNote) noteView.setText(managerPlugin.note || "");
         const hasVisibleTags = this.editorMode || visibleTagCount > 0;
         const hasDateMeta = Boolean(card.querySelector(".manager-plugin-card__date-meta"));
-        const hasExpandedDetails = this.editorMode || hasDescription || hasVisibleTags || hasDateMeta;
+        const hasExpandedDetails = this.editorMode || hasDescription || hasNote || hasVisibleTags || hasDateMeta;
         card.toggleClass("has-description", hasDescription);
         card.toggleClass("has-visible-tags", hasVisibleTags);
         card.toggleClass("has-date-meta", hasDateMeta);
@@ -1718,9 +1735,76 @@ export class ManagerModal extends Modal {
         return this.getMainPageActionPlacement(actionId) === "menu";
     }
 
+    /** 这些次要操作始终进“更多”菜单，不再单独占图标。 */
+    private actionInMore(actionId: MainPageActionId): boolean {
+        return ManagerModal.DESKTOP_MORE_ACTION_IDS.has(actionId) || this.isMainPageActionInMenu(actionId);
+    }
+
     private createConfiguredItemAction(controlEl: HTMLElement, actionId: MainPageActionId): ExtraButtonComponent | null {
+        // 桌面端把这组次要操作收进卡片右下角的“更多”菜单。
+        if (ManagerModal.DESKTOP_MORE_ACTION_IDS.has(actionId)) return null;
         if (!this.isMainPageActionOnItem(actionId)) return null;
         return new ExtraButtonComponent(controlEl);
+    }
+
+    /** 桌面端更多菜单：检查更新、隐藏、仓库、清空/删除、快捷键、笔记、复制 ID。 */
+    private renderDesktopPluginMore(controlEl: HTMLElement, plugin: PluginManifest,
+        ManagerPlugin: ManagerPlugin, pluginDir: string, isSelf: boolean): void {
+        const t = (key: string, vars?: Record<string, string | number | boolean | null | undefined>) => this.manager.translator.t(key, vars);
+        const more = new ExtraButtonComponent(controlEl);
+        more.setIcon("more-vertical");
+        more.setTooltip(t("管理器_更多操作_描述"));
+        more.extraSettingsEl.addClass("manager-plugin-more");
+        const moreEl = getExtraButtonElement(more);
+        moreEl?.addEventListener("click", (event: MouseEvent) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const menu = new Menu();
+            menu.addItem((item) => item
+                .setTitle(t("菜单_检查更新_标题"))
+                .setIcon("rss")
+                .setDisabled(isSelf)
+                .onClick(async () => { await this.runSinglePluginUpdateCheck(plugin.id); }));
+            menu.addItem((item) => item
+                .setTitle(t("菜单_隐藏插件_标题"))
+                .setIcon("eye-off")
+                .setDisabled(isSelf)
+                .onClick(() => { if (!isSelf) this.togglePluginHidden(plugin.id); }));
+            menu.addSeparator();
+            const knownRepo = this.manager.settings.REPO_MAP?.[plugin.id] || null;
+            menu.addItem((item) => item
+                .setTitle(t("管理器_打开仓库_标题"))
+                .setIcon("github")
+                .onClick(async () => { await this.openPluginRepo(plugin.id, knownRepo); }));
+            menu.addItem((item) => item
+                .setTitle(t("管理器_打开目录_描述"))
+                .setIcon("folder-open")
+                .onClick(() => { managerOpen(pluginDir, this.manager); }));
+            menu.addItem((item) => item
+                .setTitle(t("管理器_清空配置_描述"))
+                .setIcon("file-cog")
+                .setDisabled(isSelf)
+                .onClick(async () => { await this.clearPluginConfig(plugin, isSelf); }));
+            menu.addItem((item) => item
+                .setTitle(t("管理器_删除插件_描述"))
+                .setIcon("trash")
+                .setDisabled(isSelf)
+                .onClick(async () => { await this.uninstallPluginWithConfirm(plugin, isSelf); }));
+            menu.addSeparator();
+            menu.addItem((item) => item
+                .setTitle(t("菜单_快捷键_标题"))
+                .setIcon("circle-plus")
+                .onClick(async () => { await this.openPluginHotkeys(plugin.id); }));
+            menu.addItem((item) => item
+                .setTitle(t("菜单_笔记_标题"))
+                .setIcon("notebook-pen")
+                .onClick(() => { new NoteModal(this.app, this.manager, ManagerPlugin, this).open(); }));
+            menu.addItem((item) => item
+                .setTitle(t("菜单_复制ID_标题"))
+                .setIcon("copy")
+                .onClick(() => { this.copyPluginId(plugin.id); }));
+            menu.showAtMouseEvent(event);
+        });
     }
 
     private resolvePluginRepoAction(pluginId: string, repo: string | null): PluginRepoActionState {
@@ -2731,6 +2815,7 @@ export class ManagerModal extends Modal {
         bulkEditButton.onClick(() => {
             this.setBulkEditMode(!this.bulkEditMode);
         });
+        const mobileOverflowActions: Array<{ button: ButtonComponent; label: string; icon: string }> = [];
 
         // [操作行] 检查更新
         const updateButton = new ButtonComponent(actionBar.controlEl);
@@ -2888,6 +2973,7 @@ export class ManagerModal extends Modal {
                 await this.appPlugins.disablePlugin(this.manager.manifest.id);
                 await this.appPlugins.enablePlugin(this.manager.manifest.id);
             });
+            mobileOverflowActions.push({ button: testButton, label: t('开发_刷新插件_提示'), icon: 'refresh-ccw' });
         }
 
         // [测试行] 测试插件
@@ -2899,7 +2985,32 @@ export class ManagerModal extends Modal {
             testButton.onClick(async () => {
                 // 获取当前页面所有的插件ID 然后将其转换为列表
             });
+            mobileOverflowActions.push({ button: testButton, label: t('开发_测试插件_提示'), icon: 'test-tube' });
         }
+
+        [bulkEditButton, editorButton, reloadButton].forEach(button => button.buttonEl.addClass('manager-tool--mobile-primary'));
+        mobileOverflowActions.push(
+            { button: updateButton, label: t('管理器_检查更新_描述'), icon: 'rss' },
+            { button: hiddenResetButton, label: t('管理器_布局_按名称重置'), icon: 'rotate-ccw' },
+            { button: hiddenPluginsButton, label: t('菜单_隐藏插件_标题'), icon: 'eye-off' },
+            { button: catalogButton, label: t('目录_标题'), icon: 'compass' },
+            { button: marketButton, label: t('管理器_插件市场_描述'), icon: 'store' },
+            { button: addSeparatorButton, label: t('管理器_布局_添加分割线'), icon: 'separator-horizontal' });
+        mobileOverflowActions.forEach(action => action.button.buttonEl.addClass('manager-tool--mobile-overflow'));
+        const more = new ButtonComponent(actionBar.controlEl);
+        markTool(more, 'plugin', 100);
+        more.buttonEl.addClass('manager-tool--mobile-more');
+        more.setIcon('more-vertical').setTooltip(t('管理器_更多操作_描述'));
+        more.buttonEl.setAttribute('aria-label', t('管理器_更多操作_描述'));
+        more.onClick(event => {
+            const menu = new Menu();
+            for (const action of mobileOverflowActions) {
+                const button = action.button.buttonEl;
+                if (button.hasClass('manager-feature-disabled') || !isToolInPage(button.dataset.scope ?? '', this.activePage, this.editorMode)) continue;
+                menu.addItem(item => item.setTitle(action.label).setIcon(action.icon).setDisabled(button.disabled).onClick(() => button.click()));
+            }
+            menu.showAtMouseEvent(event);
+        });
 
         const toolFeatures: Array<[ButtonComponent, ToolId]> = [
             [updateButton, 'updates'], [bulkEditButton, 'bulkEdit'], [editorButton, 'layoutEditor'],
@@ -2931,6 +3042,15 @@ export class ManagerModal extends Modal {
         if (this.footEl) bar.appendChild(this.footEl);
         if (this.pageToolsEl) bar.appendChild(this.pageToolsEl);
         this.syncToolVisibility();
+        this.observeOverviewToolbar(bar);
+    }
+
+    private observeOverviewToolbar(row: HTMLElement): void {
+        this.overviewToolbarLayout?.destroy();
+        this.overviewToolbarLayout = undefined;
+        if (this.activePage !== 'plugins') return;
+        this.overviewToolbarLayout = new ResponsiveToolbar(row,
+            () => [this.footEl, this.pageToolsEl].filter((el): el is HTMLElement => Boolean(el)));
     }
 
     /** 当前栏目即切换入口；A labeled current-page trigger replaces the mixed mobile menu. */
@@ -2956,7 +3076,6 @@ export class ManagerModal extends Modal {
                     .onClick(() => {
                         if (item.page === currentPage) return;
                         this.setDesktopPage(item.page);
-                        this.showHeadMobile();
                     }));
             }
             button.setAttribute('aria-expanded', 'true');
@@ -3017,6 +3136,7 @@ export class ManagerModal extends Modal {
         chromeEl.empty();
 
         const header = chromeEl.createDiv("bpm-mobile-header");
+        header.dataset.page = this.activePage === 'sources' ? 'install' : this.activePage;
         const topRow = header.createDiv("bpm-mobile-header__top");
 
         const pageSwitch = topRow.createDiv('bpm-mobile-header__identity');
@@ -3037,8 +3157,8 @@ export class ManagerModal extends Modal {
         this.searchEl = new SearchComponent(searchWrap);
         if (this.settings.PERSISTENCE && typeof this.settings.FILTER_SEARCH === "string") {
             this.searchText = this.settings.FILTER_SEARCH;
-            this.searchEl.inputEl.value = this.searchText;
         }
+        this.searchEl.setValue(this.searchText);
         this.searchEl.onChange((value: string) => {
             this.handleSearchChange(value);
         });
@@ -3260,6 +3380,7 @@ export class ManagerModal extends Modal {
         if (this.footEl && this.footEl.parentElement !== row) row.appendChild(this.footEl);
         if (this.pageToolsEl && this.pageToolsEl.parentElement !== row) row.appendChild(this.pageToolsEl);
         this.syncToolVisibility();
+        this.observeOverviewToolbar(row);
     }
 
     public async showData(renderGeneration = this.renderGeneration) {
@@ -3415,7 +3536,7 @@ export class ManagerModal extends Modal {
                     if (hasContextMenuItems) menu.addSeparator();
                 };
                 // 第一组：插件信息类
-                if (this.isMainPageActionInMenu("checkUpdate")) {
+                if (this.actionInMore("checkUpdate")) {
                     menu.addItem((item) =>
                         item.setTitle(this.manager.translator.t("菜单_检查更新_标题"))
                             .setIcon("rss")
@@ -3437,7 +3558,7 @@ export class ManagerModal extends Modal {
                 }
                 // 第二组：插件管理类
                 const hasIgnoredEnableMenuItem = Boolean(currentIsBpmIgnored && this.isMainPageActionInMenu("enableIgnored"));
-                const hasManageMenuItems = (!this.settings.DELAY && (this.isMainPageActionInMenu("singleStart") || this.isMainPageActionInMenu("restart"))) || hasIgnoredEnableMenuItem || this.isMainPageActionInMenu("hide");
+                const hasManageMenuItems = (!this.settings.DELAY && (this.isMainPageActionInMenu("singleStart") || this.isMainPageActionInMenu("restart"))) || hasIgnoredEnableMenuItem || this.actionInMore("hide");
                 if (hasManageMenuItems) addContextSeparator();
                 // [菜单] 单次启动
                 if (!this.settings.DELAY && this.isMainPageActionInMenu("singleStart")) menu.addItem((item) =>
@@ -3466,7 +3587,7 @@ export class ManagerModal extends Modal {
                         })
                 );
                 // [菜单] 隐藏插件
-                if (this.isMainPageActionInMenu("hide")) menu.addItem((item) =>
+                if (this.actionInMore("hide")) menu.addItem((item) =>
                     item.setTitle(this.manager.translator.t("菜单_隐藏插件_标题"))
                         .setIcon("eye-off")
                         .setDisabled(isSelf)
@@ -3486,7 +3607,7 @@ export class ManagerModal extends Modal {
                 //         })
                 // );
 
-                const hasOpenMenuItems = this.isMainPageActionInMenu("openSettings") || this.isMainPageActionInMenu("openDir") || this.isMainPageActionInMenu("openRepo") || this.isMainPageActionInMenu("clearConfig") || this.isMainPageActionInMenu("delete");
+                const hasOpenMenuItems = this.isMainPageActionInMenu("openSettings") || this.actionInMore("openDir") || this.actionInMore("openRepo") || this.actionInMore("clearConfig") || this.actionInMore("delete");
                 if (hasOpenMenuItems) addContextSeparator();
                 if (this.isMainPageActionInMenu("openSettings")) {
                     menu.addItem((item) =>
@@ -3498,7 +3619,7 @@ export class ManagerModal extends Modal {
                             })
                     );
                 }
-                if (this.isMainPageActionInMenu("openDir")) {
+                if (this.actionInMore("openDir")) {
                     menu.addItem((item) =>
                         item.setTitle(this.manager.translator.t("管理器_打开目录_描述"))
                             .setIcon("folder-open")
@@ -3507,7 +3628,7 @@ export class ManagerModal extends Modal {
                             })
                     );
                 }
-                if (this.isMainPageActionInMenu("openRepo")) {
+                if (this.actionInMore("openRepo")) {
                     menu.addItem((item) =>
                         item.setTitle(this.manager.translator.t("管理器_打开仓库_标题"))
                             .setIcon("github")
@@ -3516,7 +3637,7 @@ export class ManagerModal extends Modal {
                             })
                     );
                 }
-                if (this.isMainPageActionInMenu("clearConfig")) {
+                if (this.actionInMore("clearConfig")) {
                     menu.addItem((item) =>
                         item.setTitle(this.manager.translator.t("管理器_清空配置_描述"))
                             .setIcon("file-cog")
@@ -3526,7 +3647,7 @@ export class ManagerModal extends Modal {
                             })
                     );
                 }
-                if (this.isMainPageActionInMenu("delete")) {
+                if (this.actionInMore("delete")) {
                     menu.addItem((item) =>
                         item.setTitle(this.manager.translator.t("管理器_删除插件_描述"))
                             .setIcon("trash")
@@ -3539,20 +3660,20 @@ export class ManagerModal extends Modal {
                 if (hasOpenMenuItems) hasContextMenuItems = true;
 
                 // 第三组：插件设置类
-                const hasConfigMenuItems = this.isMainPageActionInMenu("note") || this.isMainPageActionInMenu("hotkeys") || this.isMainPageActionInMenu("copyId");
+                const hasConfigMenuItems = this.actionInMore("note") || this.actionInMore("hotkeys") || this.actionInMore("copyId");
                 if (hasConfigMenuItems) addContextSeparator();
                 // [菜单] 插件笔记
-                if (this.isMainPageActionInMenu("note")) menu.addItem((item) =>
+                if (this.actionInMore("note")) menu.addItem((item) =>
                     item.setTitle(this.manager.translator.t("菜单_笔记_标题")).setIcon("notebook-pen").onClick(() => { new NoteModal(this.app, this.manager, ManagerPlugin, this).open(); })
                 );
                 // [菜单] 快捷键
-                if (this.isMainPageActionInMenu("hotkeys")) menu.addItem((item) =>
+                if (this.actionInMore("hotkeys")) menu.addItem((item) =>
                     item.setTitle(this.manager.translator.t("菜单_快捷键_标题")).setIcon("circle-plus").onClick(async () => {
                         await this.openPluginHotkeys(plugin.id);
                     })
                 );
                 // [菜单] 复制ID
-                if (this.isMainPageActionInMenu("copyId")) menu.addItem((item) =>
+                if (this.actionInMore("copyId")) menu.addItem((item) =>
                     item.setTitle(this.manager.translator.t("菜单_复制ID_标题"))
                         .setIcon("copy")
                         .onClick(() => {
@@ -3725,6 +3846,7 @@ export class ManagerModal extends Modal {
                 cls: `manager-plugin-card__state ${isSelf ? "is-self" : (isEnabled ? "is-enabled" : "is-disabled")}`,
             });
             metadataRow.appendChild(statusChip);
+            this.renderRecentInstallBadge(metadataRow, dateMetaById.get(plugin.id)?.installedAt);
 
             // [默认] 版本
             const versionWrap = createDiv({ cls: "manager-item__versions" });
@@ -3768,9 +3890,13 @@ export class ManagerModal extends Modal {
                 }
             }
             this.renderPluginReleaseBadge(titleRow, plugin.version);
-            this.renderRecentInstallBadge(titleRow, dateMetaById.get(plugin.id)?.installedAt);
-            // [默认] 描述
+            // [默认] 描述 / 笔记视图
             const hasDescription = ManagerPlugin.desc.trim().length > 0;
+            const noteText = ManagerPlugin.note?.trim() || "";
+            const hasNote = noteText.length > 0;
+            const storedView = this.settings.PLUGIN_CARD_VIEW?.[plugin.id];
+            let defaultView: "description" | "note" = hasNote && storedView !== "description" ? "note" : "description";
+            let cardView: "description" | "note" = defaultView;
             const desc = createDiv({ text: ManagerPlugin.desc, title: plugin.description, cls: ["manager-item__name-desc"], });
             desc.addClass("manager-plugin-card__desc");
 
@@ -3786,7 +3912,65 @@ export class ManagerModal extends Modal {
                     })();
                 });
             }
-            itemEl.descEl.appendChild(desc);
+
+            let viewBar: HTMLElement | null = null;
+            let viewToggle: HTMLButtonElement | null = null;
+            let viewToggleIcon: HTMLElement | null = null;
+            let viewDefault: HTMLButtonElement | null = null;
+            let viewDefaultIcon: HTMLElement | null = null;
+
+            const contentEl = itemEl.descEl.createDiv("manager-plugin-card__content");
+            if (!this.editorMode && hasNote) {
+                contentEl.addClass("manager-plugin-card__content--inline-switch");
+                viewBar = contentEl.createDiv("manager-plugin-card__view-bar");
+                viewToggle = viewBar.createEl("button", { cls: "manager-plugin-card__view-toggle", attr: { type: "button" } });
+                viewToggleIcon = viewToggle.createSpan("manager-plugin-card__view-toggle-icon");
+                viewDefault = viewBar.createEl("button", { cls: "manager-plugin-card__view-default", attr: { type: "button" } });
+                viewDefaultIcon = viewDefault.createSpan("manager-plugin-card__view-default-icon");
+            }
+            contentEl.appendChild(desc);
+            const noteView = !this.editorMode && hasNote
+                ? contentEl.createDiv({ cls: "manager-plugin-card__note-view", text: noteText })
+                : null;
+
+            const syncCardView = () => {
+                contentEl.toggleClass("is-note", cardView === "note");
+                contentEl.toggleClass("is-description", cardView === "description");
+                desc.toggleClass("manager-plugin-card__desc--hidden", cardView === "note");
+                noteView?.toggleClass("manager-plugin-card__note-view--hidden", cardView !== "note");
+                if (viewToggle && viewToggleIcon) {
+                    setIcon(viewToggleIcon, "refresh-cw");
+                    const tooltip = t(cardView === "note" ? "卡片视图_切换到描述" : "卡片视图_切换到笔记");
+                    viewToggle.setAttribute("aria-label", tooltip);
+                    viewToggle.title = tooltip;
+                }
+                if (viewDefault && viewDefaultIcon) {
+                    const isDefault = cardView === defaultView;
+                    setIcon(viewDefaultIcon, isDefault ? "circle-dot" : "circle");
+                    viewDefault.toggleClass("is-default", isDefault);
+                    viewDefault.setAttribute("aria-pressed", `${isDefault}`);
+                    viewDefault.setAttribute("aria-label", t("卡片视图_设为默认"));
+                    viewDefault.title = t("卡片视图_设为默认");
+                }
+            };
+
+            viewToggle?.addEventListener("click", (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                cardView = cardView === "note" ? "description" : "note";
+                syncCardView();
+            });
+            viewDefault?.addEventListener("click", (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                defaultView = cardView;
+                const next = { ...(this.settings.PLUGIN_CARD_VIEW || {}) };
+                next[plugin.id] = cardView;
+                this.settings.PLUGIN_CARD_VIEW = next;
+                syncCardView();
+                void this.manager.saveSettings().catch(error => this.manager.devices.report(error));
+            });
+            syncCardView();
 
             const dateMeta = dateMetaById.get(plugin.id);
             const dateMetaItems: Array<{ icon: string; label: string; value?: string }> = [
@@ -3833,7 +4017,7 @@ export class ManagerModal extends Modal {
             }
 
             const hasVisibleTags = this.editorMode || visibleTagCount > 0;
-            const hasExpandedDetails = this.editorMode || hasDescription || hasVisibleTags || hasDateMeta;
+            const hasExpandedDetails = this.editorMode || hasDescription || hasNote || hasVisibleTags || hasDateMeta;
             itemEl.settingEl.toggleClass("has-description", hasDescription);
             itemEl.settingEl.toggleClass("has-visible-tags", hasVisibleTags);
             itemEl.settingEl.toggleClass("has-date-meta", hasDateMeta);
@@ -3863,7 +4047,7 @@ export class ManagerModal extends Modal {
                     "openSettings",
                     "openDir",
                     "delete",
-                ].some((id) => this.isMainPageActionInMenu(id as MainPageActionId))) {
+                ].some((id) => this.actionInMore(id as MainPageActionId))) {
                     const moreButton = new ExtraButtonComponent(itemEl.controlEl);
                     moreButton.setIcon("more-vertical");
                     moreButton.setTooltip(this.manager.translator.t("管理器_更多操作_描述"));
@@ -3877,7 +4061,7 @@ export class ManagerModal extends Modal {
                         const menu = new Menu();
                         let hasPreviousGroup = false;
                         let hasCurrentGroup = false;
-                        if (this.isMainPageActionInMenu("checkUpdate")) {
+                        if (this.actionInMore("checkUpdate")) {
                             menu.addItem((item) => item
                                 .setTitle(this.manager.translator.t("菜单_检查更新_标题"))
                                 .setIcon("rss")
@@ -3932,7 +4116,7 @@ export class ManagerModal extends Modal {
                                 }));
                             hasCurrentGroup = true;
                         }
-                        if (this.isMainPageActionInMenu("hide")) {
+                        if (this.actionInMore("hide")) {
                             if (hasPreviousGroup && !hasCurrentGroup) menu.addSeparator();
                             menu.addItem((item) => item
                                 .setTitle(this.manager.translator.t("菜单_隐藏插件_标题"))
@@ -3958,7 +4142,7 @@ export class ManagerModal extends Modal {
                                 }));
                             hasCurrentGroup = true;
                         }
-                        if (this.isMainPageActionInMenu("openDir")) {
+                        if (this.actionInMore("openDir")) {
                             if (hasPreviousGroup && !hasCurrentGroup) menu.addSeparator();
                             menu.addItem((item) => item
                                 .setTitle(this.manager.translator.t("管理器_打开目录_描述"))
@@ -3968,7 +4152,7 @@ export class ManagerModal extends Modal {
                                 }));
                             hasCurrentGroup = true;
                         }
-                        if (this.isMainPageActionInMenu("openRepo")) {
+                        if (this.actionInMore("openRepo")) {
                             if (hasPreviousGroup && !hasCurrentGroup) menu.addSeparator();
                             menu.addItem((item) => item
                                 .setTitle(this.manager.translator.t("管理器_打开仓库_标题"))
@@ -3978,7 +4162,7 @@ export class ManagerModal extends Modal {
                                 }));
                             hasCurrentGroup = true;
                         }
-                        if (this.isMainPageActionInMenu("clearConfig")) {
+                        if (this.actionInMore("clearConfig")) {
                             if (hasPreviousGroup && !hasCurrentGroup) menu.addSeparator();
                             menu.addItem((item) => item
                                 .setTitle(this.manager.translator.t("管理器_清空配置_描述"))
@@ -3989,7 +4173,7 @@ export class ManagerModal extends Modal {
                                 }));
                             hasCurrentGroup = true;
                         }
-                        if (this.isMainPageActionInMenu("delete")) {
+                        if (this.actionInMore("delete")) {
                             if (hasPreviousGroup && !hasCurrentGroup) menu.addSeparator();
                             menu.addItem((item) => item
                                 .setTitle(this.manager.translator.t("管理器_删除插件_描述"))
@@ -4003,7 +4187,7 @@ export class ManagerModal extends Modal {
                         hasPreviousGroup = hasPreviousGroup || hasCurrentGroup;
                         hasCurrentGroup = false;
 
-                        if (this.isMainPageActionInMenu("note")) {
+                        if (this.actionInMore("note")) {
                             if (hasPreviousGroup && !hasCurrentGroup) menu.addSeparator();
                             menu.addItem((item) => item
                                 .setTitle(this.manager.translator.t("菜单_笔记_标题"))
@@ -4011,7 +4195,7 @@ export class ManagerModal extends Modal {
                                 .onClick(() => { new NoteModal(this.app, this.manager, ManagerPlugin, this).open(); }));
                             hasCurrentGroup = true;
                         }
-                        if (this.isMainPageActionInMenu("hotkeys")) {
+                        if (this.actionInMore("hotkeys")) {
                             if (hasPreviousGroup && !hasCurrentGroup) menu.addSeparator();
                             menu.addItem((item) => item
                                 .setTitle(this.manager.translator.t("菜单_快捷键_标题"))
@@ -4021,7 +4205,7 @@ export class ManagerModal extends Modal {
                                 }));
                             hasCurrentGroup = true;
                         }
-                        if (this.isMainPageActionInMenu("copyId")) {
+                        if (this.actionInMore("copyId")) {
                             if (hasPreviousGroup && !hasCurrentGroup) menu.addSeparator();
                             menu.addItem((item) => item
                                 .setTitle(this.manager.translator.t("菜单_复制ID_标题"))
@@ -4161,6 +4345,42 @@ export class ManagerModal extends Modal {
                     });
                 }
 
+                // [按钮] 加入/移出命令面板（按插件单独注册 toggle-<plugin>）
+                if (!isSelf && !ManagerPlugin.tags?.includes(BPM_IGNORE_TAG)) {
+                    const commandButton = new ExtraButtonComponent(itemEl.controlEl);
+                    commandButton.setIcon("command");
+                    const commandIds = () => Array.isArray(this.manager.settings.COMMAND_TOGGLE_PLUGINS)
+                        ? this.manager.settings.COMMAND_TOGGLE_PLUGINS : [];
+                    const syncCommandButton = () => {
+                        const active = commandIds().includes(plugin.id);
+                        commandButton.extraSettingsEl.addClass("manager-plugin-command-toggle");
+                        commandButton.extraSettingsEl.toggleClass("is-active", active);
+                        commandButton.extraSettingsEl.setAttribute("aria-pressed", `${active}`);
+                        commandButton.setTooltip(this.manager.translator.t(active ? "菜单_移出命令面板_标题" : "菜单_加入命令面板_标题"));
+                    };
+                    syncCommandButton();
+                    commandButton.onClick(async () => {
+                        if (this.blockForeignScopeAction(this.manager.translator.t("菜单_加入命令面板_标题"))) return;
+                        const active = commandIds().includes(plugin.id);
+                        const next = active
+                            ? commandIds().filter((id) => id !== plugin.id)
+                            : [...commandIds(), plugin.id];
+                        const previous = commandIds();
+                        this.manager.settings.COMMAND_TOGGLE_PLUGINS = next;
+                        try {
+                            await this.manager.saveSettings();
+                            Commands(this.app, this.manager);
+                            syncCommandButton();
+                            new Notice(this.manager.translator.t(active ? "命令_已移出面板" : "命令_已加入面板", {
+                                name: ManagerPlugin.name || plugin.name || plugin.id,
+                            }));
+                        } catch (error) {
+                            this.manager.settings.COMMAND_TOGGLE_PLUGINS = previous;
+                            this.manager.devices.report(error);
+                        }
+                    });
+                }
+
                 // [按钮] 清空配置
                 const clearConfigButton = this.createConfiguredItemAction(itemEl.controlEl, "clearConfig");
                 if (clearConfigButton) {
@@ -4182,6 +4402,9 @@ export class ManagerModal extends Modal {
                         await this.uninstallPluginWithConfirm(plugin, isSelf);
                     });
                 }
+
+                // [按钮] 桌面端次要操作统一收进更多菜单
+                if (!Platform.isMobile) this.renderDesktopPluginMore(itemEl.controlEl, plugin, ManagerPlugin, pluginDir, isSelf);
 
                 // [按钮] 切换状态
                 const toggleSwitch = new ToggleComponent(itemEl.controlEl);
@@ -4411,6 +4634,8 @@ export class ManagerModal extends Modal {
 
     private updateStats() {
         if (!this.footEl) return;
+        this.overviewStatsSelect?.close();
+        this.overviewStatsSelect = undefined;
         const { totalCount, enabledCount, disabledCount } = this.getCounts();
         const totalLabel = this.manager.translator.t("通用_总计_文本");
         const enabledLabel = this.manager.translator.t("通用_启用_文本");
@@ -4437,6 +4662,16 @@ export class ManagerModal extends Modal {
                 value: updateCount,
                 filter: "has-update",
             });
+        }
+        if (this.activePage === 'plugins') {
+            const selected = this.getStatusFilterOperator() === 'contains' && activeStatusFilters.length <= 1
+                ? activeStatusFilters[0] ?? 'all' : '';
+            this.overviewStatsSelect = ScopeSelect.compact(this.footEl, this.manager.translator.t('通用_状态_文本'), selected,
+                statItems.map(item => ({ value: item.filter, label: `${item.label} ${item.value}`, icon: item.icon })), value => {
+                    const item = statItems.find(item => item.filter === value);
+                    if (item) this.setStatusFilterFromStats(item.filter);
+                }, 'list-filter');
+            this.overviewStatsSelect.field.addClass('manager-overview-stats-menu');
         }
         statItems.forEach((item) => {
             const chip = this.footEl.createSpan({ cls: `bpm-stat-chip ${item.cls}` });
@@ -4476,6 +4711,14 @@ export class ManagerModal extends Modal {
         }
         const label = current?.label ?? this.manager.translator.t('通用_管理器_文本');
         if (title && title.textContent !== label) title.setText(label);
+    }
+
+    /** Rebuild mobile chrome only when its page changes, preserving active inputs on ordinary refreshes. */
+    private syncMobilePageChrome(): void {
+        if (!Platform.isMobile) return;
+        const header = this.modalChromeEl?.querySelector<HTMLElement>('.bpm-mobile-header');
+        const page = this.activePage === 'sources' ? 'install' : this.activePage;
+        if (header && header.dataset.page !== page) this.showHeadMobile();
     }
 
     private syncPageChrome() {
@@ -4538,6 +4781,7 @@ export class ManagerModal extends Modal {
                 this.searchBarEl.addClass("manager-display-none");
             }
         }
+        this.syncMobilePageChrome();
     }
 
     private setDesktopPage(page: ManagerPage) {
@@ -6308,20 +6552,33 @@ export class ManagerModal extends Modal {
         return repo;
     }
 
-    // 安装面板
-    private showInstallPanel() {
-        this.pageEl.empty();
-        const t = (k: string, vars?: Record<string, string | number | boolean | null | undefined>) => this.manager.translator.t(k, vars);
-        const repo = this.getNormalizedInstallRepo();
-        const repoIsValid = this.isValidInstallRepo(repo);
-        const typeLabel = this.installType === "plugin"
-            ? t("管理器_安装_类型_插件")
-            : t("管理器_安装_类型_主题");
-        const versionLabel = this.installVersion || t("管理器_安装_版本_默认最新");
-        const sources = this.getBetaSources();
-        const stats = this.getSourceStats(sources);
-        const workspace = this.pageEl.createDiv("manager-repo-page");
-        const toolbar = workspace.createDiv("manager-repo-page__toolbar");
+    private clearInstallToolbarMenus(): void {
+        this.installToolbarLayout?.destroy();
+        this.installToolbarLayout = undefined;
+        this.installToolbarMenus.forEach(menu => menu.close());
+        this.installToolbarMenus = [];
+    }
+
+    private renderInstallToolbar(toolbar: HTMLElement): void {
+        this.clearInstallToolbarMenus();
+        const t = (key: string) => this.manager.translator.t(key);
+        const stats = this.getSourceStats();
+        const rows = [
+            { label: t("来源_统计_来源"), value: stats.total, icon: "radio-tower" },
+            { label: t("来源_统计_插件"), value: stats.plugins, icon: "blocks" },
+            { label: t("来源_统计_主题"), value: stats.themes, icon: "palette" },
+            { label: t("来源_统计_自动"), value: stats.auto, icon: "refresh-cw" },
+            { label: t("来源_统计_可更新"), value: stats.updates, icon: "download" },
+        ];
+        const navigation = ScopeSelect.compact(toolbar, t('来源_工作区'), this.activePage,
+            [{ value: 'install', label: t('来源_安装仓库_按钮'), icon: 'download' },
+                { value: 'sources', label: `${t('来源_订阅_标题')} ${stats.total}`, icon: 'radio-tower' }],
+            value => this.setDesktopPage(value === 'sources' ? 'sources' : 'install'));
+        navigation.field.addClass('manager-repo-page__navigation-menu');
+        const summary = ScopeSelect.summary(toolbar, t('来源_统计_标题'),
+            rows.map(row => ({ value: `${row.value}`, label: row.label, icon: row.icon })));
+        summary.field.addClass('manager-repo-page__summary-menu');
+        this.installToolbarMenus.push(navigation, summary);
         const switcher = toolbar.createDiv("manager-repo-page__switcher");
         switcher.setAttribute("role", "tablist");
         switcher.setAttribute("data-slot", "tabs-list");
@@ -6350,13 +6607,7 @@ export class ManagerModal extends Modal {
         createWorkspaceButton("sources", "radio-tower", t("来源_订阅_标题"), stats.total);
 
         const toolbarStats = toolbar.createDiv("manager-repo-page__stats");
-        [
-            { label: t("来源_统计_来源"), value: stats.total, icon: "radio-tower" },
-            { label: t("来源_统计_插件"), value: stats.plugins, icon: "blocks" },
-            { label: t("来源_统计_主题"), value: stats.themes, icon: "palette" },
-            { label: t("来源_统计_自动"), value: stats.auto, icon: "refresh-cw" },
-            { label: t("来源_统计_可更新"), value: stats.updates, icon: "download" },
-        ].forEach((item) => {
+        rows.forEach((item) => {
             const chip = toolbarStats.createSpan({ cls: "manager-repo-page__stat" });
             chip.setAttribute("aria-label", `${item.label} ${item.value}`);
             const chipIcon = chip.createSpan({ cls: "manager-repo-page__stat-icon" });
@@ -6364,6 +6615,22 @@ export class ManagerModal extends Modal {
             chip.createSpan({ cls: "manager-repo-page__stat-label", text: item.label });
             chip.createSpan({ cls: "manager-repo-page__stat-value", text: `${item.value}` });
         });
+        this.installToolbarLayout = new ResponsiveToolbar(toolbar, () => [switcher, toolbarStats]);
+    }
+
+    // 安装面板
+    private showInstallPanel() {
+        this.pageEl.empty();
+        const t = (k: string, vars?: Record<string, string | number | boolean | null | undefined>) => this.manager.translator.t(k, vars);
+        const repo = this.getNormalizedInstallRepo();
+        const repoIsValid = this.isValidInstallRepo(repo);
+        const typeLabel = this.installType === "plugin"
+            ? t("管理器_安装_类型_插件")
+            : t("管理器_安装_类型_主题");
+        const versionLabel = this.installVersion || t("管理器_安装_版本_默认最新");
+        const workspace = this.pageEl.createDiv("manager-repo-page");
+        const toolbar = workspace.createDiv("manager-repo-page__toolbar");
+        this.renderInstallToolbar(toolbar);
 
         const body = workspace.createDiv("manager-repo-page__body");
         if (this.activePage === "sources") {
@@ -8149,8 +8416,12 @@ export class ManagerModal extends Modal {
     }
 
     private renderContent() {
+        this.overviewToolbarLayout?.destroy();
+        this.overviewToolbarLayout = undefined;
+        this.clearInstallToolbarMenus();
         this.ribbonPage?.closeGroupMenus();
         this.ensureAllowedActivePage();
+        this.syncPageChrome();
         if (this.getAvailableDesktopPages().length === 0) {
             this.pageEl.empty();
             this.pageEl.createEl('p', { cls: 'setting-item-description', text: this.manager.translator.t('功能开关_空') });
@@ -8190,9 +8461,13 @@ export class ManagerModal extends Modal {
         });
         el.addEventListener("touchend", clear);
         el.addEventListener("touchcancel", clear);
+        el.addEventListener("touchmove", clear, { passive: true });
     }
 
     public async reloadShowData() {
+        this.overviewToolbarLayout?.destroy();
+        this.overviewToolbarLayout = undefined;
+        this.clearInstallToolbarMenus();
         this.ensureAllowedActivePage();
         if (this.settings.DEBUG) console.log("[BPM] reloadShowData start, children before empty:", this.pageEl.children.length);
         this.clearScheduledSearchRender();
@@ -8292,6 +8567,11 @@ export class ManagerModal extends Modal {
     }
 
     public onClose() {
+        this.clearInstallToolbarMenus();
+        this.overviewToolbarLayout?.destroy();
+        this.overviewToolbarLayout = undefined;
+        this.overviewStatsSelect?.close();
+        this.overviewStatsSelect = undefined;
         this.scrollbars?.destroy();
         this.scrollbars = undefined;
         this.taskCenterView?.destroy();

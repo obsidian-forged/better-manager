@@ -1,6 +1,5 @@
 import {
     App,
-    ExtraButtonComponent,
     Modal,
     Setting,
     setIcon,
@@ -10,7 +9,6 @@ import { ManagerSettings } from "../settings/data";
 import Manager from "main";
 import { ManagerPlugin } from "src/data/types";
 import type { ManagerModal } from "./manager-modal";
-import { getExtraButtonElement } from "src/obsidian-internals";
 
 export class NoteModal extends Modal {
     settings: ManagerSettings;
@@ -35,17 +33,6 @@ export class NoteModal extends Modal {
 
     private t(key: string, vars?: Record<string, string | number | boolean | null | undefined>) {
         return this.manager.translator.t(key, vars);
-    }
-
-    private getExtraButtonEl(button: ExtraButtonComponent): HTMLElement | undefined {
-        return getExtraButtonElement(button);
-    }
-
-    private prepareIconButton(button: ExtraButtonComponent, label: string, className?: string) {
-        button.setTooltip(label);
-        const buttonEl = this.getExtraButtonEl(button);
-        buttonEl?.setAttribute("aria-label", label);
-        if (className) buttonEl?.addClass(className);
     }
 
     private getGroupName(): string {
@@ -132,7 +119,6 @@ export class NoteModal extends Modal {
         const modalEl = this.contentEl.parentElement;
         if (!modalEl) return;
         modalEl.addClass("manager-note__container");
-        modalEl.getElementsByClassName("modal-close-button")[0]?.remove();
         this.titleEl.empty();
         this.titleEl.parentElement?.addClass("manager-container__header");
         this.contentEl.addClass("manager-item-container");
@@ -151,10 +137,6 @@ export class NoteModal extends Modal {
         titleText.createDiv({ cls: "manager-note__plugin-name", text: this.managerPlugin.name || this.managerPlugin.id });
         titleBar.descEl.setText(this.t("笔记编辑_说明"));
 
-        const closeButton = new ExtraButtonComponent(titleBar.controlEl);
-        closeButton.setIcon("x");
-        this.prepareIconButton(closeButton, this.t("通用_关闭_文本"), "manager-note__close-button");
-        closeButton.onClick(() => this.close());
     }
 
     private async showData() {

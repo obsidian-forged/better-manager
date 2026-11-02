@@ -67,12 +67,13 @@ export class FloatingScrollbars {
         const thumb = track.createDiv('bpm-scroll-strip__thumb');
         let hideTimer: number | undefined;
         let drag: { pointerId: number; x: number; scroll: number; scale: number } | undefined;
-        let gesture: { x: number; y: number; scroll: number } | undefined;
+        let gesture: { pointerId: number; x: number; y: number; scroll: number; axis?: 'x' | 'y' } | undefined;
         let suppressClick = false;
         const update = () => {
             const range = viewport.scrollWidth - viewport.clientWidth;
             const scrollable = /^(auto|scroll)$/.test(this.view.getComputedStyle(viewport).overflowX) && range > 1;
             track.hidden = !scrollable;
+            viewport.toggleClass('is-strip-scrollable', scrollable);
             if (!scrollable) return;
             const width = Math.max(0, viewport.clientWidth - 4);
             const thumbWidth = Math.min(width, Math.max(18, width * viewport.clientWidth / viewport.scrollWidth));
@@ -107,17 +108,30 @@ export class FloatingScrollbars {
             viewport.scrollLeft = drag.scroll + (event.clientX - drag.x) * drag.scale;
         };
         const startGesture = (event: PointerEvent) => {
+            if (!event.isPrimary) { cancelGesture(); return; }
             suppressClick = false;
-            gesture = event.pointerType === 'mouse' ? undefined : { x: event.clientX, y: event.clientY, scroll: viewport.scrollLeft };
+            gesture = event.pointerType === 'mouse' || track.contains(event.target instanceof this.view.Node ? event.target : null)
+                ? undefined : { pointerId: event.pointerId, x: event.clientX, y: event.clientY, scroll: viewport.scrollLeft };
         };
         const moveGesture = (event: PointerEvent) => {
-            if (gesture && Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) > 8) suppressClick = true;
+            if (!gesture || gesture.pointerId !== event.pointerId) return;
+            const dx = event.clientX - gesture.x, dy = event.clientY - gesture.y;
+            if (Math.hypot(dx, dy) <= 8) return;
+            suppressClick = true;
+            gesture.axis ??= Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+            // Keep vertical page scrolling native; horizontal strips own only horizontal drags.
+            if (gesture.axis !== 'x' || viewport.scrollWidth <= viewport.clientWidth + 1 || !/^(auto|scroll)$/.test(this.view.getComputedStyle(viewport).overflowX)) return;
+            event.preventDefault();
+            if (!viewport.hasPointerCapture(event.pointerId)) viewport.setPointerCapture(event.pointerId);
+            viewport.scrollLeft = gesture.scroll - dx;
+            onScroll();
         };
         const endGesture = () => {
             if (gesture && Math.abs(viewport.scrollLeft - gesture.scroll) > 2) suppressClick = true;
+            if (gesture && viewport.hasPointerCapture(gesture.pointerId)) viewport.releasePointerCapture(gesture.pointerId);
             gesture = undefined;
         };
-        const cancelGesture = () => { if (gesture) suppressClick = true; gesture = undefined; };
+        const cancelGesture = () => { if (gesture) suppressClick = true; endGesture(); };
         const onClick = (event: MouseEvent) => {
             // 保留键盘激活，阻止滑动/拖动后的误触；Keep keyboard activation, suppress post-swipe clicks.
             if (track.contains(event.target instanceof this.view.Node ? event.target : null) || (suppressClick && event.detail !== 0)) {
@@ -125,10 +139,11 @@ export class FloatingScrollbars {
             }
         };
         viewport.addEventListener('scroll', onScroll, { passive: true });
-        viewport.addEventListener('pointerdown', startGesture, { passive: true });
-        viewport.addEventListener('pointermove', moveGesture, { passive: true });
-        viewport.addEventListener('pointerup', endGesture, { passive: true });
-        viewport.addEventListener('pointercancel', cancelGesture, { passive: true });
+        viewport.addEventListener('pointerdown', startGesture, { passive: true, capture: true });
+        viewport.addEventListener('pointermove', moveGesture, { passive: false, capture: true });
+        viewport.addEventListener('pointerup', endGesture, { passive: true, capture: true });
+        viewport.addEventListener('pointercancel', cancelGesture, { passive: true, capture: true });
+        viewport.addEventListener('lostpointercapture', endGesture);
         viewport.addEventListener('click', onClick, true);
         thumb.addEventListener('pointerdown', startDrag);
         thumb.addEventListener('pointermove', moveDrag);
@@ -137,19 +152,21 @@ export class FloatingScrollbars {
         thumb.addEventListener('lostpointercapture', endDrag);
         return { track, update, dispose: () => {
             endDrag();
+            endGesture();
             if (hideTimer !== undefined) this.view.clearTimeout(hideTimer);
             viewport.removeEventListener('scroll', onScroll);
-            viewport.removeEventListener('pointerdown', startGesture);
-            viewport.removeEventListener('pointermove', moveGesture);
-            viewport.removeEventListener('pointerup', endGesture);
-            viewport.removeEventListener('pointercancel', cancelGesture);
+            viewport.removeEventListener('pointerdown', startGesture, true);
+            viewport.removeEventListener('pointermove', moveGesture, true);
+            viewport.removeEventListener('pointerup', endGesture, true);
+            viewport.removeEventListener('pointercancel', cancelGesture, true);
+            viewport.removeEventListener('lostpointercapture', endGesture);
             viewport.removeEventListener('click', onClick, true);
             thumb.removeEventListener('pointerdown', startDrag);
             thumb.removeEventListener('pointermove', moveDrag);
             thumb.removeEventListener('pointerup', endDrag);
             thumb.removeEventListener('pointercancel', endDrag);
             thumb.removeEventListener('lostpointercapture', endDrag);
-            viewport.removeClass('bpm-scroll-strip', 'is-strip-scrolling');
+            viewport.removeClass('bpm-scroll-strip', 'is-strip-scrolling', 'is-strip-scrollable');
             track.remove();
         } };
     }

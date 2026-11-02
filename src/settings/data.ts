@@ -125,6 +125,10 @@ export interface ManagerSettings {
     SELF_CHECK_IGNORED?: boolean;
     /** 是否为每个插件注册启用/禁用命令。 */
     COMMAND_ITEM: boolean;
+    /** 单独加入命令面板的插件 ID，由插件卡片按钮维护。 */
+    COMMAND_TOGGLE_PLUGINS: string[];
+    /** 插件卡片描述区默认展示：description 或 note（按插件 ID）。 */
+    PLUGIN_CARD_VIEW: Record<string, 'description' | 'note'>;
     /** 是否为每个分组注册批量启用/禁用命令。 */
     COMMAND_GROUP: boolean;
     /** 是否为每个标签注册批量启用/禁用命令。 */
@@ -292,6 +296,8 @@ export const DEFAULT_SETTINGS: ManagerSettings = {
     AUTO_TAKEOVER: false,
     SELF_CHECK_IGNORED: false,
     COMMAND_ITEM: false,
+    COMMAND_TOGGLE_PLUGINS: [],
+    PLUGIN_CARD_VIEW: {},
     COMMAND_GROUP: false,
     COMMAND_TAG: false,
     COMMAND_PROFILE: false,
@@ -322,7 +328,7 @@ export const DEFAULT_SETTINGS: ManagerSettings = {
     FILTER_DELAY_OPERATOR: "contains",
 
     // 样式设置页
-    PLUGIN_OVERVIEW_LAYOUT: "list",
+    PLUGIN_OVERVIEW_LAYOUT: "two-column",
     PLUGIN_OVERVIEW_SORT: "layout",
     TOOLBAR_LABEL_MODE: "active",
     TOOLBAR_HOVER_LABELS: true,

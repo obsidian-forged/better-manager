@@ -7,7 +7,7 @@ import type { RibbonGroup, RibbonItem } from '../data/types';
 import { applyPresetToSettings, capturePreset, cloneAppearance, clonePreset,
     allPresets, detectDeviceType, detectSystemPlatform, DEVICE_TYPES, DeviceManagement, DevicePluginFilters, DevicePluginState, DevicePreset, DeviceScope, DeviceType,
     findPreset, isDeviceType, normalizeDeviceManagement, parseScopeKey, scopeKey, ScopedAppearance,
-    ScopePage, snapshotPreset, normalizeRibbonGroups, ManagedDevice } from './device-presets';
+    ScopePage, snapshotPreset, normalizeRibbonGroups, ManagedDevice, PresetConfigParts, ALL_PRESET_CONFIG_PARTS } from './device-presets';
 
 /** 磁盘上的设备记录在写回前要校验，避免坏数据进入设置 / Validate records read back from disk. */
 const isManagedDevice = (value: unknown): value is ManagedDevice => {
@@ -173,23 +173,43 @@ export class DeviceManager {
     }
 
     /** Apply the current editor or its selected preset to a target preset. */
-    async quickApply(targetId: string, page: ScopePage, source: 'window' | 'scope'): Promise<void> {
+    async quickApply(targetId: string, page: ScopePage, source: 'window' | 'scope',
+        parts: PresetConfigParts = ALL_PRESET_CONFIG_PARTS): Promise<void> {
+        if (!parts.plugins && !parts.filters && !parts.ribbon && !parts.appearance) return;
         const scope = this.selectedScope(page);
-        if (source === 'scope') {
-            await this.copyConfig(targetId, scope.presetId);
-            return;
-        }
         await this.run(async () => {
             const target = this.presetById(targetId);
             if (!target) throw new Error(this.manager.translator.t('设备_未找到'));
-            const current = snapshotPreset(this.manager.settings, { appearance: this.isLiveScope(scope)
-                ? this.readLiveAppearance() : this.scopeAppearance(page) }, { configured: true });
-            current.filters = this.pluginFilters();
-            if (this.projection) await this.closeProjection();
-            this.replacePresetConfig(target.preset, current);
+            let sourcePreset: DevicePreset | undefined;
+            if (source === 'scope') {
+                if (this.projection) await this.closeProjection();
+                sourcePreset = this.presetById(scope.presetId)?.preset;
+            } else {
+                const current = snapshotPreset(this.manager.settings, { appearance: this.isLiveScope(scope)
+                    ? this.readLiveAppearance() : this.scopeAppearance(page) }, { configured: true });
+                current.filters = this.pluginFilters();
+                sourcePreset = current;
+                if (this.projection) await this.closeProjection();
+            }
+            if (!sourcePreset) throw new Error(this.manager.translator.t('设备_未找到'));
+            this.applyPresetConfigParts(target.preset, sourcePreset, parts);
             if (this.data.enabled && targetId === this.boundPresetId) await this.applyCurrent();
             await this.manager.saveSettings({ captureDevice: false });
         });
+    }
+
+    /** 只覆盖用户勾选的部分，其余配置保持目标预设原样。 */
+    private applyPresetConfigParts(target: DevicePreset, source: DevicePreset, parts: PresetConfigParts): void {
+        const copy = clonePreset(source);
+        if (parts.plugins) target.plugins = copy.plugins;
+        if (parts.filters) target.filters = copy.filters;
+        if (parts.ribbon) {
+            target.ribbon = copy.ribbon;
+            target.ribbonGroups = copy.ribbonGroups;
+            target.ribbonEnabled = copy.ribbonEnabled;
+        }
+        if (parts.appearance) target.appearance = copy.appearance;
+        target.configured = true;
     }
 
     private replacePresetConfig(target: DevicePreset, source: DevicePreset): void {
