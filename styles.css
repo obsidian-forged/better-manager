@@ -17325,3 +17325,76 @@ body .manager-container.manager-container--main .manager-overview-heading.bpm-re
     gap: var(--size-2-2);
     padding-inline: var(--size-2-2);
 }
+
+/* 仅桌面端标记：移动设备加斜划线，紧跟版本号 */
+.manager-plugin-card__platform-badge {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    line-height: 0;
+}
+
+.manager-plugin-card__platform-badge-icon {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.manager-plugin-card__platform-badge-icon svg {
+    width: var(--icon-xs);
+    height: var(--icon-xs);
+}
+
+.manager-plugin-card__platform-badge-icon::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: calc(var(--icon-xs) + 2px);
+    height: 1.5px;
+    border-radius: 1px;
+    background: currentColor;
+    transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+/* Ribbon 过滤栏横向滚动，避免手机端分组/搜索被裁切 */
+.ribbon-manager-modal .ribbon-manager-filter-bar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+    touch-action: pan-x;
+    overscroll-behavior-x: contain;
+}
+
+.ribbon-manager-modal .ribbon-manager-filter-group {
+    flex: 0 0 auto;
+    overflow: visible !important;
+}
+
+@media (max-width: 760px) {
+    .ribbon-manager-modal .ribbon-manager-filter-bar {
+        flex-direction: row !important;
+        align-items: center;
+        width: 100%;
+    }
+
+    .ribbon-manager-modal .ribbon-manager-filter-group {
+        width: auto !important;
+        max-width: none !important;
+    }
+
+    .ribbon-manager-modal .ribbon-manager-filter-right {
+        flex: 0 0 auto;
+        width: auto !important;
+        margin-inline-start: 0;
+    }
+
+    .ribbon-manager-modal .ribbon-manager-search-container {
+        width: auto;
+        min-width: 160px;
+    }
+}

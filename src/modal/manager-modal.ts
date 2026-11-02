@@ -1650,6 +1650,7 @@ export class ManagerModal extends Modal {
 
         if (titleRow) {
             this.renderPluginReleaseBadge(titleRow, manifest.version);
+            this.renderDesktopOnlyBadge(titleRow, manifest, titleRow.querySelector<HTMLElement>(".manager-item__versions") ?? undefined);
         }
         if (statusChip?.parentElement) this.renderRecentInstallBadge(statusChip.parentElement, this.readRecentInstallTimestamp(pluginId));
 
@@ -2032,6 +2033,19 @@ export class ManagerModal extends Modal {
         } finally {
             progress.hide();
         }
+    }
+
+    /** 标记 manifest 声明仅桌面端的插件；Mark plugins whose manifest declares desktop-only support. */
+    private renderDesktopOnlyBadge(parent: HTMLElement, manifest: Pick<PluginManifest, "isDesktopOnly">, versionWrap?: HTMLElement): void {
+        parent.querySelector(".manager-plugin-card__platform-badge")?.remove();
+        if (manifest.isDesktopOnly !== true) return;
+        const label = this.manager.translator.t("管理器_仅桌面端");
+        const badge = createSpan({ cls: "manager-plugin-card__platform-badge" });
+        badge.setAttribute("role", "img");
+        badge.setAttribute("aria-label", label);
+        badge.setAttribute("title", this.manager.translator.t("管理器_仅桌面端_说明"));
+        setIcon(badge.createSpan({ cls: "manager-plugin-card__platform-badge-icon" }), "smartphone");
+        (versionWrap ?? parent).insertAdjacentElement("afterend", badge);
     }
 
     /** 仅标记已安装版本的发布通道；Show the installed version channel, independently of update preferences. */
@@ -3871,6 +3885,7 @@ export class ManagerModal extends Modal {
                 }
             }
             titleRow.appendChild(versionWrap);
+            this.renderDesktopOnlyBadge(titleRow, plugin, versionWrap);
 
             // [默认] 笔记图标
             if (ManagerPlugin.note?.length > 0) {

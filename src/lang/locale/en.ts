@@ -967,6 +967,8 @@ export default {
     管理器_插件操作_标签: '{name} actions',
     管理器_插件分享_描述: 'Share plugin',
     管理器_状态_管理器: 'Manager',
+    管理器_仅桌面端: 'Desktop only',
+    管理器_仅桌面端_说明: 'This plugin declares desktop-only support and cannot be enabled on mobile.',
     管理器_最近安装: 'Recently installed',
     管理器_最近安装_提示: 'Installed within the last {days} days',
     管理器_状态_启用中: 'Enabled',
