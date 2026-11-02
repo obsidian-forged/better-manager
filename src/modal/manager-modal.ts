@@ -1945,6 +1945,8 @@ export class ManagerModal extends Modal {
 
     private setPluginHidden(pluginId: string, hidden: boolean) {
         if (pluginId === this.manager.manifest.id) return;
+        // 隐藏状态属于本机管理器，不写入外域预设；Hide state is local to this device and never saved into a foreign preset.
+        if (this.blockForeignScopeAction(this.manager.translator.t("菜单_隐藏插件_标题"))) return;
         if (hidden) {
             if (!this.settings.HIDES.includes(pluginId)) this.settings.HIDES.push(pluginId);
         } else {
@@ -1965,8 +1967,7 @@ export class ManagerModal extends Modal {
     }
 
     private openSettingsTab(tabId: string) {
-        if (tabId !== this.manager.manifest.id && this.appPlugins.manifests[tabId]
-            && this.blockForeignScopeAction(this.manager.translator.t('管理器_插件设置_描述'))) return;
+        // 打开插件设置只读展示本机配置，不属于外域预设的写入操作。 / Opening settings is read-only and stays available in a foreign preset.
         void (async () => {
             await this.appSetting.open();
             await this.appSetting.openTabById(tabId);
@@ -4330,7 +4331,7 @@ export class ManagerModal extends Modal {
                     openPluginSetting.setIcon("settings");
                     openPluginSetting.setTooltip(this.manager.translator.t("管理器_打开设置_描述"));
                     openPluginSetting.onClick(() => {
-                        if (this.blockForeignScopeAction(this.manager.translator.t("管理器_打开设置_描述"))) return;
+                        // 仅打开设置界面，不修改外域预设。 / Opening the settings tab does not mutate a foreign preset.
                         openPluginSetting?.setDisabled(true);
                         void (async () => {
                             try {
