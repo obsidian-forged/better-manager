@@ -9,6 +9,7 @@ import {
 } from "obsidian";
 
 import Manager from "main";
+import type { ObsidianAppWithInternals } from "../obsidian-internals";
 import type { PluginUpdateCheckMode, ReleaseCompatibilityMode } from "../settings/data";
 
 export interface PluginUpdateCheckConfig {
@@ -72,6 +73,18 @@ class PluginUpdateCheckModal extends Modal {
         titleGroup.createDiv({ cls: "manager-update-check-config__desc", text: t("更新检测配置_说明") });
 
         const body = contentEl.createDiv("manager-update-check-config__body");
+
+        new Setting(body)
+            .setName(t("更新检测配置_数据源_标题"))
+            .setDesc(t("更新检测配置_数据源_描述"))
+            .addButton((button: ButtonComponent) => {
+                button.setButtonText(t("更新检测配置_配置数据源"));
+                button.onClick(() => {
+                    this.close();
+                    const setting = (this.app as ObsidianAppWithInternals).setting;
+                    void setting.open().then(() => setting.openTabById(this.manager.manifest.id));
+                });
+            });
 
         new Setting(body)
             .setName(t("更新检测配置_方式_标题"))

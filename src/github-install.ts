@@ -72,11 +72,14 @@ export interface ReleaseVersion {
 
 export interface FetchReleaseVersionOptions {
 	includeManifest?: boolean;
+	/** 先用 Atom/raw 兜底源，避免在 GitHub API 限额耗尽时才失败。 */
+	preferFallback?: boolean;
 }
 
 const API_BASE = "https://api.github.com";
 const RELEASES_PER_PAGE = 100;
 const RELEASE_VERSION_CACHE_TTL_MS = 5 * 60 * 1000;
+const RELEASE_FALLBACK_CACHE_TTL_MS = 60 * 1000;
 
 /**
  * release 列表缓存。
@@ -179,7 +182,7 @@ const buildReleaseCacheKeyWithOptions = (
 	token: string | undefined,
 	proxy: string | undefined,
 	options?: FetchReleaseVersionOptions
-): string => `${buildReleaseCacheKey(repo, token, proxy)}\nmanifest:${options?.includeManifest ? "1" : "0"}`;
+): string => `${buildReleaseCacheKey(repo, token, proxy)}\nmanifest:${options?.includeManifest ? "1" : "0"}\nfallback:${options?.preferFallback ? "1" : "0"}`;
 
 /**
  * 生成 raw 文件候选地址。
@@ -255,6 +258,25 @@ const fetchPluginFilesFromRawTag = async (
 		current.styles ?? fetchRawFromTag(manager, repo, tag, "styles.css", token).catch(() => null),
 	]);
 
+	return { manifestText, mainJs, styles };
+};
+
+/**
+ * 已知 tag 时直接拼接 release 下载地址，绕过 GitHub REST API。
+ * 这条通道不占用 API 额度，用于 403 限流时的安装兜底。
+ */
+const fetchPluginFilesFromReleaseDownload = async (
+	manager: Manager,
+	repo: string,
+	tag: string,
+	token: string | undefined
+): Promise<PluginFiles> => {
+	const base = `https://github.com/${repo}/releases/download/${encodeURIComponent(tag)}`;
+	const [manifestText, mainJs, styles] = await Promise.all([
+		fetchText(manager, `${base}/manifest.json`, token).catch(() => null),
+		fetchText(manager, `${base}/main.js`, token).catch(() => null),
+		fetchText(manager, `${base}/styles.css`, token).catch(() => null),
+	]);
 	return { manifestText, mainJs, styles };
 };
 
@@ -357,11 +379,139 @@ const enrichReleaseVersionWithManifest = async (
 	}
 };
 
+/** 解析 GitHub releases Atom；不占 REST API 额度，作为限流时的兜底。 */
+const parseAtomReleaseVersions = (xml: string, repo: string): ReleaseVersion[] => {
+	if (!xml.trim()) return [];
+	const doc = new DOMParser().parseFromString(xml, "application/xml");
+	if (doc.querySelector("parsererror")) return [];
+	const entries = Array.from(doc.querySelectorAll("entry"));
+	const versions: ReleaseVersion[] = [];
+	entries.forEach((entry, index) => {
+		const href = entry.querySelector('link[rel="alternate"]')?.getAttribute("href")?.trim() ?? "";
+		const marker = "/releases/tag/";
+		const rawTag = href.includes(marker) ? href.slice(href.indexOf(marker) + marker.length) : "";
+		let tag = rawTag;
+		if (rawTag) {
+			try {
+				tag = decodeURIComponent(rawTag);
+			} catch {
+				tag = rawTag;
+			}
+		}
+		if (!tag) {
+			const title = entry.querySelector("title")?.textContent?.trim() ?? "";
+			if (/^v?\d+(?:\.\d+)*(?:[-+].+)?$/.test(title)) tag = title;
+		}
+		if (!tag) return;
+		const updated = entry.querySelector("updated")?.textContent?.trim();
+		const content = entry.querySelector("content")?.textContent?.trim();
+		versions.push({
+			version: tag,
+			prerelease: isPrereleaseRelease(tag, false),
+			name: entry.querySelector("title")?.textContent?.trim() || undefined,
+			body: content || undefined,
+			publishedAt: updated || undefined,
+			url: href || `https://github.com/${repo}/releases/tag/${encodeURIComponent(tag)}`,
+			isGithubLatest: index === 0,
+		});
+	});
+	return versions;
+};
+
+/** 读取 Atom feed；失败时返回空列表，由调用方决定是否继续回退。 */
+export const fetchReleaseVersionsFromAtom = async (manager: Manager, repoInput: string): Promise<ReleaseVersion[]> => {
+	const repo = sanitizeRepo(repoInput);
+	if (!repo.includes("/")) return [];
+	try {
+		const res = await requestUrl({
+			url: resolveGithubUrl(manager, `https://github.com/${repo}/releases.atom`),
+			headers: { Accept: "application/atom+xml, application/xml;q=0.9", "User-Agent": "better-plugins-manager" },
+			throw: false,
+		});
+		if (res.status >= 400) return [];
+		return parseAtomReleaseVersions(res.text, repo);
+	} catch {
+		return [];
+	}
+};
+
+const fetchManifestVersionFromRaw = async (manager: Manager, repo: string, ref: string): Promise<ReleaseVersion | null> => {
+	try {
+		const res = await requestUrl({
+			url: resolveGithubUrl(manager, `https://raw.githubusercontent.com/${repo}/${ref}/manifest.json`),
+			headers: { Accept: "application/json", "User-Agent": "better-plugins-manager" },
+			throw: false,
+		});
+		if (res.status >= 400) return null;
+		const manifest = JSON.parse(res.text) as { version?: unknown; minAppVersion?: unknown };
+		const version = typeof manifest.version === "string" ? manifest.version.trim() : "";
+		if (!version) return null;
+		return {
+			version,
+			prerelease: isPrereleaseRelease(version, false),
+			publishedAt: undefined,
+			url: `https://github.com/${repo}/releases/tag/${encodeURIComponent(version)}`,
+			manifestVersion: version,
+			minAppVersion: typeof manifest.minAppVersion === "string" ? manifest.minAppVersion : undefined,
+			compatibilityChecked: true,
+			isGithubLatest: true,
+		};
+	} catch {
+		return null;
+	}
+};
+
+const fetchManifestVersionFromTag = async (manager: Manager, repo: string, tag: string): Promise<ReleaseVersion | null> => {
+	for (const candidate of buildRawTagCandidates(tag)) {
+		const version = await fetchManifestVersionFromRaw(manager, repo, candidate);
+		if (version) return version;
+	}
+	return null;
+};
+
+/** Atom → raw manifest 的兜底链；两条都是 GitHub 网页/raw 通道，不占 API 额度。 */
+export const fetchFallbackReleaseVersions = async (
+	manager: Manager,
+	repoInput: string,
+	includeManifest = false
+): Promise<ReleaseVersion[]> => {
+	const repo = sanitizeRepo(repoInput);
+	if (!repo.includes("/")) return [];
+	const atom = await fetchReleaseVersionsFromAtom(manager, repo);
+	if (atom.length) {
+		if (includeManifest) {
+			const latest = await fetchManifestVersionFromTag(manager, repo, atom[0].version);
+			if (latest) {
+				atom[0] = {
+					...atom[0],
+					manifestVersion: latest.manifestVersion,
+					minAppVersion: latest.minAppVersion,
+					compatibilityChecked: true,
+				};
+			}
+		}
+		return atom;
+	}
+	const candidates = ["HEAD", "main", "master"];
+	for (const ref of candidates) {
+		const latest = await fetchManifestVersionFromRaw(manager, repo, ref);
+		if (latest) return [latest];
+	}
+	return [];
+};
+
+const cacheReleaseVersions = (cacheKey: string, versions: ReleaseVersion[], ttl: number): void => {
+	releaseVersionCache.set(cacheKey, {
+		expiresAt: Date.now() + ttl,
+		versions: cloneReleaseVersions(versions),
+	});
+};
+
 /**
  * 拉取指定仓库的 release 版本列表。
  *
  * 返回值用于下拉选择和更新检查。短 TTL 缓存可以避免用户打开弹窗、点击刷新、
- * 批量检查更新时反复打同一个 GitHub API。
+ * 批量检查更新时反复打同一个 GitHub API。API 不可用时回退到 Atom/raw manifest。
  */
 export const fetchReleaseVersions = async (
 	manager: Manager,
@@ -378,37 +528,58 @@ export const fetchReleaseVersions = async (
 		return cloneReleaseVersions(cached.versions);
 	}
 
-	const latestRelease = await getRelease(manager, repo, undefined, token).catch(() => null);
-	const latestTag = latestRelease?.tag_name || undefined;
-	const releases: ReleaseResponse[] = [];
-	for (let page = 1; ; page++) {
-		const url = `${API_BASE}/repos/${repo}/releases?per_page=${RELEASES_PER_PAGE}&page=${page}`;
-		const pageReleases = await fetchJson<ReleaseResponse[]>(manager, url, token);
-		if (!Array.isArray(pageReleases) || pageReleases.length === 0) break;
-		releases.push(...pageReleases);
-		if (pageReleases.length < RELEASES_PER_PAGE) break;
+	if (options.preferFallback) {
+		const fallback = await fetchFallbackReleaseVersions(manager, repo, Boolean(options.includeManifest));
+		if (fallback.length) {
+			cacheReleaseVersions(cacheKey, fallback, RELEASE_FALLBACK_CACHE_TTL_MS);
+			return fallback;
+		}
 	}
 
-	let releaseEntries = releases
-		.filter((release) => !release.draft)
-		.map((release) => ({ release, version: releaseToVersion(release, latestTag) }))
-		.filter((entry) => entry.version.version);
+	try {
+		const latestRelease = await getRelease(manager, repo, undefined, token).catch(() => null);
+		const latestTag = latestRelease?.tag_name || undefined;
+		const releases: ReleaseResponse[] = [];
+		for (let page = 1; ; page++) {
+			const url = `${API_BASE}/repos/${repo}/releases?per_page=${RELEASES_PER_PAGE}&page=${page}`;
+			const pageReleases = await fetchJson<ReleaseResponse[]>(manager, url, token);
+			if (!Array.isArray(pageReleases) || pageReleases.length === 0) break;
+			releases.push(...pageReleases);
+			if (pageReleases.length < RELEASES_PER_PAGE) break;
+		}
 
-	if (options.includeManifest) {
-		releaseEntries = await Promise.all(releaseEntries.map(async (entry) => ({
-			release: entry.release,
-			version: await enrichReleaseVersionWithManifest(manager, repo, entry.release, entry.version, token),
-		})));
+		let releaseEntries = releases
+			.filter((release) => !release.draft)
+			.map((release) => ({ release, version: releaseToVersion(release, latestTag) }))
+			.filter((entry) => entry.version.version);
+
+		if (options.includeManifest) {
+			releaseEntries = await Promise.all(releaseEntries.map(async (entry) => ({
+				release: entry.release,
+				version: await enrichReleaseVersionWithManifest(manager, repo, entry.release, entry.version, token),
+			})));
+		}
+
+		const versions = releaseEntries.map((entry) => entry.version);
+		if (versions.length === 0) {
+			const fallback = await fetchFallbackReleaseVersions(manager, repo, Boolean(options.includeManifest));
+			if (fallback.length) {
+				cacheReleaseVersions(cacheKey, fallback, RELEASE_FALLBACK_CACHE_TTL_MS);
+				return fallback;
+			}
+		}
+
+		cacheReleaseVersions(cacheKey, versions, RELEASE_VERSION_CACHE_TTL_MS);
+		return versions;
+	} catch (error) {
+		const fallback = await fetchFallbackReleaseVersions(manager, repo, Boolean(options.includeManifest));
+		if (fallback.length) {
+			if (manager.settings.DEBUG) console.warn("[BPM] GitHub API unavailable, using Atom/raw fallback", { repo, error });
+			cacheReleaseVersions(cacheKey, fallback, RELEASE_FALLBACK_CACHE_TTL_MS);
+			return fallback;
+		}
+		throw error;
 	}
-
-	const versions = releaseEntries.map((entry) => entry.version);
-
-	releaseVersionCache.set(cacheKey, {
-		expiresAt: now + RELEASE_VERSION_CACHE_TTL_MS,
-		versions: cloneReleaseVersions(versions),
-	});
-
-	return versions;
 };
 
 /**
@@ -432,13 +603,26 @@ export const installPluginFromGithub = async (
 		const repo = sanitizeRepo(repoInput);
 		task = manager.tasks.start({ title: manager.translator.t("任务_获取发布", { name: repo }), progress: 0.04 });
 		const token = await getToken(manager);
-		const release = await getRelease(manager, repo, version, token);
-		const tag = release.tag_name || version || "";
+		let release: ReleaseResponse | null = null;
+		let apiError: unknown;
+		try {
+			release = await getRelease(manager, repo, version, token);
+		} catch (error) {
+			apiError = error;
+		}
+		let tag = release?.tag_name || version?.trim() || "";
+		if (!release && !tag) {
+			const fallback = await fetchFallbackReleaseVersions(manager, repo, false);
+			tag = fallback[0]?.version || "";
+		}
+		if (!release && !tag) throw apiError ?? new Error("未找到发布 tag，无法下载原始文件。");
 		task.update({ title: manager.translator.t("任务_下载插件文件", { name: repo }), progress: 0.2 });
 
-		if (manager.settings.DEBUG) console.log("[BPM] install from GitHub", { repo, version, tag });
+		if (manager.settings.DEBUG) console.log("[BPM] install from GitHub", { repo, version, tag, apiFallback: !release });
 
-		let files = await fetchPluginFilesFromReleaseAssets(manager, release, token);
+		let files = release
+			? await fetchPluginFilesFromReleaseAssets(manager, release, token)
+			: await fetchPluginFilesFromReleaseDownload(manager, repo, tag, token);
 
 		if (manager.settings.DEBUG) {
 			console.log("[BPM] release assets picked", {

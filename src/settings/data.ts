@@ -32,6 +32,10 @@ export type ToolbarLabelMode = "always" | "active" | "hidden";
 export type PluginOverviewSort = "layout" | "name-asc" | "name-desc" | "installed-desc" | "installed-asc" | "updated-desc" | "updated-asc"; 
 export type PluginUpdateCheckMode = NonNullable<BetaSource["updateCheckMode"]>;
 export type ReleaseCompatibilityMode = NonNullable<BetaSource["compatibilityMode"]>;
+/** 官方插件更新源：官方统计（不占 API 额度）或 GitHub API。 */
+export type PluginOfficialUpdateSource = "stats" | "github";
+/** 非官方插件更新源：Atom/raw 兜底或 GitHub API。 */
+export type PluginUnofficialUpdateSource = "atom" | "github";
 export type PluginCommandState = Record<string, boolean>;
 
 export interface PluginCommandSnapshot {
@@ -153,6 +157,10 @@ export interface ManagerSettings {
     PLUGIN_UPDATE_COMPATIBILITY_MODE: ReleaseCompatibilityMode;
     /** 插件总览更新检测延迟天数；只把发布满指定天数的版本视为可更新。 */
     PLUGIN_UPDATE_DELAY_DAYS: number;
+    /** 官方插件更新源：官方统计优先，或改用 GitHub API。 */
+    PLUGIN_UPDATE_OFFICIAL_SOURCE: PluginOfficialUpdateSource;
+    /** 非官方插件更新源：Atom/raw 优先，或改用 GitHub API。 */
+    PLUGIN_UPDATE_UNOFFICIAL_SOURCE: PluginUnofficialUpdateSource;
     /** GitHub 请求中转站；留空时直连官方 GitHub。支持前缀或 {url}/{encodedUrl} 模板。 */
     GITHUB_PROXY: string;
     /** GitHub API Token，用于下载 GitHub 插件/主题和降低 API 限流概率。 */
@@ -309,6 +317,8 @@ export const DEFAULT_SETTINGS: ManagerSettings = {
     PLUGIN_UPDATE_CHECK_MODE: "release",
     PLUGIN_UPDATE_COMPATIBILITY_MODE: "compatible",
     PLUGIN_UPDATE_DELAY_DAYS: 0,
+    PLUGIN_UPDATE_OFFICIAL_SOURCE: "stats",
+    PLUGIN_UPDATE_UNOFFICIAL_SOURCE: "atom",
     GITHUB_PROXY: "",
     GITHUB_TOKEN: "",
 

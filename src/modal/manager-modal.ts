@@ -1381,7 +1381,10 @@ export class ManagerModal extends Modal {
             new UpdateModal(this.app, this.manager, pluginId, versions, status.remoteVersion ?? null, repo).open();
         } catch (e) {
             console.error("[BPM] fetch remote versions failed", e);
-            new Notice(t("管理器_选择版本_获取失败提示"), 4000);
+            const errorStatus = typeof e === "object" && e !== null && "status" in e
+                ? Number((e as { status?: unknown }).status)
+                : Number.NaN;
+            new Notice(t(errorStatus === 403 ? "安装_错误_限速" : "管理器_选择版本_获取失败提示"), errorStatus === 403 ? 5000 : 4000);
         } finally {
             progress.hide();
         }

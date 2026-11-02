@@ -237,6 +237,34 @@ export default class ManagerBasis extends BaseSetting {
             void this.manager.saveSettings();
         });
 
+        const officialSourceBar = new Setting(this.containerEl)
+            .setName(this.manager.translator.t("设置_基础设置_官方插件源_标题"))
+            .setDesc(this.manager.translator.t("设置_基础设置_官方插件源_描述"));
+        const officialSource = new DropdownComponent(officialSourceBar.controlEl);
+        officialSource.addOptions({
+            stats: this.manager.translator.t("设置_基础设置_官方插件源_统计"),
+            github: this.manager.translator.t("设置_基础设置_官方插件源_接口"),
+        });
+        officialSource.setValue(this.settings.PLUGIN_UPDATE_OFFICIAL_SOURCE === "github" ? "github" : "stats");
+        officialSource.onChange((value) => {
+            this.settings.PLUGIN_UPDATE_OFFICIAL_SOURCE = value === "github" ? "github" : "stats";
+            void this.manager.saveSettings();
+        });
+
+        const unofficialSourceBar = new Setting(this.containerEl)
+            .setName(this.manager.translator.t("设置_基础设置_非官方插件源_标题"))
+            .setDesc(this.manager.translator.t("设置_基础设置_非官方插件源_描述"));
+        const unofficialSource = new DropdownComponent(unofficialSourceBar.controlEl);
+        unofficialSource.addOptions({
+            atom: this.manager.translator.t("设置_基础设置_非官方插件源_自动"),
+            github: this.manager.translator.t("设置_基础设置_非官方插件源_接口"),
+        });
+        unofficialSource.setValue(this.settings.PLUGIN_UPDATE_UNOFFICIAL_SOURCE === "github" ? "github" : "atom");
+        unofficialSource.onChange((value) => {
+            this.settings.PLUGIN_UPDATE_UNOFFICIAL_SOURCE = value === "github" ? "github" : "atom";
+            void this.manager.saveSettings();
+        });
+
         let tokenBar: Setting | null = null;
         const githubProxyBar = new Setting(this.containerEl)
             .setName(this.manager.translator.t("设置_基础设置_GITHUB_PROXY_标题"))
@@ -257,6 +285,53 @@ export default class ManagerBasis extends BaseSetting {
             }
         });
         githubProxyInput.inputEl.addEventListener("blur", () => this.render());
+
+        // Token 紧邻更新来源，避免和调试开关混在一起后难以找到。 / Keep the token next to update sources so it is discoverable.
+        if (!githubProxyEnabled(this.manager)) {
+            tokenBar = new Setting(this.containerEl)
+                .setName(this.manager.translator.t("设置_基础设置_GITHUB_TOKEN_标题"))
+                .setDesc(`${this.manager.translator.t("设置_基础设置_GITHUB_TOKEN_描述")} (${this.manager.translator.t("设置_基础设置_GITHUB_TOKEN_权限")})`);
+            tokenBar.settingEl.addClass("manager-secret-token-setting");
+            const tokenStatus = tokenBar.descEl.createDiv({
+                cls: "manager-secret-token-setting__status",
+                text: this.getGithubTokenStatusText(),
+            });
+            const tokenInput = new TextComponent(tokenBar.controlEl);
+            tokenInput.inputEl.type = "password";
+            tokenInput.inputEl.autocomplete = "off";
+            tokenInput.setPlaceholder(this.manager.hasGithubToken() ? "********" : "ghp_xxx");
+
+            let clearTokenButton: ButtonComponent | null = null;
+            const saveTokenButton = new ButtonComponent(tokenBar.controlEl);
+            saveTokenButton.setButtonText(this.manager.translator.t("设置_基础设置_GITHUB_TOKEN_保存"));
+            saveTokenButton.setCta();
+            saveTokenButton.onClick(async () => {
+                const token = tokenInput.getValue().trim();
+                if (!token) return;
+                await this.manager.setGithubToken(token);
+                tokenInput.setValue("");
+                tokenInput.setPlaceholder("********");
+                tokenStatus.setText(this.getGithubTokenStatusText());
+                clearTokenButton?.setDisabled(false);
+            });
+
+            clearTokenButton = new ButtonComponent(tokenBar.controlEl);
+            clearTokenButton.setButtonText(this.manager.translator.t("设置_基础设置_GITHUB_TOKEN_清除"));
+            clearTokenButton.setDisabled(!this.manager.hasGithubToken());
+            clearTokenButton.onClick(async () => {
+                await this.manager.clearGithubToken();
+                tokenInput.setValue("");
+                tokenInput.setPlaceholder("ghp_xxx");
+                tokenStatus.setText(this.getGithubTokenStatusText());
+                clearTokenButton?.setDisabled(true);
+            });
+
+            void this.manager.getGithubToken().then(() => {
+                tokenInput.setPlaceholder(this.manager.hasGithubToken() ? "********" : "ghp_xxx");
+                tokenStatus.setText(this.getGithubTokenStatusText());
+                clearTokenButton?.setDisabled(!this.manager.hasGithubToken());
+            });
+        }
 
         heading("设置_基础设置_分组_界面展示");
 
@@ -340,51 +415,6 @@ export default class ManagerBasis extends BaseSetting {
             void this.manager.saveSettings();
         });
 
-        if (githubProxyEnabled(this.manager)) return;
-
-        tokenBar = new Setting(this.containerEl)
-            .setName(this.manager.translator.t("设置_基础设置_GITHUB_TOKEN_标题"))
-            .setDesc(`${this.manager.translator.t("设置_基础设置_GITHUB_TOKEN_描述")} (${this.manager.translator.t("设置_基础设置_GITHUB_TOKEN_权限")})`);
-        tokenBar.settingEl.addClass("manager-secret-token-setting");
-        const tokenStatus = tokenBar.descEl.createDiv({
-            cls: "manager-secret-token-setting__status",
-            text: this.getGithubTokenStatusText(),
-        });
-        const tokenInput = new TextComponent(tokenBar.controlEl);
-        tokenInput.inputEl.type = "password";
-        tokenInput.inputEl.autocomplete = "off";
-        tokenInput.setPlaceholder(this.manager.hasGithubToken() ? "********" : "ghp_xxx");
-
-        let clearTokenButton: ButtonComponent | null = null;
-        const saveTokenButton = new ButtonComponent(tokenBar.controlEl);
-        saveTokenButton.setButtonText(this.manager.translator.t("设置_基础设置_GITHUB_TOKEN_保存"));
-        saveTokenButton.setCta();
-        saveTokenButton.onClick(async () => {
-            const token = tokenInput.getValue().trim();
-            if (!token) return;
-            await this.manager.setGithubToken(token);
-            tokenInput.setValue("");
-            tokenInput.setPlaceholder("********");
-            tokenStatus.setText(this.getGithubTokenStatusText());
-            clearTokenButton?.setDisabled(false);
-        });
-
-        clearTokenButton = new ButtonComponent(tokenBar.controlEl);
-        clearTokenButton.setButtonText(this.manager.translator.t("设置_基础设置_GITHUB_TOKEN_清除"));
-        clearTokenButton.setDisabled(!this.manager.hasGithubToken());
-        clearTokenButton.onClick(async () => {
-            await this.manager.clearGithubToken();
-            tokenInput.setValue("");
-            tokenInput.setPlaceholder("ghp_xxx");
-            tokenStatus.setText(this.getGithubTokenStatusText());
-            clearTokenButton?.setDisabled(true);
-        });
-
-        void this.manager.getGithubToken().then(() => {
-            tokenInput.setPlaceholder(this.manager.hasGithubToken() ? "********" : "ghp_xxx");
-            tokenStatus.setText(this.getGithubTokenStatusText());
-            clearTokenButton?.setDisabled(!this.manager.hasGithubToken());
-        });
     }
 
     private getGithubTokenStatusText(): string {
