@@ -1,0 +1,258 @@
+{
+  "pluginId": "quickadd",
+  "previousVersion": "2.0.0",
+  "currentVersion": "2.33.1",
+  "upstream": "https://github.com/chhoumann/quickadd",
+  "previous": {
+    "choices": [
+      {
+        "id": "test-folder",
+        "name": "Workflows",
+        "type": "Multi",
+        "command": false,
+        "choices": [
+          {
+            "command": true,
+            "openFile": false,
+            "fileOpening": {
+              "location": "tab",
+              "direction": "vertical",
+              "mode": "default",
+              "focus": true
+            },
+            "appendLink": false,
+            "id": "test-template",
+            "name": "Daily template",
+            "type": "Template",
+            "templatePath": "Templates/daily.md",
+            "fileNameFormat": {
+              "enabled": true,
+              "format": "{{DATE}}"
+            },
+            "folder": {
+              "enabled": true,
+              "folders": [
+                "Journal"
+              ],
+              "chooseWhenCreatingNote": false,
+              "createInSameFolderAsActiveFile": false,
+              "chooseFromSubfolders": false
+            },
+            "fileExistsMode": "Increment the file name",
+            "setFileExistsBehavior": false
+          },
+          {
+            "command": true,
+            "openFile": false,
+            "fileOpening": {
+              "location": "tab",
+              "direction": "vertical",
+              "mode": "default",
+              "focus": true
+            },
+            "appendLink": false,
+            "id": "test-capture",
+            "name": "Inbox capture",
+            "type": "Capture",
+            "captureTo": "Inbox.md",
+            "captureToActiveFile": false,
+            "createFileIfItDoesntExist": {
+              "enabled": true,
+              "createWithTemplate": false,
+              "template": ""
+            },
+            "format": {
+              "enabled": true,
+              "format": "- {{VALUE}}"
+            },
+            "insertAfter": {
+              "enabled": false,
+              "after": "",
+              "insertAtEnd": false,
+              "considerSubsections": false,
+              "createIfNotFound": false,
+              "createIfNotFoundLocation": "top"
+            },
+            "prepend": false,
+            "task": false
+          },
+          {
+            "id": "test-macro",
+            "name": "Review",
+            "type": "Macro",
+            "command": false,
+            "runOnStartup": false,
+            "macro": {
+              "id": "macro-id",
+              "name": "Review",
+              "commands": [
+                {
+                  "id": "user-script-id",
+                  "name": "tools.js",
+                  "type": "UserScript",
+                  "path": "Scripts/tools.js",
+                  "settings": {
+                    "region": "old",
+                    "threshold": 5
+                  }
+                },
+                {
+                  "id": "wait-id",
+                  "name": "Wait",
+                  "type": "Wait",
+                  "time": 100
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "inputPrompt": "single-line",
+    "templateFolderPath": "Templates/Old",
+    "migrations": {
+      "migrateToMacroIDFromEmbeddedMacro": true,
+      "useQuickAddTemplateFolder": true,
+      "incrementFileNameSettingMoveToDefaultBehavior": true,
+      "mutualExclusionInsertAfterAndWriteToBottomOfFile": true,
+      "setVersionAfterUpdateModalRelease": true,
+      "addDefaultAIProviders": true,
+      "removeMacroIndirection": true,
+      "migrateFileOpeningSettings": true
+    }
+  },
+  "current": {
+    "choices": [
+      {
+        "id": "test-folder",
+        "name": "Current workflows",
+        "type": "Multi",
+        "command": false,
+        "choices": [
+          {
+            "id": "test-macro",
+            "name": "Review",
+            "type": "Macro",
+            "command": false,
+            "runOnStartup": false,
+            "macro": {
+              "id": "macro-id",
+              "name": "Review",
+              "commands": [
+                {
+                  "id": "wait-id",
+                  "name": "Wait",
+                  "type": "Wait",
+                  "time": 875
+                },
+                {
+                  "id": "user-script-id",
+                  "name": "tools.js",
+                  "type": "UserScript",
+                  "path": "Scripts/tools.js",
+                  "settings": {
+                    "region": "current",
+                    "threshold": 99,
+                    "newUserKey": "keep this"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "command": true,
+            "openFile": false,
+            "fileOpening": {
+              "location": "tab",
+              "direction": "vertical",
+              "mode": "default",
+              "focus": true
+            },
+            "appendLink": false,
+            "id": "test-capture",
+            "name": "Inbox capture",
+            "type": "Capture",
+            "captureTo": "CurrentInbox.md",
+            "captureToActiveFile": false,
+            "createFileIfItDoesntExist": {
+              "enabled": true,
+              "createWithTemplate": false,
+              "template": ""
+            },
+            "format": {
+              "enabled": true,
+              "format": "- {{VALUE}}"
+            },
+            "insertAfter": {
+              "enabled": false,
+              "after": "",
+              "insertAtEnd": false,
+              "considerSubsections": false,
+              "createIfNotFound": false,
+              "createIfNotFoundLocation": "top"
+            },
+            "prepend": false,
+            "task": false
+          },
+          {
+            "command": true,
+            "openFile": false,
+            "fileOpening": {
+              "location": "tab",
+              "direction": "vertical",
+              "mode": "default",
+              "focus": true
+            },
+            "appendLink": false,
+            "id": "test-template",
+            "name": "Daily template",
+            "type": "Template",
+            "templatePath": "Templates/new-current.md",
+            "fileNameFormat": {
+              "enabled": true,
+              "format": "{{DATE}}"
+            },
+            "folder": {
+              "enabled": true,
+              "folders": [
+                "Journal"
+              ],
+              "chooseWhenCreatingNote": false,
+              "createInSameFolderAsActiveFile": false,
+              "chooseFromSubfolders": false
+            },
+            "fileExistsBehavior": {
+              "kind": "prompt"
+            }
+          }
+        ]
+      }
+    ],
+    "inputPrompt": "multi-line",
+    "templateFolderPaths": [
+      "Templates/New",
+      "Templates/Extra"
+    ],
+    "globalVariables": {
+      "project": "Current project"
+    },
+    "migrations": {
+      "migrateToMacroIDFromEmbeddedMacro": true,
+      "useQuickAddTemplateFolder": true,
+      "incrementFileNameSettingMoveToDefaultBehavior": true,
+      "mutualExclusionInsertAfterAndWriteToBottomOfFile": true,
+      "setVersionAfterUpdateModalRelease": true,
+      "addDefaultAIProviders": true,
+      "removeMacroIndirection": true,
+      "migrateFileOpeningSettings": true,
+      "consolidateFileExistsBehavior": true,
+      "repairTemplateFileExistsBehavior": true,
+      "backfillFileOpeningDefaults": true,
+      "setProviderModelDiscoveryMode": true,
+      "migrateProviderApiKeysToSecretStorage": true,
+      "migrateToMultipleTemplateFolders": true,
+      "refreshStaleDefaultModelSeeds": true,
+      "pinAiModelRefs": true
+    }
+  }
+}

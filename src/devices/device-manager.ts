@@ -7,7 +7,8 @@ import type { RibbonGroup, RibbonItem } from '../data/types';
 import { applyPresetToSettings, capturePreset, cloneAppearance, clonePreset,
     allPresets, detectDeviceType, detectSystemPlatform, DEVICE_TYPES, DeviceManagement, DevicePluginFilters, DevicePluginState, DevicePreset, DeviceScope, DeviceType,
     findPreset, isDeviceType, normalizeDeviceManagement, parseScopeKey, scopeKey, ScopedAppearance,
-    ScopePage, snapshotPreset, normalizeRibbonGroups, ManagedDevice, PresetConfigParts, ALL_PRESET_CONFIG_PARTS } from './device-presets';
+    ScopePage, snapshotPreset, normalizeRibbonGroups, ManagedDevice, PresetConfigParts, ALL_PRESET_CONFIG_PARTS,
+    presetContentFingerprint } from './device-presets';
 
 /** 磁盘上的设备记录在写回前要校验，避免坏数据进入设置 / Validate records read back from disk. */
 const isManagedDevice = (value: unknown): value is ManagedDevice => {
@@ -33,6 +34,39 @@ type CustomCssLike = {
     loadTheme?(): Promise<void>;
 };
 type CapacitorDevice = { getId?(): Promise<{ identifier?: string }> };
+type DeviceFileAdapter = { onFileChange?: (path: string) => void };
+type DeviceFileHookState = { original?: (path: string) => void; listeners: Set<(path: string) => void> };
+const DEVICE_FILE_HOOK = '__bpmDeviceFileHook';
+
+/** 监听适配器的文件变更事件；不接管全局 handler，也不做轮询。 */
+function registerDeviceFileListener(adapter: DeviceFileAdapter | undefined, listener: (path: string) => void): () => void {
+    if (!adapter) return () => undefined;
+    const hooked = adapter as DeviceFileAdapter & { [DEVICE_FILE_HOOK]?: DeviceFileHookState };
+    let state = hooked[DEVICE_FILE_HOOK];
+    if (!state) {
+        const original = adapter.onFileChange;
+        state = { original, listeners: new Set() };
+        hooked[DEVICE_FILE_HOOK] = state;
+        adapter.onFileChange = function (path: string) {
+            try {
+                state?.original?.call(adapter, path);
+            } finally {
+                for (const callback of state?.listeners ?? []) {
+                    try { callback(path); } catch { /* 单个监听器失败不影响其他监听 / Isolate listeners. */ }
+                }
+            }
+        };
+    }
+    state.listeners.add(listener);
+    return () => {
+        state?.listeners.delete(listener);
+        if (state && state.listeners.size === 0) {
+            if (state.original) adapter.onFileChange = state.original;
+            else delete adapter.onFileChange;
+            delete hooked[DEVICE_FILE_HOOK];
+        }
+    };
+}
 interface StoredIdentity { id?: unknown; type?: unknown; platformId?: unknown; presetId?: unknown; }
 interface LiveSnapshot {
     ribbon: RibbonItem[];
@@ -61,7 +95,7 @@ export class DeviceManager {
     /** 每个栏目独立记住作用域，切页不会串用其他页的选择。 */
     private selections: Partial<Record<ScopePage, string>> = {};
     private projection?: Projection;
-    private syncTimer?: number;
+    private stopDeviceFileWatch?: () => void;
 
     constructor(private readonly manager: Manager) {}
     get data(): DeviceManagement {
@@ -82,6 +116,15 @@ export class DeviceManager {
         if (!featureEnabled(settings, 'devices')) settings.DEVICE_MANAGEMENT.enabled = false;
         const stored = await this.loadIdentity();
         this.migrateDeviceRecord(typeof stored?.id === 'string' ? stored.id : '');
+        // 先读回自己的记录文件，避免每次启动都当成新设备重建并刷新时间戳。
+        const ownFromFile = await this.loadOwnDeviceFile();
+        if (ownFromFile) {
+            const existing = this.data.devices.find(device => device.id === this.id);
+            const fileStamp = ownFromFile.updatedAt ?? ownFromFile.lastSeen;
+            const existingStamp = existing ? existing.updatedAt ?? existing.lastSeen : -1;
+            if (!existing) this.data.devices.push(ownFromFile);
+            else if (fileStamp > existingStamp) Object.assign(existing, ownFromFile);
+        }
         const known = this.data.devices.find(device => device.id === this.id);
         const now = Date.now();
         if (known) {
@@ -105,26 +148,48 @@ export class DeviceManager {
         await this.mergeDeviceRecords();
         await this.bootstrapDeviceFiles();
         await this.persistOwnDevice();
-        this.startSyncTimer();
+        this.startDeviceFileWatch();
     }
 
-    /** 设备记录不走 data.json，开启设备管理时定时轻量合并，实现双向近实时同步。 */
-    private startSyncTimer(): void {
-        if (this.syncTimer !== undefined) return;
-        const timer = globalThis.setInterval(() => {
-            if (!this.ready || this.busy || !this.data.enabled) return;
-            void this.mergeDeviceRecords()
-                .then(changed => { if (changed) this.manager.managerModal?.refreshDevicePanelIfOpen(); })
-                .catch(error => this.report(error));
-        }, 10_000);
-        // Node 测试里不阻塞进程；浏览器没有 unref，保持原样。
-        (timer as unknown as { unref?: () => void }).unref?.();
-        this.syncTimer = timer as unknown as number;
+    /** 设备记录只靠文件变更事件同步；不轮询、不主动扫描目录。 */
+    private startDeviceFileWatch(): void {
+        if (this.stopDeviceFileWatch) return;
+        const adapter = this.manager.app?.vault?.adapter as DeviceFileAdapter | undefined;
+        const configDir = this.manager.app?.vault?.configDir;
+        const prefix = this.deviceFilePrefix();
+        if (!adapter || !configDir || !prefix) return;
+        let timer: number | undefined;
+        const schedule = () => {
+            if (timer !== undefined) globalThis.clearTimeout(timer);
+            timer = globalThis.setTimeout(() => {
+                timer = undefined;
+                if (!this.ready || this.busy || !this.data.enabled) return;
+                void this.mergeDeviceRecords()
+                    .then(changed => { if (changed) this.manager.managerModal?.refreshDevicePanelIfOpen(); })
+                    .catch(error => this.report(error));
+            }, 150) as unknown as number;
+        };
+        const isDeviceFile = (path: string): boolean =>
+            path.startsWith(prefix) || path.startsWith(`${configDir}/better-plugins-manager-device-`);
+        const hasFileChangeEvent = typeof adapter.onFileChange === 'function';
+        const unregister = registerDeviceFileListener(adapter, path => { if (isDeviceFile(path)) schedule(); });
+        const win = typeof globalThis.window === 'object' ? globalThis.window : undefined;
+        const doc = typeof globalThis.document === 'object' ? globalThis.document : undefined;
+        const onFocus = () => { if (!hasFileChangeEvent) schedule(); };
+        const onVisibility = () => { if (doc?.visibilityState === 'visible') onFocus(); };
+        win?.addEventListener('focus', onFocus);
+        doc?.addEventListener('visibilitychange', onVisibility);
+        this.stopDeviceFileWatch = () => {
+            unregister();
+            if (timer !== undefined) globalThis.clearTimeout(timer);
+            win?.removeEventListener('focus', onFocus);
+            doc?.removeEventListener('visibilitychange', onVisibility);
+        };
     }
 
     public dispose(): void {
-        if (this.syncTimer !== undefined) globalThis.clearInterval(this.syncTimer);
-        this.syncTimer = undefined;
+        this.stopDeviceFileWatch?.();
+        this.stopDeviceFileWatch = undefined;
     }
 
     /* ---------- 预设复用 / Reuse ---------- */
@@ -156,6 +221,7 @@ export class DeviceManager {
         target.ribbonEnabled = copy.ribbonEnabled;
         target.appearance = copy.appearance;
         target.configured = true;
+        target.updatedAt = Date.now();
         new Notice(this.manager.translator.t('设备_自动复用', { type: this.label(type), source: source.name }));
     }
 
@@ -200,6 +266,7 @@ export class DeviceManager {
 
     /** 只覆盖用户勾选的部分，其余配置保持目标预设原样。 */
     private applyPresetConfigParts(target: DevicePreset, source: DevicePreset, parts: PresetConfigParts): void {
+        const before = presetContentFingerprint(target);
         const copy = clonePreset(source);
         if (parts.plugins) target.plugins = copy.plugins;
         if (parts.filters) target.filters = copy.filters;
@@ -210,9 +277,11 @@ export class DeviceManager {
         }
         if (parts.appearance) target.appearance = copy.appearance;
         target.configured = true;
+        this.touchPreset(target, before);
     }
 
     private replacePresetConfig(target: DevicePreset, source: DevicePreset): void {
+        const before = presetContentFingerprint(target);
         const copy = clonePreset(source);
         target.plugins = copy.plugins;
         target.filters = copy.filters;
@@ -221,6 +290,7 @@ export class DeviceManager {
         target.ribbonEnabled = copy.ribbonEnabled;
         target.appearance = copy.appearance;
         target.configured = true;
+        this.touchPreset(target, before);
     }
 
     label(type: DeviceType): string { return this.manager.translator.t(`设备_${type}`); }
@@ -341,7 +411,7 @@ export class DeviceManager {
             const source = (sourceId ? list.find(item => item.id === sourceId) : undefined) ?? bound ?? list[0];
             const base = source ? clonePreset(source) : snapshotPreset(this.manager.settings, { appearance: this.readLiveAppearance() });
             const id = `preset-${type}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-            list.push({ ...base, id, name: this.uniquePresetName(type, `${this.label(type)} ${list.length + 1}`), configured: true });
+            list.push({ ...base, id, name: this.uniquePresetName(type, `${this.label(type)} ${list.length + 1}`), configured: true, updatedAt: Date.now() });
             this.data.presets[type] = list;
             await this.manager.saveSettings({ captureDevice: false });
             return id;
@@ -354,7 +424,7 @@ export class DeviceManager {
             const list = this.presetsFor(found.type);
             const copyId = `preset-${found.type}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
             const name = this.uniquePresetName(found.type, `${found.preset.name} ${this.manager.translator.t('设备_副本后缀')}`);
-            list.push({ ...clonePreset(found.preset), id: copyId, name, configured: true });
+            list.push({ ...clonePreset(found.preset), id: copyId, name, configured: true, updatedAt: Date.now() });
             this.data.presets[found.type] = list;
             await this.manager.saveSettings({ captureDevice: false });
             return copyId;
@@ -371,6 +441,7 @@ export class DeviceManager {
         const found = this.presetById(id);
         if (!found || !name.trim()) throw new Error(this.manager.translator.t('设备_名称为空'));
         found.preset.name = name.trim();
+        found.preset.updatedAt = Date.now();
         await this.manager.saveSettings();
     }
     async deletePreset(id: string): Promise<void> {
@@ -537,10 +608,15 @@ export class DeviceManager {
      * live 仅在投影时传入：预设里没有记录的插件，只有用户在外域明确改过才写入，
      * 避免「仅保存」打开一次就把本机的插件状态带进另一台设备的预设。
      */
+    /** 只有内容真的变化才刷新预设 revision，避免打开 BPM 就制造“新文件”。 */
+    private touchPreset(preset: DevicePreset, before: string): void {
+        if (before !== presetContentFingerprint(preset)) preset.updatedAt = Date.now();
+    }
+
     private storeSnapshot(presetId: string, snapshot: LiveSnapshot, live?: LiveSnapshot): void {
         const found = this.presetById(presetId);
         if (!found) return;
-        const before = JSON.stringify([found.preset.plugins, found.preset.filters, found.preset.ribbon, found.preset.ribbonGroups, found.preset.ribbonEnabled]);
+        const before = presetContentFingerprint(found.preset);
         found.preset.ribbon = cloneRibbon(snapshot.ribbon);
         found.preset.ribbonGroups = normalizeRibbonGroups(snapshot.ribbonGroups);
         found.preset.ribbonEnabled = snapshot.ribbonEnabled;
@@ -554,21 +630,25 @@ export class DeviceManager {
         }
         found.preset.plugins = mergedPlugins;
         found.preset.filters = snapshot.filters;
-        if (!found.preset.configured && before !== JSON.stringify([found.preset.plugins, found.preset.filters, found.preset.ribbon, found.preset.ribbonGroups, found.preset.ribbonEnabled])) {
+        const changed = before !== presetContentFingerprint(found.preset);
+        if (!found.preset.configured && changed) {
             found.preset.configured = true;
         }
+        if (changed) found.preset.updatedAt = Date.now();
     }
 
     /** 捕获时只有值真的变了才标记“已配置”，避免空保存把新类型锁死。 */
     private captureInto(preset: DevicePreset, extras: { appearance?: ScopedAppearance }, markConfigured = true): void {
-        const before = JSON.stringify([preset.plugins, preset.filters, preset.ribbon, preset.ribbonGroups, preset.ribbonEnabled, preset.appearance]);
+        const before = presetContentFingerprint(preset);
         capturePreset(preset, this.manager.settings, extras);
         preset.plugins = this.manager.overview.persistentPlugins(preset.plugins, preset.id);
         preset.appearance = this.manager.overview.persistentAppearance(preset.appearance, preset.id);
         preset.filters = this.pluginFilters();
-        if (markConfigured && !preset.configured && before !== JSON.stringify([preset.plugins, preset.filters, preset.ribbon, preset.ribbonGroups, preset.ribbonEnabled, preset.appearance])) {
+        const changed = before !== presetContentFingerprint(preset);
+        if (markConfigured && !preset.configured && changed) {
             preset.configured = true;
         }
+        if (changed) preset.updatedAt = Date.now();
     }
 
     private pluginStates(): Record<string, DevicePluginState> {
@@ -632,8 +712,10 @@ export class DeviceManager {
             Object.assign(next.snippets, patch.snippets ?? {});
             const found = this.presetById(scope.presetId);
             if (found) {
+                const before = presetContentFingerprint(found.preset);
                 found.preset.appearance = cloneAppearance(next);
                 found.preset.configured = true;
+                this.touchPreset(found.preset, before);
             }
             await this.manager.saveSettings({ captureDevice: false });
         });
@@ -760,6 +842,7 @@ export class DeviceManager {
             }
         }
         target.configured = true;
+        target.updatedAt = Date.now();
         if (this.manager.settings.DEBUG) console.log('[BPM] Migrated legacy device overrides into preset', target.id);
     }
 
@@ -873,6 +956,7 @@ export class DeviceManager {
             const changed = before !== JSON.stringify([target.plugins, target.filters, target.ribbon, target.ribbonGroups, target.ribbonEnabled, target.appearance]);
             if (changed) {
                 target.configured = true;
+                target.updatedAt = Date.now();
                 new Notice(this.manager.translator.t('设备_关闭期间已合并'), 6000);
             }
         } catch (error) { this.report(error); }
@@ -968,6 +1052,21 @@ export class DeviceManager {
 
     /* ---------- 设备记录文件 / Device record files ---------- */
 
+    /** 读回本机自己的记录文件，启动时不重建、不刷新 mtime。 */
+    private async loadOwnDeviceFile(): Promise<ManagedDevice | undefined> {
+        const path = this.deviceFilePath(this.id);
+        const adapter = this.manager.app?.vault?.adapter;
+        if (!path || !adapter) return undefined;
+        try {
+            if (!(await adapter.exists(path))) return undefined;
+            const parsed: unknown = JSON.parse(await adapter.read(path));
+            return isManagedDevice(parsed) && parsed.id === this.id ? parsed : undefined;
+        } catch (error) {
+            this.report(error);
+            return undefined;
+        }
+    }
+
     /** 设备记录归入用户数据目录；兼容读取旧版配置根目录。 */
     private deviceFilePath(id: string): string | undefined {
         const configDir = this.manager.app?.vault?.configDir;
@@ -987,6 +1086,8 @@ export class DeviceManager {
         if (!path || !adapter) return;
         const serialized = JSON.stringify(device, null, 2);
         try {
+            // 内容未变不写盘，避免仅打开 BPM 就刷新 mtime 并制造同步冲突。
+            if (await adapter.exists(path) && await adapter.read(path) === serialized) return;
             await pluginStorage(this.manager).write('data', `devices/${encodeURIComponent(device.id)}.json`, serialized);
         } catch (error) { this.report(error); }
     }
@@ -996,6 +1097,10 @@ export class DeviceManager {
         const adapter = this.manager.app?.vault?.adapter;
         if (!path || !adapter) return;
         try {
+            if (this.manager.configProtection) {
+                await pluginStorage(this.manager).remove('data', `devices/${encodeURIComponent(id)}.json`);
+                return;
+            }
             if (await adapter.exists(path)) await adapter.remove(path);
             const legacy = `${this.manager.app.vault.configDir}/better-plugins-manager-device-${id}.json`;
             if (/^[a-zA-Z0-9._-]{1,128}$/.test(id) && await adapter.exists(legacy)) await adapter.remove(legacy);
@@ -1053,6 +1158,8 @@ export class DeviceManager {
                 continue;
             }
             if (!isManagedDevice(parsed) || parsed.id === this.id) continue;
+            const protectedRecord = await this.manager.configProtection?.readFile(`data/devices/${encodeURIComponent(parsed.id)}.json`);
+            if (protectedRecord && protectedRecord.value === undefined) continue;
             if (this.removedDeviceIds.has(parsed.id)) continue;
             const incoming: ManagedDevice = parsed;
             const known = this.data.devices.find(device => device.id === incoming.id);
@@ -1083,16 +1190,16 @@ export class DeviceManager {
         return changed;
     }
 
-    async apply(options: { refreshViews?: boolean; persist?: boolean } = {}): Promise<void> { await this.run(() => this.applyCurrent(options)); }
+    async apply(options: { refreshViews?: boolean; persist?: boolean; automatic?: boolean } = {}): Promise<void> { await this.run(() => this.applyCurrent(options)); }
 
     /** 应用本机绑定的预设：投影设置、重算插件运行态，再把新登记的项写回。 */
-    private async applyCurrent(options: { refreshViews?: boolean; persist?: boolean } = {}): Promise<void> {
+    private async applyCurrent(options: { refreshViews?: boolean; persist?: boolean; automatic?: boolean } = {}): Promise<void> {
         await this.applyEffective();
         await this.manager.applyDeviceConfiguration(options);
         if (options.persist === false) return;
         const bound = this.boundPreset();
         if (bound) this.captureInto(bound, { appearance: this.readLiveAppearance() });
-        await this.manager.saveSettings({ captureDevice: false });
+        await this.manager.saveSettings({ captureDevice: false, automatic: options.automatic });
     }
 
     private async applyEffective(): Promise<void> {

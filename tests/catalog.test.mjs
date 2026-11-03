@@ -7,14 +7,20 @@ const built = await build({ entryPoints: ['src/catalog/catalog.ts'], bundle: tru
 const module = { exports: {} };
 new Function('module', 'exports', built.outputFiles[0].text)(module, module.exports);
 const { CatalogService, parseCatalog, parseStats, parseReleases, catalogUrl, catalogRepo, compareCatalogVersions, OFFICIAL_CATALOG, OFFICIAL_STATS } = module.exports;
-async function loadModule(entry) {
-    const result = await build({ entryPoints: [entry], bundle: true, platform: 'node', format: 'cjs', write: false, logLevel: 'silent' });
+async function loadModule(entry, obsidian = {}) {
+    const result = await build({ entryPoints: [entry], bundle: true, platform: 'node', format: 'cjs', write: false, external: ['obsidian', 'electron'], logLevel: 'silent' });
     const module = { exports: {} };
-    new Function('module', 'exports', result.outputFiles[0].text)(module, module.exports);
+    new Function('require', 'module', 'exports', result.outputFiles[0].text)(name => { if (name === 'obsidian') return obsidian; throw Error(`Unexpected module ${name}`); }, module, module.exports);
     return module.exports;
 }
 const { discoveryOrder, lowExposure, relevance, matchesScenario } = await loadModule('src/catalog/discovery.ts');
 const { CatalogTryList } = await loadModule('src/catalog/try-list.ts');
+const { parseRepositoryDocument, documentUrl } = await loadModule('src/catalog/repository-document.ts');
+const { renderRepositoryDocument } = await loadModule('src/catalog/document-renderer.ts');
+const { parseInstallManifest } = await loadModule('src/catalog/install-manifest.ts');
+const { catalogActivity, matchesStoreFilters } = await loadModule('src/catalog/store-filters.ts');
+const { replacePluginBuild } = await loadModule('src/storage/plugin-build.ts');
+const { toolEnabled, toolAvailable } = await loadModule('src/features.ts');
 const plugin = (id = 'custom-plugin', repo = 'team/plugin') => ({ id, repo, name: 'Custom plugin', author: 'Author' });
 const catalog = (name = 'Custom', plugins = [plugin()]) => ({ schemaVersion: 1, name, plugins });
 const harness = (request = async () => { throw Error('Unexpected request'); }, persisted) => {
@@ -32,6 +38,14 @@ test('official-style catalog preserves legacy IDs and normalizes GitHub URLs', (
     assert.equal(parsed.plugins[0].repo, 'team/plugin');
     assert.equal(parsed.plugins[0].repositoryUrl, 'https://github.com/team/plugin.git');
     assert.equal(parsed.plugins[1].id, 'waka_time_box');
+});
+
+test('unreleased store stays unavailable even with a saved opt-in while existing tools keep their defaults', () => {
+    assert.equal(toolAvailable('catalog'), false);
+    assert.equal(toolEnabled({}, 'catalog'), false);
+    assert.equal(toolEnabled({ TOOLS: { catalog: true } }, 'catalog'), false);
+    assert.equal(toolEnabled({ TOOLS: { catalog: false } }, 'catalog'), false);
+    assert.equal(toolEnabled({}, 'updates'), true);
 });
 
 test('independent sources support GitLab/Gitee/self-hosted repositories and no repository', () => {
@@ -345,4 +359,105 @@ test('starter materials survive source reload and reject unsafe image/demo URLs'
     assert.deepEqual(restored.service.entries()[0].quickStart, ['Open an example']);
     assert.throws(() => parseCatalog(catalog('Unsafe', [{ ...entry, screenshots: [{ url: 'data:image/svg+xml,bad' }] }]), 'Test'));
     assert.throws(() => parseCatalog(catalog('Unsafe', [{ ...entry, screenshots: [], demoUrl: 'javascript:alert(1)' }]), 'Test'));
+});
+
+test('repository README resolves nested and root paths remotely and rejects unsafe protocols', () => {
+    const document = parseRepositoryDocument('team/plugin', { encoding: 'base64', path: 'docs/README.md', content: Buffer.from('插件 **说明**').toString('base64') });
+    assert.equal(document.markdown, '插件 **说明**');
+    assert.equal(documentUrl('./preview.png', document, true), 'https://raw.githubusercontent.com/team/plugin/HEAD/docs/preview.png');
+    assert.equal(documentUrl('/images/preview.png', document, true), 'https://raw.githubusercontent.com/team/plugin/HEAD/images/preview.png');
+    assert.equal(documentUrl('/LICENSE', document), 'https://github.com/team/plugin/blob/HEAD/LICENSE');
+    assert.equal(documentUrl('./guide.md', document), 'https://github.com/team/plugin/blob/HEAD/docs/guide.md');
+    for (const unsafe of ['javascript:alert(1)', 'file:///secret', 'obsidian://open?vault=private', 'https://user:pass@example.org/a']) assert.equal(documentUrl(unsafe, document), undefined);
+    assert.equal(documentUrl('data:image/png;base64,xxx', document, true), undefined);
+    assert.throws(() => parseRepositoryDocument('team/plugin', { encoding: 'base64', path: '../secret', content: '' }), /path/);
+});
+
+test('remote Markdown is rendered as inert DOM, including code examples and raw HTML', () => {
+    class Element {
+        constructor(tag = 'div', options = {}) { this.tag = tag; this.children = []; this.attrs = options.attr || {}; this.text = options.text || ''; }
+        addClass() {}
+        appendText(text) { this.text += text; }
+        createEl(tag, options) { const child = new Element(tag, options); this.children.push(child); return child; }
+        createSpan(options) { return this.createEl('span', options); }
+        setAttribute(name, value) { this.attrs[name] = value; }
+    }
+    const root = new Element();
+    renderRepositoryDocument(root, { markdown: '# Guide\n\n![Preview](./image.png)\n\n```dataviewjs\napp.vault.delete(secret)\n```\n\n<script>alert(1)</script>\n\n![[Private note]]', pageUrl: 'https://github.com/team/plugin/blob/HEAD/README.md', imageUrl: 'https://raw.githubusercontent.com/team/plugin/HEAD/README.md' });
+    const nodes = [];
+    const visit = element => { nodes.push(element); element.children.forEach(visit); };
+    visit(root);
+    assert.equal(nodes.find(node => node.tag === 'img').attrs.src, 'https://raw.githubusercontent.com/team/plugin/HEAD/image.png');
+    assert.ok(nodes.some(node => node.tag === 'code' && node.text.includes('app.vault.delete')));
+    assert.equal(nodes.some(node => node.tag === 'script'), false);
+    assert.equal(nodes.some(node => node.tag.includes('dataview')), false);
+    assert.ok(nodes.some(node => node.text.includes('Private note')));
+});
+
+test('store activity filters never interpret statistics refresh times as releases', () => {
+    const entry = { releases: [], stats: { downloads: 1000, updated: Date.now() } };
+    assert.equal(catalogActivity(entry), undefined);
+    assert.equal(matchesStoreFilters(entry, 100, 0), true);
+    assert.equal(matchesStoreFilters(entry, 100, 30), false);
+    const now = Date.parse('2026-11-02T00:00:00Z');
+    entry.releases.push({ publishedAt: '2026-11-01T00:00:00Z' });
+    assert.equal(matchesStoreFilters(entry, 1000, 30, now), true);
+    assert.equal(matchesStoreFilters(entry, 1001, 30, now), false);
+    assert.equal(matchesStoreFilters({ releases: [] }, 1, 0), false);
+});
+
+test('install manifests validate identity before touching plugin paths or configuration', () => {
+    assert.equal(parseInstallManifest({ id: 'plugin', version: '1.0.0', minAppVersion: '1.8.0' }, 'plugin').id, 'plugin');
+    for (const id of ['../secret', 'a/b', '..', 'x\\y', '']) assert.throws(() => parseInstallManifest({ id, version: '1' }));
+    assert.throws(() => parseInstallManifest({ id: 'other', version: '1.0.0' }, 'plugin'), /mismatch/);
+    assert.throws(() => parseInstallManifest({ id: 'plugin', version: '1.0.0', minAppVersion: 'invalid' }), /minimum/);
+});
+
+test('a failed plugin build replacement restores files and runtime without modifying data.json', async () => {
+    const values = new Map([['p/manifest.json', 'old manifest'], ['p/main.js', 'old main'], ['p/styles.css', 'old styles'], ['p/data.json', 'current user values']]);
+    let fail = true;
+    const io = { exists: async path => values.has(path), read: async path => values.get(path),
+        write: async (path, value) => { if (path === 'p/main.js' && fail) { fail = false; throw Error('Disk full'); } values.set(path, value); }, remove: async path => values.delete(path) };
+    const events = [];
+    await assert.rejects(replacePluginBuild(io, 'p', { 'manifest.json': 'new manifest', 'main.js': 'new main', 'styles.css': null }, async () => { events.push('disable'); }, async () => { events.push('enable'); }, async () => { events.push('restore runtime'); }), /Disk full/);
+    assert.deepEqual(events, ['disable', 'restore runtime']);
+    assert.deepEqual([...values.values()], ['old manifest', 'old main', 'current user values', 'old styles']);
+    assert.equal(values.get('p/data.json'), 'current user values');
+    await replacePluginBuild(io, 'p', { 'manifest.json': 'new manifest', 'main.js': 'new main', 'styles.css': null }, async () => {}, async () => {}, async () => {});
+    assert.equal(values.has('p/styles.css'), false);
+    assert.equal(values.get('p/data.json'), 'current user values');
+});
+
+test('GitHub installation preserves disabled state and rejects incompatible or mismatched manifests before writes', async () => {
+    const root = '.obsidian/plugins/plugin';
+    const values = new Map([[root, 'directory'], [`${root}/manifest.json`, '{"id":"plugin","version":"1.0.0"}'], [`${root}/main.js`, 'old main'], [`${root}/data.json`, 'latest settings']]);
+    let payload = { id: 'plugin', name: 'Plugin', version: '2.0.0', minAppVersion: '1.8.0' };
+    let writes = 0, enabled = 0;
+    const { installPluginFromGithub } = await loadModule('src/github-install.ts', {
+        Notice: class {}, normalizePath: value => value, Platform: { isMobile: false }, requireApiVersion: version => version !== '99.0.0',
+        requestUrl: async ({ url }) => ({ status: 200, json: { tag_name: '2.0.0', assets: ['manifest.json', 'main.js'].map(name => ({ name, browser_download_url: `https://example.org/${name}` })) },
+            text: url.endsWith('/manifest.json') ? JSON.stringify(payload) : 'new main' }),
+    });
+    const manager = {
+        settings: { DEBUG: false, Plugins: [{ id: 'plugin', tags: [], enabled: false }], BPM_INSTALLED: [] },
+        app: { vault: { configDir: '.obsidian', adapter: {
+            exists: async path => values.has(path), read: async path => values.get(path), write: async (path, value) => { writes++; values.set(path, value); },
+            remove: async path => values.delete(path), mkdir: async path => values.set(path, 'directory'),
+        } } },
+        appPlugins: { manifests: { plugin: { id: 'plugin', version: '1.0.0' } }, plugins: {}, enabledPlugins: new Set(),
+            loadManifests: async () => {}, disablePlugin: async () => {}, enablePluginAndSave: async () => { enabled++; } },
+        tasks: { start: () => ({ update() {}, done() {}, fail() {} }) }, translator: { t: key => key },
+        getGithubToken: async () => undefined, hasGithubToken: () => false, applyRibbonSettings() {}, applySpecialPluginTags() {},
+        repoResolver: { setRepo: async () => {}, setRepoBinding: async () => {} }, saveSettings: async () => {},
+    };
+    assert.equal(await installPluginFromGithub(manager, 'team/plugin', '2.0.0', false, 'plugin'), true);
+    assert.equal(enabled, 0);
+    assert.equal(manager.settings.Plugins[0].enabled, false);
+    assert.equal(values.get(`${root}/data.json`), 'latest settings');
+    const previousWrites = writes;
+    payload = { ...payload, minAppVersion: '99.0.0' };
+    assert.equal(await installPluginFromGithub(manager, 'team/plugin', '2.0.0', false, 'plugin'), false);
+    payload = { ...payload, minAppVersion: '1.8.0', id: 'other' };
+    assert.equal(await installPluginFromGithub(manager, 'team/plugin', '2.0.0', false, 'plugin'), false);
+    assert.equal(writes, previousWrites);
 });

@@ -1,4 +1,4 @@
-import { featureEnabled } from './features';
+import { featureEnabled, toolEnabled } from './features';
 import {
     App,
     Command,
@@ -258,6 +258,21 @@ class ManagerCommandService {
     }
 
     private registerStaticCommands() {
+        this.addStaticCommand({ id: 'check-plugin-updates', name: this.t('批量更新_检查命令'),
+            checkCallback: checking => {
+                const ready = featureEnabled(this.manager.settings, 'plugins') && toolEnabled(this.manager.settings, 'updates');
+                if (!checking && ready) void this.manager.checkUpdatesWithNotice().then(status => {
+                    new Notice(this.t('通知_检查更新完成', { count: Object.values(status).filter(item => item.hasUpdate).length }));
+                }).catch(error => { if (this.manager.settings.DEBUG) console.error('[BPM] Update command failed', error); new Notice(this.t('通知_检查更新失败')); });
+                return ready;
+            } });
+        this.addStaticCommand({ id: 'update-all-eligible-plugins', name: this.t('批量更新_执行命令'),
+            checkCallback: checking => {
+                const ready = featureEnabled(this.manager.settings, 'plugins') && toolEnabled(this.manager.settings, 'updates');
+                if (!checking && ready) void this.manager.openBatchUpdates();
+                return ready;
+            } });
+        this.addStaticCommand({ id: 'manage-update-rules', name: this.t('更新规则_标题'), callback: () => { void this.manager.openUpdateRules(); } });
         this.addStaticCommand({
             id: "manager-view",
             name: this.manager.translator.t("命令_管理面板_描述"),

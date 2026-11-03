@@ -57,11 +57,11 @@ export class RibbonGroups {
         const menu = new Menu();
         // 菜单头部：分组图标 + 分组名，使用原生 label 样式与分隔线。
         const header = activeDocument.createDocumentFragment();
-        header.createSpan({ cls: 'bpm-group-menu-title', text: group.name });
-        menu.addItem(item => item
-            .setTitle(header)
-            .setIcon(group.icon || 'folder')
-            .setIsLabel(true));
+        const title = header.createSpan({ cls: 'bpm-group-menu-title', text: group.name });
+        menu.addItem(item => {
+            item.setTitle(header).setIcon(group.icon || 'folder').setIsLabel(true);
+            title.closest('.menu-item')?.addClass('bpm-group-menu-label');
+        });
         menu.addSeparator();
         const members = group.members.slice().sort((a, b) =>
             (group.memberOrders?.[a] ?? Number.MAX_SAFE_INTEGER) - (group.memberOrders?.[b] ?? Number.MAX_SAFE_INTEGER));

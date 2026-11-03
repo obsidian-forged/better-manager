@@ -64,6 +64,8 @@ export interface PluginLayoutItem {
 export type ReleaseCompatibilityMode = "compatible" | "all";
 
 export interface BetaSource {
+    updatePolicyReason?: string;
+    latestManifestVersion?: string;
 	id: string;
 	repo: string;
 	type: "plugin" | "theme";

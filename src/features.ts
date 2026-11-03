@@ -6,15 +6,18 @@ export type FeatureSettings = Partial<Record<FeatureId, boolean>>;
 export const TOOL_IDS = ['updates', 'bulkEdit', 'layoutEditor', 'reload', 'catalog', 'pluginMarket', 'appearanceMarket', 'appearanceProfiles'] as const;
 export type ToolId = typeof TOOL_IDS[number];
 export type ToolSettings = Partial<Record<ToolId, boolean>>;
-const UNAVAILABLE_TOOLS = new Set<ToolId>(['catalog']);
-
-/** 未完成的工具不开放入口，保留已有配置；Keep unfinished tools unavailable without deleting saved settings. */
+const RELEASE_CAPABILITIES: Record<'catalog' | 'rollback', boolean> = { catalog: false, rollback: false };
+/** 发布可用性不可由旧配置开启；Saved preferences cannot expose unreleased capabilities. */
+export function releaseCapabilityAvailable(id: keyof typeof RELEASE_CAPABILITIES): boolean {
+    return RELEASE_CAPABILITIES[id];
+}
+/** 工具可用性与个人开关分开；Keep capability availability separate from user preferences. */
 export function toolAvailable(id: ToolId): boolean {
-    return !UNAVAILABLE_TOOLS.has(id);
+    return TOOL_IDS.includes(id) && (id !== 'catalog' || releaseCapabilityAvailable('catalog'));
 }
 
 export function toolEnabled(settings: ManagerSettings, id: ToolId): boolean {
-    return toolAvailable(id) && settings.TOOLS?.[id] !== false;
+    return toolAvailable(id) && (id === 'catalog' ? settings.TOOLS?.[id] === true : settings.TOOLS?.[id] !== false);
 }
 
 /** 老配置默认保留所有入口；Existing installations retain all modules. */

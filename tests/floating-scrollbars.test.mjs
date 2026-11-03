@@ -73,3 +73,25 @@ test('multitouch and teardown release pointer capture without leaving handlers b
     assert.equal(viewport.captures.size, 0); assert.equal(viewport.listeners.size, 0);
     assert.equal(viewport.hasClass('bpm-scroll-strip'), false);
 });
+
+test('thumb drag visibility is cleared on release, cancellation, capture loss and teardown', () => {
+    const { viewport, scrollbars } = fixture();
+    const thumb = viewport.children.find(child => child.hasClass('bpm-scroll-strip__track')).children[0];
+    const start = () => thumb.listeners.get('pointerdown').callback({
+        isPrimary: true, button: 0, pointerId: 3, clientX: 10,
+        preventDefault() {}, stopPropagation() {},
+    });
+    for (const ending of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+        start();
+        assert.equal(viewport.hasClass('is-strip-dragging'), true);
+        assert.equal(thumb.hasClass('is-dragging'), true);
+        thumb.listeners.get(ending).callback({ pointerId: 3 });
+        assert.equal(viewport.hasClass('is-strip-dragging'), false);
+        assert.equal(thumb.hasClass('is-dragging'), false);
+        assert.equal(thumb.captures.size, 0);
+    }
+    start();
+    scrollbars.destroy();
+    assert.equal(viewport.hasClass('is-strip-dragging'), false);
+    assert.equal(thumb.hasClass('is-dragging'), false);
+});

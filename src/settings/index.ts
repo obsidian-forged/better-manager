@@ -1,6 +1,7 @@
 import { FloatingScrollbars } from '../ui/floating-scrollbars';
 import { App, ButtonComponent, PluginSettingTab, setIcon } from 'obsidian';
 import { SettingsSearch, SettingsSearchPage } from './search-view';
+import { ConfigConflictView } from './conflict-view';
 import Manager from "../main";
 import type BaseSetting from './base-setting';
 
@@ -18,25 +19,48 @@ class ManagerSettingTab extends PluginSettingTab {
     contentEl!: HTMLDivElement;
     private scrollbars?: FloatingScrollbars;
     private search?: SettingsSearch;
+    private conflictView?: ConfigConflictView;
+    private closeObserver?: MutationObserver;
     public isVisible = false;
 
     hide(): void {
         this.isVisible = false;
         this.scrollbars?.destroy(); this.scrollbars = undefined;
         this.search?.destroy(); this.search = undefined;
-        this.manager.endSettingsEditing(this);
+        // Switching native settings tabs hides this tab, but does not close its editor session.
+        const modal = this.containerEl.closest('.modal-container');
+        this.closeObserver?.disconnect();
+        if (!modal?.isConnected) this.manager.endSettingsEditing(this);
+        else {
+            this.closeObserver = new MutationObserver(() => {
+                if (modal.isConnected) return;
+                this.closeObserver?.disconnect();
+                this.closeObserver = undefined;
+                this.manager.endSettingsEditing(this);
+            });
+            this.closeObserver.observe(modal.ownerDocument.body, { childList: true, subtree: true });
+        }
     }
 
     constructor(app: App, manager: Manager) {
         super(app, manager);
         this.manager = manager;
         this.app = app;
+        manager.register(() => { this.closeObserver?.disconnect(); this.conflictView?.destroy(); });
     }
 
     display(): void {
+        this.closeObserver?.disconnect(); this.closeObserver = undefined;
         this.isVisible = true;
         this.manager.beginSettingsEditing(this);
         this.renderSettings();
+    }
+
+    refreshConfigConflict(): void {
+        this.containerEl.toggleClass('has-config-conflict', Boolean(this.manager.configProtection?.protection.paused));
+        void this.conflictView?.refresh().catch(error => {
+            if (this.manager.settings.DEBUG) console.error('[BPM] Settings conflict view failed', error);
+        });
     }
 
     /** 记住当前分页，重绘后回到同一页并恢复滚动位置，避免改一次配置就跳回顶部。 */
@@ -74,6 +98,9 @@ class ManagerSettingTab extends PluginSettingTab {
         this.scrollbars?.destroy();
         containerEl.empty();
         containerEl.addClass('manager-setting__container');
+        this.conflictView?.destroy();
+        this.conflictView = new ConfigConflictView(this.manager, containerEl.createDiv());
+        this.refreshConfigConflict();
         const topbar = this.containerEl.createEl('div');
         topbar.addClass('manager-setting__topbar');
         const brand = topbar.createDiv('manager-setting__brand');

@@ -66,7 +66,10 @@ export class ScopeSelect {
             this.triggerIcon.hidden = !currentIcon;
         }
         this.summary = this.trigger.createSpan({ cls: 'manager-multiselect-filter__summary', text: summary ? label : options.find(option => option.value === value)?.label ?? label });
-        if (badge) this.trigger.createSpan({ cls: 'manager-multiselect-filter__count', text: badge });
+        if (badge) {
+            this.trigger.createSpan({ cls: 'manager-multiselect-filter__count', text: badge });
+            this.trigger.addClass('has-selection');
+        }
         setIcon(this.trigger.createSpan('manager-multiselect-filter__chevron'), 'chevron-down');
         this.menu = this.root.createDiv('manager-multiselect-filter__menu');
         this.menu.setAttribute('role', summary ? 'dialog' : 'listbox');

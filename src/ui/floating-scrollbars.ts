@@ -91,6 +91,7 @@ export class FloatingScrollbars {
             const pointerId = drag?.pointerId;
             drag = undefined;
             thumb.removeClass('is-dragging');
+            viewport.removeClass('is-strip-dragging');
             if (pointerId !== undefined && thumb.hasPointerCapture(pointerId)) thumb.releasePointerCapture(pointerId);
         };
         const startDrag = (event: PointerEvent) => {
@@ -101,6 +102,7 @@ export class FloatingScrollbars {
             if (travel <= 0) return;
             drag = { pointerId: event.pointerId, x: event.clientX, scroll: viewport.scrollLeft, scale: (viewport.scrollWidth - viewport.clientWidth) / travel };
             thumb.addClass('is-dragging');
+            viewport.addClass('is-strip-dragging');
             thumb.setPointerCapture(event.pointerId);
         };
         const moveDrag = (event: PointerEvent) => {

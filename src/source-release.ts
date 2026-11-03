@@ -1,4 +1,4 @@
-import { requireApiVersion } from "obsidian";
+import { Platform, requireApiVersion } from "obsidian";
 import type { BetaSource } from "./data/types";
 import type { ReleaseVersion } from "./github-install";
 import { hasKnownPublicationDate, isReleaseOldEnough } from "./release-policy";
@@ -20,7 +20,7 @@ const cleanReleaseTag = (tag?: string | null): string => (tag || "").trim();
 
 const normalizeReleaseTag = (tag?: string | null): string => {
 	const cleaned = cleanReleaseTag(tag).replace(/^refs\/tags\//i, "");
-	return cleaned.replace(/^v(?=\d)/i, "").toLowerCase();
+	return cleaned.replace(/^v(?=\d)/i, "");
 };
 
 export const releaseTagsMatch = (a?: string | null, b?: string | null): boolean => {
@@ -59,12 +59,13 @@ const releaseIsMatureEnough = (source: BetaSource, release: ReleaseVersion, now 
 };
 
 export const releaseIsCompatible = (release: ReleaseVersion): boolean => {
+	if (Platform?.isMobile && release.isDesktopOnly) return false;
 	const minAppVersion = release.minAppVersion?.trim();
-	if (!minAppVersion) return true;
+	if (!minAppVersion) return release.compatibilityChecked !== false;
 	try {
 		return requireApiVersion(minAppVersion);
 	} catch {
-		return true;
+		return false;
 	}
 };
 
@@ -89,6 +90,8 @@ export const pickSourceTargetRelease = (source: BetaSource, versions: ReleaseVer
 			|| cleanReleaseTag(source.latestVersion);
 		if (!pinnedTag) return null;
 		const exact = findReleaseByTag(versions, pinnedTag);
+		const pinned = versions.find(item => releaseTagsMatch(item.version, pinnedTag));
+		if (pinned && ((source.compatibilityMode !== 'all' && !releaseIsCompatible(pinned)) || (!source.includePrerelease && pinned.prerelease))) return null;
 		const fallback = exact ?? {
 			tag: pinnedTag,
 			publishedAt: source.latestReleasePublishedAt || source.latestPublishedAt,
@@ -133,6 +136,8 @@ export const resolveInstalledSourceRelease = (
 			publishedAt: source.installedReleasePublishedAt,
 		};
 	}
+	const matchingManifest = versions.find(item => item.manifestVersion && releaseTagsMatch(item.manifestVersion, localVersion));
+	if (matchingManifest) return releaseToRef(matchingManifest, versions.indexOf(matchingManifest));
 
 	const fallbackTag = cleanReleaseTag(localVersion || source.localVersion);
 	return fallbackTag ? { tag: fallbackTag, publishedAt: source.installedReleasePublishedAt } : null;
@@ -162,6 +167,7 @@ export const syncSourceReleaseCheck = (
 	source.latestReleasePublishedAt = target?.publishedAt;
 	source.latestReleaseIsGithubLatest = target?.isGithubLatest;
 	source.latestVersion = target?.tag || "";
+	source.latestManifestVersion = versions.find(item => item.version === target?.tag)?.manifestVersion;
 	source.latestPublishedAt = target?.publishedAt;
 
 	if (installed?.tag) source.installedReleaseTag = installed.tag;
@@ -204,9 +210,9 @@ export const sourceUsesReleaseUpdateCheck = (source: BetaSource): boolean =>
 
 export const sourceHasVersionUpdate = (source: BetaSource): boolean => {
 	const targetVersion = cleanReleaseTag(
-		source.mode === "frozen"
+		source.latestManifestVersion || (source.mode === "frozen"
 			? source.frozenVersion || source.latestVersion || source.latestReleaseTag
-			: source.latestVersion || source.latestReleaseTag
+			: source.latestVersion || source.latestReleaseTag)
 	);
 	const localVersion = cleanReleaseTag(source.localVersion || source.installedReleaseTag);
 
@@ -229,6 +235,7 @@ export const sourceHasReleaseUpdate = (source: BetaSource): boolean => {
 	if (source.compatibilityMode !== "all" && source.installedReleaseIsGithubLatest && !source.latestReleaseIsGithubLatest) return false;
 
 	if (source.mode === "frozen") return true;
+	if (source.latestReleaseIsGithubLatest && !source.installedReleaseIsGithubLatest) return true;
 
 	const targetDate = parseReleaseDate(source.latestReleasePublishedAt || source.latestPublishedAt);
 	const installedDate = parseReleaseDate(source.installedReleasePublishedAt);
@@ -238,6 +245,6 @@ export const sourceHasReleaseUpdate = (source: BetaSource): boolean => {
 };
 
 export const sourceHasUpdate = (source: BetaSource): boolean =>
-	sourceUsesReleaseUpdateCheck(source)
+	!source.updatePolicyReason && (sourceUsesReleaseUpdateCheck(source)
 		? sourceHasReleaseUpdate(source)
-		: sourceHasVersionUpdate(source);
+		: sourceHasVersionUpdate(source));

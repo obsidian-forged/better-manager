@@ -6,9 +6,17 @@ import type Manager from "main";
 import { CatalogEntry, CatalogService, compareCatalogVersions, RepositoryDetails, VersionDownloads } from "./catalog";
 import { CatalogSourceImportModal } from "./source-import-modal";
 import { renderDownloadChart } from "./download-chart";
-import { getCatalogService, getCatalogTryList } from "./obsidian-io";
+import { getCatalogService, getCatalogTryList, getRepositoryDocument } from "./obsidian-io";
 import { CATALOG_SCENARIOS, discoveryOrder, lowExposure, matchesScenario, relevance } from "./discovery";
 import { CatalogTryList, TryDecision } from "./try-list";
+import { RepositoryDocument } from './repository-document';
+import { renderRepositoryDocument } from './document-renderer';
+import { UpdateModal } from '../modal/update-modal';
+import { fetchReleaseVersions, installPluginFromGithub, ReleaseVersion } from '../github-install';
+import { catalogActivity, matchesStoreFilters } from './store-filters';
+import { catalogVersions, installCatalogRelease } from './catalog-installer';
+import { readInstalledRelease, sourceIdentity } from '../updates/update-policy';
+import { toolEnabled } from '../features';
 
 type CatalogTab = "discover" | "browse" | "try-list" | "sources";
 
@@ -33,11 +41,15 @@ export class CatalogModal extends Modal {
     private sort = "discover";
     private installed = "all";
     private openness = "all";
+    private minimumDownloads = '0';
+    private recentDays = '0';
     private generation = 0;
     private closed = false;
     private busy = false;
     private selected?: CatalogEntry;
     private repository?: RepositoryDetails;
+    private document?: RepositoryDocument;
+    private versionModal?: UpdateModal;
     private actionButtons: HTMLButtonElement[] = [];
     private readonly pageSize = 24;
     private filterSelects: ScopeSelect[] = [];
@@ -62,6 +74,7 @@ export class CatalogModal extends Modal {
     }
 
     public onOpen(): void {
+        if (!toolEnabled(this.manager.settings, 'catalog')) { this.close(); return; }
         this.scrollbars?.destroy();
         this.scrollbars = new FloatingScrollbars(this.modalEl);
         this.closed = false;
@@ -80,6 +93,9 @@ export class CatalogModal extends Modal {
         catch (error) { this.failure(error); }
         try { await this.tryList.load(); this.tryListReady = true; }
         catch (error) { this.failure(error); }
+        if (!this.closed && this.status.getAttribute('role') !== 'alert' && !this.service.getSources().length) {
+            try { await this.refreshSource('official'); } catch (error) { this.failure(error); }
+        }
         if (!this.closed && this.status.getAttribute("role") !== "alert") this.status.setText("");
         if (!this.closed) this.render();
     }
@@ -260,7 +276,14 @@ export class CatalogModal extends Modal {
             new ScopeSelect(filters, this.t("目录_开闭源简写"), "code", this.openness,
                 [["all", "目录_全部"], ["open-source", "目录_开源"], ["closed-source", "目录_闭源"], ["unknown", "目录_未知"]]
                     .map(([value, key]) => ({ value, label: this.t(key) })),
-                value => { this.openness = value; this.page = 0; this.renderList(); }));
+                value => { this.openness = value; this.page = 0; this.renderList(); }),
+            new ScopeSelect(filters, this.t('目录_最低下载量'), 'download', this.minimumDownloads,
+                [0, 100, 1000, 10000].map(value => ({ value: `${value}`, label: value ? `≥ ${value.toLocaleString()}` : this.t('目录_全部') })),
+                value => { this.minimumDownloads = value; this.page = 0; this.renderList(); }),
+            new ScopeSelect(filters, this.t('目录_近期维护'), 'calendar-clock', this.recentDays,
+                [0, 30, 180, 365].map(value => ({ value: `${value}`, label: value ? this.t('目录_天内', { days: value }) : this.t('目录_全部') })),
+                value => { this.recentDays = value; this.page = 0; this.renderList(); }));
+        bar.settingEl.createDiv({ cls: 'setting-item-description', text: this.t('目录_维护筛选说明') });
     }
 
     private renderList(): void {
@@ -271,13 +294,14 @@ export class CatalogModal extends Modal {
             return (!this.sourceId || entry.source.id === this.sourceId)
                 && (this.openness === "all" || entry.openness === this.openness)
                 && matchesScenario(entry, this.scenario)
+                && matchesStoreFilters(entry, Number(this.minimumDownloads), Number(this.recentDays))
                 && (this.installed === "all" || (this.installed === "installed" ? installed : !installed))
                 && relevance(entry, this.query) >= 0;
         });
         if (this.tab === "discover" && !this.query.trim() && this.sort === "discover") { this.renderDiscover(entries); return; }
         const ordered = this.sort === "discover" && !this.query.trim() ? discoveryOrder(entries, this.seed) : entries.sort((a, b) => {
             const number = this.sort === "downloads" ? (b.stats?.downloads ?? -1) - (a.stats?.downloads ?? -1)
-                : this.sort === "updated" ? (Date.parse(b.lastMaintainedAt || "") || -1) - (Date.parse(a.lastMaintainedAt || "") || -1)
+                : this.sort === "updated" ? (catalogActivity(b) ?? -1) - (catalogActivity(a) ?? -1)
                 : this.sort === "discover" ? relevance(b, this.query) - relevance(a, this.query) : 0;
             return number || a.name.localeCompare(b.name) || a.key.localeCompare(b.key);
         });
@@ -340,6 +364,7 @@ export class CatalogModal extends Modal {
         this.generation++;
         this.selected = entry;
         this.repository = undefined;
+        this.document = undefined;
         this.render();
         this.contentEl.scrollTop = 0;
     }
@@ -388,13 +413,49 @@ export class CatalogModal extends Modal {
         this.installButton(actions, entry);
     }
 
-    private installButton(container: HTMLElement, entry: CatalogEntry): void {
-        const label = this.t(entry.repo ? "目录_安装入口" : "目录_安装不支持");
+    private installButton(container: HTMLElement, entry: CatalogEntry, showLabel = false): void {
+        const available = Boolean(entry.repo || entry.releases.some(release => release.manifest && release.main));
+        const label = this.t(available ? (this.manager.appPlugins.manifests[entry.id] ? '目录_管理版本' : '目录_选择安装版本') : '目录_安装不支持');
         const button = new ButtonComponent(container).setIcon("download").setTooltip(label)
-            .setDisabled(this.busy || !entry.repo || Boolean(this.manager.appPlugins.manifests[entry.id]));
+            .setDisabled(this.busy || !available);
+        if (showLabel) button.setButtonText(label);
         button.buttonEl.setAttribute("aria-label", label);
-        button.onClick(() => { this.close(); this.install(entry.repo); });
+        button.onClick(() => this.openVersions(entry));
         this.actionButtons.push(button.buttonEl);
+    }
+
+    private openVersions(entry: CatalogEntry): void {
+        const independent = entry.releases.some(release => release.manifest && release.main);
+        if (!independent && !entry.repo) return;
+        const origin = independent ? { kind: 'catalog' as const, key: entry.key, sourceId: entry.source.id, pluginId: entry.id, url: entry.source.url }
+            : { kind: 'github' as const, repo: entry.repo };
+        const identity = sourceIdentity(origin);
+        const installed = Boolean(this.manager.appPlugins.manifests[entry.id]);
+        const stored = readInstalledRelease(this.manager.settings.PLUGIN_INSTALLATIONS?.[entry.id]);
+        const sameSource = stored ? sourceIdentity(stored.source) === identity
+            : !independent && this.manager.settings.REPO_MAP[entry.id]?.toLowerCase() === entry.repo.toLowerCase();
+        const originalBinding = JSON.stringify(stored?.source);
+        const guard = () => {
+            this.manager.updates.assertAllowed(entry.id, identity, selectedVersion);
+            if (JSON.stringify(readInstalledRelease(this.manager.settings.PLUGIN_INSTALLATIONS?.[entry.id])?.source) !== originalBinding) throw new Error(this.t('批量更新_清单变化'));
+            const current = this.service.entries().find(item => item.key === entry.key);
+            if (!current || current.source.url !== entry.source.url) throw new Error(this.t('目录_来源冲突'));
+        };
+        let versions: ReleaseVersion[] = [];
+        let selectedVersion = '';
+        this.versionModal?.close();
+        this.versionModal = new UpdateModal(this.app, this.manager, entry.id, [], undefined, independent ? undefined : entry.repo, async version => {
+            selectedVersion = version;
+            guard();
+            const release = entry.releases.find(release => release.version === version);
+            const manifestVersion = versions.find(release => release.version === version)?.manifestVersion;
+            const ok = independent && release ? await installCatalogRelease(this.manager, entry, release, { guard, expectedManifestVersion: manifestVersion })
+                : await installPluginFromGithub(this.manager, entry.repo, version, !installed, entry.id, { guard, expectedManifestVersion: manifestVersion });
+            if (ok && !this.closed) this.render();
+            return ok;
+        }, { sourceIdentity: identity, displayName: entry.name, sourceConfirmation: installed && !sameSource ? this.t('目录_替换来源说明', { source: entry.source.name }) : undefined,
+            loadVersions: async () => { versions = independent ? await catalogVersions(this.manager, entry) : await fetchReleaseVersions(this.manager, entry.repo, { includeManifest: true }); return versions; } });
+        this.versionModal.open();
     }
 
     private tryButton(container: HTMLElement, entry: CatalogEntry): void {
@@ -466,6 +527,7 @@ export class CatalogModal extends Modal {
 
     private renderDetail(entry: CatalogEntry): void {
         this.detail.empty();
+        this.actionButtons = this.actionButtons.filter(button => button.isConnected);
         const overview = this.detail.createDiv("manager-source-card");
         const primary = this.sectionHeader(overview, entry.name, `${entry.author || entry.publisher || this.unknown()} · ${entry.source.name}`);
         overview.createEl("p", { text: entry.description || this.t("目录_缺少描述") });
@@ -474,13 +536,17 @@ export class CatalogModal extends Modal {
             for (const useCase of entry.useCases) cases.createEl("li", { text: useCase });
         }
         this.tryButton(primary, entry);
-        new ButtonComponent(primary).setButtonText(this.t("目录_安全试用未接入")).setDisabled(true).setTooltip(this.t("目录_试用边界"));
+        this.installButton(primary, entry, true);
+        const installed = this.manager.appPlugins.manifests[entry.id];
+        if (this.manager.history.available && installed && entry.id !== this.manager.manifest.id) new ButtonComponent(primary).setButtonText(this.t('回退_标题'))
+            .onClick(() => { void this.manager.openPluginHistory(entry.id); });
+        this.field(overview, installed ? '目录_已安装版本' : '目录_未安装', installed?.version || this.t('目录_未安装'));
         this.renderStarterMaterial(entry);
         const facts = this.detail.createEl("details", { cls: "manager-source-card" });
         facts.createEl("summary", { text: this.t("目录_来源与兼容性") });
         this.renderFacts(entry, facts);
         const installation = this.detail.createDiv("manager-source-card");
-        const installationActions = this.sectionHeader(installation, this.t("目录_安装"), this.t("目录_试用边界"));
+        const installationActions = this.sectionHeader(installation, this.t("目录_安装"), this.t("目录_历史版本提示"));
         if (entry.repo) {
             new ButtonComponent(installationActions).setButtonText(this.t("目录_手动安装")).onClick(() => { this.close(); this.install(entry.repo); });
             const load = new ButtonComponent(installationActions).setButtonText(this.t("目录_获取仓库"));
@@ -495,7 +561,36 @@ export class CatalogModal extends Modal {
                     .finally(() => { if (!this.closed && generation === this.generation) load.setDisabled(false); });
             });
         }
+        this.renderReadme(entry);
         this.renderStatistics(entry);
+        this.renderReleaseHistory(entry);
+    }
+
+    private renderReadme(entry: CatalogEntry): void {
+        const section = this.detail.createDiv('manager-source-card');
+        const actions = this.sectionHeader(section, 'README', this.t('目录_文档说明'));
+        if (!entry.repo) { section.createEl('p', { text: this.t('目录_文档不可用') }); return; }
+        this.link(section, this.t('目录_问题链接'), `https://github.com/${entry.repo}/issues`);
+        if (this.document) renderRepositoryDocument(section.createDiv(), this.document);
+        else {
+            const load = new ButtonComponent(actions).setButtonText(this.t('目录_加载文档'));
+            const feedback = section.createDiv({ attr: { role: 'status' } });
+            load.onClick(() => {
+                load.setDisabled(true);
+                feedback.setText(this.t('目录_加载'));
+                const generation = this.generation;
+                void getRepositoryDocument(this.manager, entry.repo).then(document => {
+                    if (this.closed || generation !== this.generation || this.selected?.key !== entry.key) return;
+                    this.document = document;
+                    this.renderDetail(entry);
+                }).catch(error => {
+                    if (!this.closed && generation === this.generation && feedback.isConnected) {
+                        feedback.setText(this.t('目录_失败', { message: error instanceof Error ? error.message : this.unknown() }));
+                        load.setDisabled(false);
+                    }
+                });
+            });
+        }
     }
 
     private renderStarterMaterial(entry: CatalogEntry): void {
@@ -526,6 +621,27 @@ export class CatalogModal extends Modal {
         }
     }
 
+    private renderReleaseHistory(entry: CatalogEntry): void {
+        const repository = this.repository;
+        if (!repository?.releases.length) return;
+        const history = this.detail.createEl('details', { cls: 'manager-source-card' });
+        history.createEl('summary', { text: this.t('目录_GitHub发布记录') });
+        const actions = this.sectionHeader(history.createDiv(), this.t('目录_发布记录'));
+        this.installButton(actions, entry, true);
+        for (const release of repository.releases) {
+            const item = history.createEl('details');
+            item.createEl('summary', { text: `${release.tag} · ${this.formatDate(release.publishedAt)}${release.prerelease ? ` · ${this.t('目录_预发布')}` : ''}` });
+            const pageUrl = `https://github.com/${entry.repo}/releases/tag/${encodeURIComponent(release.tag)}`;
+            this.link(item, this.t('目录_仓库'), pageUrl);
+            if (release.notes) item.addEventListener('toggle', () => {
+                if (!item.open || item.dataset.rendered) return;
+                item.dataset.rendered = 'true';
+                renderRepositoryDocument(item.createDiv(), { markdown: release.notes || '', pageUrl,
+                    imageUrl: `https://raw.githubusercontent.com/${entry.repo}/HEAD/README.md`, fetchedAt: repository.fetchedAt });
+            });
+        }
+    }
+
     private renderFacts(entry: CatalogEntry, facts: HTMLElement): void {
         this.field(facts, "目录_来源", `${entry.source.name} · ${this.formatDate(entry.source.fetchedAt)}`);
         this.field(facts, "目录_导入地址", entry.source.url || entry.source.name);
@@ -552,6 +668,10 @@ export class CatalogModal extends Modal {
         const statistics = this.detail.createEl("details", { cls: "manager-source-card" });
         const repository = this.repository;
         statistics.createEl("summary", { text: this.t("目录_统计与维护") });
+        if (repository?.archived) this.detail.createEl('p', { cls: 'mod-warning', text: this.t('目录_已归档提示') });
+        if (repository?.pushedAt && Date.now() - Date.parse(repository.pushedAt) > 365 * 86400000) {
+            this.detail.createEl('p', { cls: 'setting-item-description', text: this.t('目录_维护提示') });
+        }
         // 统计折叠呈现；打开时才构建图表和数据表 / Build charts and tables only when the user opens statistics.
         statistics.addEventListener("toggle", () => {
             if (!statistics.open || statistics.dataset.rendered) return;
@@ -623,6 +743,7 @@ export class CatalogModal extends Modal {
         this.closed = true;
         this.generation++;
         this.importModal?.close();
+        this.versionModal?.close();
         this.filterSelects.forEach(select => select.close());
         this.filterSelects = [];
         this.contentEl.empty();

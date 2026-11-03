@@ -1,5 +1,9 @@
 import { FloatingScrollbars } from '../ui/floating-scrollbars';
 import { TaskCenterView } from '../ui/task-center-view';
+import { ConfigConflictView } from '../settings/conflict-view';
+import { protectionText } from '../settings/protection-text';
+import { SyncNoticeView } from '../ui/sync-notice-view';
+import { ConfigConflictMarkers } from '../settings/conflict-markers';
 import { isToolInPage, ToolScope } from '../ui/tool-visibility';
 import { featureEnabled, toolEnabled, FeatureId, ToolId } from '../features';
 import { DevicePanel } from '../devices/device-panel';
@@ -394,6 +398,11 @@ export class ManagerModal extends Modal {
     private pluginManifestCache?: { source: Record<string, PluginManifest>; plugins: PluginManifest[] };
     private modalChromeEl?: HTMLElement;
     private modalPageEl?: HTMLElement;
+    private conflictView?: ConfigConflictView;
+    private syncNoticeView?: SyncNoticeView;
+    private conflictMarkers?: ConfigConflictMarkers;
+    private conflictObserver?: MutationObserver;
+    private conflictMarkerFrame?: number;
     private pageToolsEl?: HTMLElement;
     private mobileScopeHost?: HTMLElement;
     private mobileOverviewHost?: HTMLElement;
@@ -1331,60 +1340,19 @@ export class ManagerModal extends Modal {
         return getExtraButtonElement(button);
     }
 
-    private async openPluginVersionList(pluginId: string, updateInfo?: PluginUpdateViewStatus | null) {
-        const t = (k: string, vars?: Record<string, string | number | boolean | null | undefined>) => this.manager.translator.t(k, vars);
-        const progress = this.showInlineProgress(t("通知_获取版本中文案"), pluginId);
-        progress.update(0, 1, pluginId);
+    private async openPluginVersionList(pluginId: string, _updateInfo?: PluginUpdateViewStatus | null) {
+        const progress = this.showInlineProgress(this.manager.translator.t('通知_获取版本中文案'), pluginId);
         try {
-            let status = updateInfo ?? (this.manager.updateStatus?.[pluginId] as PluginUpdateViewStatus | undefined);
-            let repo = status?.repo || this.manager.settings.REPO_MAP?.[pluginId] || null;
-            if (!repo) {
-                try {
-                    repo = await this.manager.repoResolver.resolveRepo(pluginId);
-                } catch {
-                    repo = null;
-                }
-            }
-            if (!repo) {
-                new Notice(t("下载更新_缺少仓库提示"));
-                return;
-            }
-
-            const versions = await fetchReleaseVersions(this.manager, repo, { includeManifest: true });
-            if (!status) status = {};
-            status.repo = repo;
-            status.versions = versions;
-            status.error = "";
-            status.message = "";
-            const updateOptions = this.manager.getPluginUpdateCheckOptions();
-            const target = pickSourceTargetRelease({
-                id: pluginId,
-                repo,
-                type: "plugin",
-                mode: "latest",
-                includePrerelease: false,
-                updateCheckMode: updateOptions.updateCheckMode,
-                compatibilityMode: updateOptions.compatibilityMode,
-                updateDelayDays: updateOptions.updateDelayDays || undefined,
-                autoUpdate: false,
-                enabled: true,
-            }, versions);
-            status.remoteVersion = target?.tag || status.remoteVersion || null;
-            this.manager.updateStatus[pluginId] = {
-                ...(this.manager.updateStatus?.[pluginId] ?? {}),
-                ...status,
-            };
-
-            progress.update(1, 1, pluginId);
+            const status = await this.manager.checkUpdateForPlugin(pluginId);
+            if (!status?.versions?.length) { new Notice(status?.error || status?.message || this.manager.translator.t('管理器_选择版本_无版本提示'), 8000); return; }
             this.refreshSinglePluginUpdateUi(pluginId);
             this.updateStats();
-            new UpdateModal(this.app, this.manager, pluginId, versions, status.remoteVersion ?? null, repo).open();
-        } catch (e) {
-            console.error("[BPM] fetch remote versions failed", e);
-            new Notice(t("管理器_选择版本_获取失败提示"), 4000);
-        } finally {
-            progress.hide();
-        }
+            new UpdateModal(this.app, this.manager, pluginId, status.versions, status.remoteVersion, status.repo || undefined, undefined,
+                { sourceIdentity: status.sourceIdentity }).open();
+        } catch (error) {
+            if (this.settings.DEBUG) console.error('[BPM] Version list failed', error);
+            new Notice(`${this.manager.translator.t('管理器_选择版本_获取失败提示')} ${error instanceof Error ? error.message : ''}`, 8000);
+        } finally { progress.hide(); }
     }
 
     private openPluginUpdateModal(pluginId: string, updateInfo: PluginUpdateViewStatus) {
@@ -1650,6 +1618,7 @@ export class ManagerModal extends Modal {
 
         if (titleRow) {
             this.renderPluginReleaseBadge(titleRow, manifest.version);
+            this.renderDesktopOnlyBadge(titleRow, manifest, titleRow.querySelector<HTMLElement>(".manager-item__versions") ?? undefined);
         }
         if (statusChip?.parentElement) this.renderRecentInstallBadge(statusChip.parentElement, this.readRecentInstallTimestamp(pluginId));
 
@@ -1944,6 +1913,8 @@ export class ManagerModal extends Modal {
 
     private setPluginHidden(pluginId: string, hidden: boolean) {
         if (pluginId === this.manager.manifest.id) return;
+        // 隐藏状态属于本机管理器，不写入外域预设；Hide state is local to this device and never saved into a foreign preset.
+        if (this.blockForeignScopeAction(this.manager.translator.t("菜单_隐藏插件_标题"))) return;
         if (hidden) {
             if (!this.settings.HIDES.includes(pluginId)) this.settings.HIDES.push(pluginId);
         } else {
@@ -1964,8 +1935,7 @@ export class ManagerModal extends Modal {
     }
 
     private openSettingsTab(tabId: string) {
-        if (tabId !== this.manager.manifest.id && this.appPlugins.manifests[tabId]
-            && this.blockForeignScopeAction(this.manager.translator.t('管理器_插件设置_描述'))) return;
+        // 打开插件设置只读展示本机配置，不属于外域预设的写入操作。 / Opening settings is read-only and stays available in a foreign preset.
         void (async () => {
             await this.appSetting.open();
             await this.appSetting.openTabById(tabId);
@@ -2032,6 +2002,19 @@ export class ManagerModal extends Modal {
         } finally {
             progress.hide();
         }
+    }
+
+    /** 标记 manifest 声明仅桌面端的插件；Mark plugins whose manifest declares desktop-only support. */
+    private renderDesktopOnlyBadge(parent: HTMLElement, manifest: Pick<PluginManifest, "isDesktopOnly">, versionWrap?: HTMLElement): void {
+        parent.querySelector(".manager-plugin-card__platform-badge")?.remove();
+        if (manifest.isDesktopOnly !== true) return;
+        const label = this.manager.translator.t("管理器_仅桌面端");
+        const badge = createSpan({ cls: "manager-plugin-card__platform-badge" });
+        badge.setAttribute("role", "img");
+        badge.setAttribute("aria-label", label);
+        badge.setAttribute("title", this.manager.translator.t("管理器_仅桌面端_说明"));
+        setIcon(badge.createSpan({ cls: "manager-plugin-card__platform-badge-icon" }), "smartphone");
+        (versionWrap ?? parent).insertAdjacentElement("afterend", badge);
     }
 
     /** 仅标记已安装版本的发布通道；Show the installed version channel, independently of update preferences. */
@@ -2574,6 +2557,8 @@ export class ManagerModal extends Modal {
         const shell = this.contentEl.createDiv("manager-modal-shell");
         const chromeEl = shell.createDiv("manager-modal-chrome");
         this.modalChromeEl = chromeEl;
+        this.conflictView?.destroy();
+        this.conflictView = undefined;
         this.modalPageEl = shell.createDiv("manager-modal-page manager-item-container");
 
         if (Platform.isMobile) {
@@ -2683,6 +2668,7 @@ export class ManagerModal extends Modal {
         // [过滤行]
         const filterWrapper = chromeEl.createDiv("manager-section manager-section--filters");
         this.desktopFilterWrapper = filterWrapper;
+        this.mountConfigConflict(filterWrapper);
         const filterContent = filterWrapper.createDiv("manager-section__content");
         filterContent.addClass("manager-section__content--filters");
 
@@ -2749,6 +2735,8 @@ export class ManagerModal extends Modal {
 
     private renderGlobalTools(parent: HTMLElement): void {
         const t = (key: string) => this.manager.translator.t(key);
+        this.syncNoticeView?.destroy();
+        this.syncNoticeView = new SyncNoticeView(this.manager, parent, () => { if (this.manager.configProtection?.protection.conflict) this.focusConfigConflict(); else this.openSyncNoticeDetail(); });
         this.taskCenterView?.destroy();
         this.taskCenterView = undefined;
         const createIconTool = (icon: string, label: string, onClick: (event: MouseEvent) => void) => {
@@ -2788,6 +2776,7 @@ export class ManagerModal extends Modal {
         more.setAttribute('aria-haspopup', 'menu');
         more.addClass('manager-global-more');
         this.taskCenterView = new TaskCenterView(this.manager, parent, more);
+        this.refreshConfigConflict();
         const close = createIconTool('x', t('通用_关闭窗口'), () => this.close());
         close.addClass('manager-modal-close');
     }
@@ -2804,6 +2793,16 @@ export class ManagerModal extends Modal {
             if (order !== undefined) btn.buttonEl.setCssProps({ "--manager-tool-order": `${order}` });
         };
 
+        const batchUpdateButton = new ButtonComponent(actionBar.controlEl);
+        markTool(batchUpdateButton, 'plugin', 15);
+        batchUpdateButton.setIcon('download').setTooltip(t('批量更新_标题'));
+        batchUpdateButton.buttonEl.setAttribute('aria-label', t('批量更新_标题'));
+        batchUpdateButton.onClick(() => { void this.manager.openBatchUpdates(); });
+        const rulesButton = new ButtonComponent(actionBar.controlEl);
+        markTool(rulesButton, 'plugin', 16);
+        rulesButton.setIcon('list-filter').setTooltip(t('更新规则_标题'));
+        rulesButton.buttonEl.setAttribute('aria-label', t('更新规则_标题'));
+        rulesButton.onClick(() => { void this.manager.openUpdateRules(); });
         const bulkEditButton = new ButtonComponent(actionBar.controlEl);
         markTool(bulkEditButton, "plugin", 20);
         bulkEditButton.setIcon(this.bulkEditMode ? "square-check-big" : "list-plus");
@@ -3013,7 +3012,7 @@ export class ManagerModal extends Modal {
         });
 
         const toolFeatures: Array<[ButtonComponent, ToolId]> = [
-            [updateButton, 'updates'], [bulkEditButton, 'bulkEdit'], [editorButton, 'layoutEditor'],
+            [updateButton, 'updates'], [batchUpdateButton, 'updates'], [rulesButton, 'updates'], [bulkEditButton, 'bulkEdit'], [editorButton, 'layoutEditor'],
             [addSeparatorButton, 'layoutEditor'], [hiddenResetButton, 'layoutEditor'], [reloadButton, 'reload'],
             [catalogButton, 'catalog'], [marketButton, 'pluginMarket'], [appearanceMarketButton, 'appearanceMarket'],
             [saveAppearanceProfileButton, 'appearanceProfiles'],
@@ -3050,7 +3049,8 @@ export class ManagerModal extends Modal {
         this.overviewToolbarLayout = undefined;
         if (this.activePage !== 'plugins') return;
         this.overviewToolbarLayout = new ResponsiveToolbar(row,
-            () => [this.footEl, this.pageToolsEl].filter((el): el is HTMLElement => Boolean(el)));
+            () => [this.footEl, this.pageToolsEl, row.querySelector<HTMLElement>(':scope > .bpm-list-source')]
+                .filter((el): el is HTMLElement => Boolean(el)));
     }
 
     /** 当前栏目即切换入口；A labeled current-page trigger replaces the mixed mobile menu. */
@@ -3153,7 +3153,9 @@ export class ManagerModal extends Modal {
         this.mountOverviewBar();
         if (this.activePage !== "plugins") return;
 
-        const searchWrap = header.createDiv("bpm-mobile-header__search");
+        const filterArea = header.createDiv('bpm-mobile-header__filter-area');
+        this.mountConfigConflict(filterArea);
+        const searchWrap = filterArea.createDiv("bpm-mobile-header__search");
         this.searchEl = new SearchComponent(searchWrap);
         if (this.settings.PERSISTENCE && typeof this.settings.FILTER_SEARCH === "string") {
             this.searchText = this.settings.FILTER_SEARCH;
@@ -3163,7 +3165,7 @@ export class ManagerModal extends Modal {
             this.handleSearchChange(value);
         });
 
-        const filterHeader = header.createDiv("bpm-mobile-header__filters-toggle");
+        const filterHeader = filterArea.createDiv("bpm-mobile-header__filters-toggle");
         const filterIcon = filterHeader.createSpan({ cls: "bpm-mobile-header__filters-icon" });
         setIcon(filterIcon, "filter");
         filterHeader.createSpan({ text: t("通用_过滤排序_文本"), cls: "bpm-mobile-header__filters-label" });
@@ -3178,7 +3180,7 @@ export class ManagerModal extends Modal {
         });
 
         // 激活筛选标签区域
-        const activeFiltersContainer = header.createDiv("bpm-active-filters");
+        const activeFiltersContainer = filterArea.createDiv("bpm-active-filters");
         const updateActiveFilters = () => {
             activeFiltersContainer.empty();
             const currentStatuses = this.getStatusFilterValues();
@@ -3245,7 +3247,7 @@ export class ManagerModal extends Modal {
         };
         updateActiveFilters();
 
-        const filterPanel = header.createDiv(`bpm-mobile-header__filters${this.mobileFiltersCollapsed ? " is-collapsed" : ""}`);
+        const filterPanel = filterArea.createDiv(`bpm-mobile-header__filters${this.mobileFiltersCollapsed ? " is-collapsed" : ""}`);
         // 移动端复用桌面端的字段式过滤器：图标 + 标签 + 复合多选控件。
         const filterFields = filterPanel.createDiv("bpm-mobile-filter-fields");
         this.renderOverviewSort(filterFields);
@@ -3535,6 +3537,10 @@ export class ManagerModal extends Modal {
                 const addContextSeparator = () => {
                     if (hasContextMenuItems) menu.addSeparator();
                 };
+                if (!isSelf && toolEnabled(this.settings, 'updates')) {
+                    menu.addItem(item => item.setTitle(t('更新规则_标题')).setIcon('list-filter').onClick(() => { void this.manager.openUpdateRules(plugin.id); }));
+                    hasContextMenuItems = true;
+                }
                 // 第一组：插件信息类
                 if (this.actionInMore("checkUpdate")) {
                     menu.addItem((item) =>
@@ -3871,6 +3877,10 @@ export class ManagerModal extends Modal {
                 }
             }
             titleRow.appendChild(versionWrap);
+            this.renderDesktopOnlyBadge(titleRow, plugin, versionWrap);
+
+            if (this.manager.history.available && !this.editorMode && !isSelf) new ExtraButtonComponent(titleRow).setIcon('archive-restore')
+                .setTooltip(this.manager.translator.t('回退_标题')).onClick(() => { void this.manager.openPluginHistory(plugin.id); });
 
             // [默认] 笔记图标
             if (ManagerPlugin.note?.length > 0) {
@@ -4315,7 +4325,7 @@ export class ManagerModal extends Modal {
                     openPluginSetting.setIcon("settings");
                     openPluginSetting.setTooltip(this.manager.translator.t("管理器_打开设置_描述"));
                     openPluginSetting.onClick(() => {
-                        if (this.blockForeignScopeAction(this.manager.translator.t("管理器_打开设置_描述"))) return;
+                        // 仅打开设置界面，不修改外域预设。 / Opening the settings tab does not mutate a foreign preset.
                         openPluginSetting?.setDisabled(true);
                         void (async () => {
                             try {
@@ -5417,6 +5427,14 @@ export class ManagerModal extends Modal {
     }
 
     private async checkBetaSource(source: BetaSource): Promise<BetaSource> {
+        const pluginId = this.getPluginIdByRepo(source.repo) || source.id;
+        if (source.type === 'plugin' && this.appPlugins.manifests[pluginId]) {
+            source.id = pluginId;
+            await this.manager.updates.checkTracked(source);
+            await this.refreshSourcePackageCreatedAt(source);
+            await this.manager.saveSettings();
+            return source;
+        }
         try {
             const versions = await fetchReleaseVersions(this.manager, source.repo, { includeManifest: source.type === "plugin" });
             const localVersion = this.getSourceLocalVersion(source);
@@ -5445,7 +5463,10 @@ export class ManagerModal extends Modal {
         }
         if (!reinstall && this.getSourceLocalVersion(source) && !this.sourceHasUpdate(source)) return false;
         const ok = source.type === "plugin"
-            ? await installPluginFromGithub(this.manager, source.repo, targetVersion, true)
+            ? this.appPlugins.manifests[source.id]
+                ? await this.manager.downloadUpdate(source.id, targetVersion)
+                : await installPluginFromGithub(this.manager, source.repo, targetVersion, true, undefined,
+                    { guard: () => this.manager.updates.assertAllowed(source.id, 'github:' + sanitizeRepo(source.repo).toLowerCase(), targetVersion) })
             : await installThemeFromGithub(this.manager, source.repo, targetVersion);
         if (!ok) return false;
 
@@ -8389,6 +8410,20 @@ export class ManagerModal extends Modal {
         }
     }
 
+    private openSyncNoticeDetail(): void {
+        const t = (key: string) => this.manager.translator.t(key);
+        const modal = new Modal(this.app);
+        modal.titleEl.setText(t("同步_循环保护_标题"));
+        modal.contentEl.createEl("p", { text: t("同步_循环保护_说明") });
+        modal.contentEl.createEl("p", { text: t("同步_循环保护_建议") });
+        new Setting(modal.contentEl).addButton((button) => {
+            button.setButtonText(t("通用_关闭_文本"));
+            button.setCta();
+            button.onClick(() => modal.close());
+        });
+        modal.open();
+    }
+
     public refreshDevicePanelIfOpen(): void {
         if (this.activePage === "devices" && this.devicePanel && this.pageEl?.isConnected) {
             this.devicePanel.render(this.pageEl);
@@ -8543,8 +8578,51 @@ export class ManagerModal extends Modal {
         await this.reloadShowData();
     }
 
+    public refreshConfigConflict(): void {
+        const paused = Boolean(this.manager.configProtection?.protection.paused);
+        this.modalEl?.toggleClass('has-config-conflict', paused);
+        this.syncNoticeView?.refresh();
+        this.conflictMarkers?.apply();
+        void this.conflictView?.refresh().catch(error => {
+            if (this.settings.DEBUG) console.error('[BPM] Rendering configuration conflict failed', error);
+            new Notice(protectionText(this.manager, 'error'));
+        });
+    }
+
+    private mountConfigConflict(anchor: HTMLElement): void {
+        this.conflictView?.destroy();
+        anchor.addClass('bpm-config-conflict-anchor');
+        this.conflictView = new ConfigConflictView(this.manager, anchor.createDiv());
+    }
+
+    public focusConfigConflict(): void { this.conflictView?.focus(); }
+
+    private previewConflictPlugin(row: HTMLElement, value: unknown): void {
+        if (!value || typeof value !== 'object' || typeof Reflect.get(value, 'enabled') !== 'boolean') return;
+        const id = row.getAttribute('data-plugin-id') ?? '';
+        const controller = this.pluginCardControllers.get(id);
+        if (!controller || controller.cardEl !== row || id === this.manager.manifest.id) return;
+        const enabled = Reflect.get(value, 'enabled') === true;
+        if (controller.toggleSwitch?.getValue() !== enabled) controller.syncToggleValue?.(enabled);
+        row.toggleClass('is-enabled', enabled);
+        row.toggleClass('is-disabled', !enabled);
+        const label = this.manager.translator.t(enabled ? '管理器_状态_启用中' : '管理器_状态_已禁用');
+        if (controller.statusChip.textContent !== label) controller.statusChip.setText(label);
+        controller.statusChip.toggleClass('is-enabled', enabled);
+        controller.statusChip.toggleClass('is-disabled', !enabled);
+    }
+
     public onOpen() {
         this.manager.beginSettingsEditing(this);
+        this.conflictMarkers = new ConfigConflictMarkers(this.manager, this.modalEl, (row, value) => this.previewConflictPlugin(row, value));
+        this.conflictObserver = new MutationObserver(() => {
+            if (!this.manager.configProtection?.protection.conflict || this.conflictMarkerFrame !== undefined) return;
+            this.conflictMarkerFrame = window.requestAnimationFrame(() => {
+                this.conflictMarkerFrame = undefined;
+                this.conflictMarkers?.apply();
+            });
+        });
+        this.conflictObserver.observe(this.modalEl, { childList: true, subtree: true });
         this.scrollbars?.destroy();
         this.scrollbars = new FloatingScrollbars(this.modalEl);
         void this.openAsync();
@@ -8553,6 +8631,7 @@ export class ManagerModal extends Modal {
     private async openAsync() {
         await this.showHead();
         await this.showData();
+        this.refreshConfigConflict();
         // 移动端不自动聚焦搜索框：会弹出软键盘挡住半个管理器。
         if (!Platform.isMobile) this.searchEl.inputEl.focus();
         this.applyEditingStyle();
@@ -8567,6 +8646,16 @@ export class ManagerModal extends Modal {
     }
 
     public onClose() {
+        this.conflictObserver?.disconnect();
+        this.conflictObserver = undefined;
+        if (this.conflictMarkerFrame !== undefined) window.cancelAnimationFrame(this.conflictMarkerFrame);
+        this.conflictMarkerFrame = undefined;
+        this.conflictMarkers?.destroy();
+        this.conflictMarkers = undefined;
+        this.syncNoticeView?.destroy();
+        this.syncNoticeView = undefined;
+        this.conflictView?.destroy();
+        this.conflictView = undefined;
         this.clearInstallToolbarMenus();
         this.overviewToolbarLayout?.destroy();
         this.overviewToolbarLayout = undefined;

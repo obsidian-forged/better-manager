@@ -2,6 +2,7 @@ import { normalizePath, requestUrl } from "obsidian";
 import Manager from "main";
 import { resolveGithubUrl } from "./github-url";
 import { pluginStorage } from './storage/plugin-storage';
+import { readInstalledRelease } from './updates/update-policy';
 
 /** BPM 自动标记的标签 id。该 id 写入 settings 后不能随显示语言变化。 */
 export const BPM_TAG_ID = "bpm-install";
@@ -189,7 +190,9 @@ export class RepoResolver {
 	 */
 	public async resolveRepo(pluginId: string): Promise<string | null> {
 		const normalizedPluginId = pluginId.trim();
-		if (!normalizedPluginId) return null;
+		if (!normalizedPluginId || this.manager.settings.PLUGIN_SOURCE_UNBOUND?.includes(normalizedPluginId)) return null;
+		const receipt = readInstalledRelease(this.manager.settings.PLUGIN_INSTALLATIONS?.[normalizedPluginId]);
+		if (receipt) return receipt.source.kind === 'github' ? receipt.source.repo : null;
 
 		await this.ensureCacheLoaded();
 
@@ -228,9 +231,22 @@ export class RepoResolver {
 
 		this.cache[normalizedPluginId] = normalizedRepo;
 		this.settingsRepoMap[normalizedPluginId] = normalizedRepo;
+		const receipt = readInstalledRelease(this.manager.settings.PLUGIN_INSTALLATIONS?.[normalizedPluginId]);
+		if (receipt && (receipt.source.kind !== 'github' || receipt.source.repo.toLowerCase() !== normalizedRepo.toLowerCase())) {
+			delete this.manager.settings.PLUGIN_INSTALLATIONS[normalizedPluginId];
+		}
 
 		// 先保存 settings 保证用户数据落盘，再写性能缓存；缓存失败不会丢失用户映射。
+		this.manager.settings.PLUGIN_SOURCE_UNBOUND = (this.manager.settings.PLUGIN_SOURCE_UNBOUND || []).filter(id => id !== normalizedPluginId);
 		await this.manager.saveSettings();
+		await this.writeCache();
+	}
+
+	/** Restore provenance without separately persisting a partial settings transaction. */
+	public async setRepoBinding(pluginId: string, repo: string | null): Promise<void> {
+		await this.ensureCacheLoaded();
+		if (repo) { this.cache[pluginId] = repo; this.settingsRepoMap[pluginId] = repo; }
+		else { delete this.cache[pluginId]; delete this.settingsRepoMap[pluginId]; }
 		await this.writeCache();
 	}
 }

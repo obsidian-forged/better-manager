@@ -38,8 +38,22 @@ function keyed(items: unknown[]): Map<string, unknown> | undefined {
     return result;
 }
 
+/** updatedAt 是对象级 revision；预设和设备记录必须整份保留较新的一份。 */
+const revision = (value: unknown): number | undefined =>
+    isRecord(value) && typeof value.updatedAt === 'number' && Number.isFinite(value.updatedAt)
+        ? value.updatedAt
+        : undefined;
+
 /** 仅本机改过的字段优先；按 ID 合并预设/插件，保留远端独立新增项；Three-way merge local edits. */
 function mergeValue(base: unknown, local: unknown, remote: unknown): unknown {
+    // 带 revision 的对象（预设、设备记录）先按版本整份选择，不能被“本地等于 base”回退到远端旧快照。
+    const localRevision = revision(local);
+    const remoteRevision = revision(remote);
+    if (localRevision !== undefined || remoteRevision !== undefined) {
+        if (localRevision === undefined) return clone(remote);
+        if (remoteRevision === undefined) return clone(local);
+        if (localRevision !== remoteRevision) return clone(localRevision > remoteRevision ? local : remote);
+    }
     if (equal(local, base)) return clone(remote);
     if (equal(remote, base) || equal(local, remote)) return clone(local);
     if (isRecord(base) && isRecord(local) && isRecord(remote)) {
@@ -106,6 +120,12 @@ export class SettingsSessionStore {
         this.editing = true;
     }
 
+    /** 接受当前内存值为新基线，不写盘；避免外部同步回声再次触发写回。 */
+    public markAdopted(value: object): void {
+        this.base = record(clone(value));
+        this.observed = settingsFingerprint(value);
+    }
+
     /** 外部快照是否变化；投影期间只探测，不推进 base/observed。 */
     public hasExternalChange(value: object): boolean {
         return settingsFingerprint(value) !== this.observed;
@@ -152,7 +172,8 @@ export class SettingsSessionStore {
         if (!this.editing && !this.cached && !this.pending) return undefined;
         const remote = record(await this.io.readShared());
         const merged = mergeSettings(this.base, value, remote);
-        if (!equal(merged, remote)) await this.io.writeShared(merged);
+        // 只有本机真的改过才写回；仅仅收到外部快照不能回声写盘。
+        if (!equal(value, this.base) && !equal(merged, remote)) await this.io.writeShared(merged);
         this.observed = settingsFingerprint(merged);
         if (!stillClosed()) return undefined;
         if (this.cached) await this.io.removeCache();

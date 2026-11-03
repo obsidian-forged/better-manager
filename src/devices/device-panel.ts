@@ -13,9 +13,6 @@ export class DevicePanel {
     private selected: DeviceType;
     private root!: HTMLElement;
     private busy = false;
-    private refreshing = false;
-    private refreshTimer?: number;
-    private destroyed = false;
 
     constructor(private readonly manager: Manager) { this.selected = manager.devices.type; }
     private t(key: string, vars?: Record<string, string | number>): string { return this.manager.translator.t(key, vars); }
@@ -37,8 +34,6 @@ export class DevicePanel {
     }
 
     render(container: HTMLElement): void {
-        this.stopAutoRefresh();
-        this.destroyed = false;
         this.root = container;
         container.empty();
         const page = container.createDiv('manager-vault-share');
@@ -89,32 +84,11 @@ export class DevicePanel {
         }
         this.renderPresets(page);
         this.renderDevices(page);
-        void this.refreshFromDisk();
-        // 设备记录不在 data.json 里；页面打开时轻量轮询，另一台设备改名/改类型能尽快出现。
-        this.refreshTimer = window.setInterval(() => { void this.refreshFromDisk(); }, 3000);
-    }
-
-    private stopAutoRefresh(): void {
-        if (this.refreshTimer !== undefined) window.clearInterval(this.refreshTimer);
-        this.refreshTimer = undefined;
+        // 设备记录由 DeviceManager 的文件变更事件合并；面板只被动重绘，不再轮询。
     }
 
     public destroy(): void {
-        this.destroyed = true;
-        this.stopAutoRefresh();
         this.root?.empty();
-    }
-
-    /** 打开设备页时并回其他设备刚同步过来的记录 / Pull records synced in by other devices. */
-    private async refreshFromDisk(): Promise<void> {
-        if (this.refreshing) return;
-        this.refreshing = true;
-        try {
-            if (this.destroyed) return;
-            const changed = await this.manager.devices.mergeDeviceRecords();
-            if (changed && !this.destroyed && this.root.isConnected) this.render(this.root);
-        } catch (error) { this.manager.devices.report(error); }
-        finally { this.refreshing = false; }
     }
 
     private async action(task: () => Promise<void>): Promise<void> {
@@ -123,10 +97,12 @@ export class DevicePanel {
             return;
         }
         this.busy = true;
+        const endAction = this.manager.configProtection?.beginUserAction();
         try {
             await task();
         } catch (error) { this.manager.devices.report(error); }
         finally {
+            endAction?.();
             this.busy = false;
             if (this.root.isConnected) this.render(this.root);
         }
@@ -148,6 +124,7 @@ export class DevicePanel {
             let name = preset.name;
             const row = new Setting(card).setName(preset.name)
                 .setDesc([bound ? this.t('设备_已绑定') : this.t('设备_未绑定'), isDefault ? this.t('设备_默认预设') : ''].filter(Boolean).join(' · '));
+            row.settingEl.setAttribute('data-bpm-preset-id', preset.id);
             row.addButton(button => button.setButtonText(this.t(isDefault ? '设备_默认预设' : '设备_设为默认'))
                 .setDisabled(isDefault).onClick(() => { void this.action(() => devices.setDefaultPreset(preset.id)); }));
             row.addText(text => text.setValue(name).setPlaceholder(this.t('通用_名称_文本')).onChange(value => { name = value; }));

@@ -68,7 +68,7 @@ export interface RepositoryDetails {
     license?: string;
     topics: string[];
     latestPublishedAt?: string;
-    releases: { tag: string; publishedAt?: string; prerelease: boolean; downloads?: number }[];
+    releases: { tag: string; publishedAt?: string; prerelease: boolean; downloads?: number; notes?: string }[];
     releasesTruncated: boolean;
     fetchedAt: number;
     warnings: string[];
@@ -207,7 +207,7 @@ export function parseReleases(value: unknown): RepositoryDetails["releases"] {
         if (!record(item) || item.draft === true || !text(item.tag_name)) return [];
         const asset = Array.isArray(item.assets) ? item.assets.find((asset: unknown) => record(asset) && asset.name === "main.js") : undefined;
         return [{ tag: text(item.tag_name), publishedAt: date(item.published_at), prerelease: item.prerelease === true,
-            downloads: record(asset) ? count(asset.download_count) : undefined }];
+            downloads: record(asset) ? count(asset.download_count) : undefined, notes: text(item.body) || undefined }];
     });
 }
 

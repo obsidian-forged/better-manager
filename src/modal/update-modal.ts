@@ -3,6 +3,15 @@ import Manager from "main";
 import { ReleaseVersion, fetchReleaseVersions } from "src/github-install";
 import { getExtraButtonElement } from "src/obsidian-internals";
 import { pickSourceTargetRelease, releaseIsCompatible } from "src/source-release";
+import { UpdateRulesModal } from '../updates/update-rules-modal';
+import { sourceIdentity } from '../updates/update-policy';
+
+export interface VersionPickerOptions {
+    loadVersions?: () => Promise<ReleaseVersion[]>;
+    sourceIdentity?: string;
+    displayName?: string;
+    sourceConfirmation?: string;
+}
 
 export class UpdateModal extends Modal {
     private manager: Manager;
@@ -13,8 +22,11 @@ export class UpdateModal extends Modal {
     private selectedVersion = "";
     private downloadButton?: HTMLButtonElement;
     private versionListEl?: HTMLElement;
+    private closed = false;
+    private sourceConfirmed = true;
 
-    constructor(app: App, manager: Manager, pluginId: string, versions: ReleaseVersion[], defaultVersion?: string | null, repo?: string) {
+    constructor(app: App, manager: Manager, pluginId: string, versions: ReleaseVersion[], defaultVersion?: string | null, repo?: string,
+        private installVersion?: (version: string) => Promise<boolean>, private options: VersionPickerOptions = {}) {
         super(app);
         this.manager = manager;
         this.pluginId = pluginId;
@@ -24,6 +36,8 @@ export class UpdateModal extends Modal {
     }
 
     async onOpen() {
+        this.closed = false;
+        this.sourceConfirmed = !this.options.sourceConfirmation;
         const { contentEl } = this;
         const t = (k: string, vars?: Record<string, string | number | boolean | null | undefined>) => this.manager.translator.t(k, vars);
         const manifest = this.manager.appPlugins.manifests?.[this.pluginId];
@@ -47,7 +61,7 @@ export class UpdateModal extends Modal {
         setIcon(titleIcon, "package-open");
         const titleText = titleWrap.createDiv("manager-version-picker__title-text");
         titleText.createDiv({ cls: "manager-version-picker__eyebrow", text: t("管理器_选择版本_标题") });
-        titleText.createDiv({ cls: "manager-version-picker__plugin-name", text: manifest?.name || this.pluginId });
+        titleText.createDiv({ cls: "manager-version-picker__plugin-name", text: this.options.displayName || manifest?.name || this.pluginId });
         titleBar.descEl.setText(t("管理器_选择版本_说明"));
         const closeButton = new ExtraButtonComponent(titleBar.controlEl);
         closeButton.setIcon("x");
@@ -57,6 +71,7 @@ export class UpdateModal extends Modal {
         closeButton.onClick(() => this.close());
 
         const page = contentEl.createDiv("manager-version-picker__page");
+        page.createEl('p', { cls: 'setting-item-description', text: t('目录_历史版本提示') });
         const summary = page.createDiv("manager-version-picker__summary");
         const summaryMain = summary.createDiv("manager-version-picker__summary-main");
         summaryMain.createDiv({ cls: "manager-version-picker__summary-title", text: t("管理器_选择版本_列表标题") });
@@ -72,26 +87,31 @@ export class UpdateModal extends Modal {
         this.versionListEl = page.createDiv("manager-version-picker__list");
 
         let versionList = [...this.versions];
-        if (versionList.length === 0 && this.repo) {
+        if (versionList.length === 0 && (this.repo || this.options.loadVersions)) {
             const loading = this.versionListEl.createDiv("manager-version-picker__empty");
             loading.setText(t("管理器_选择版本_获取中"));
             try {
-                versionList = await fetchReleaseVersions(this.manager, this.repo, { includeManifest: true });
+                versionList = this.options.loadVersions ? await this.options.loadVersions() : await fetchReleaseVersions(this.manager, this.repo!, { includeManifest: true });
             } catch (e) {
-                console.error("fetch versions in modal failed", e);
-                new Notice(t("管理器_选择版本_获取失败提示"), 4000);
+                if (this.manager.settings.DEBUG) console.error("fetch versions in modal failed", e);
+                if (!this.closed) {
+                    const reason = e instanceof Error ? e.message : t('安装_错误_通用');
+                    this.versionListEl.createDiv({ text: reason, attr: { role: 'alert' } });
+                    new Notice(`${t("管理器_选择版本_获取失败提示")} ${reason}`, 8000);
+                }
             } finally {
                 loading.remove();
             }
             this.versions = versionList;
         }
+        if (this.closed) return;
 
         const hasDefaultVersion = Boolean(this.defaultVersion && versionList.some((release) => release.version === this.defaultVersion));
         const hasLocalVersion = Boolean(manifest?.version && versionList.some((release) => release.version === manifest.version));
         const updateOptions = this.manager.getPluginUpdateCheckOptions();
-        const target = this.repo ? pickSourceTargetRelease({
+        const target = this.repo || this.options.sourceIdentity ? pickSourceTargetRelease({
             id: this.pluginId,
-            repo: this.repo,
+            repo: this.repo || this.options.sourceIdentity!,
             type: "plugin",
             mode: "latest",
             includePrerelease: false,
@@ -116,9 +136,26 @@ export class UpdateModal extends Modal {
             this.renderVersionList(versionList, manifest?.version || "");
         } else {
             const info = this.versionListEl?.createDiv("manager-version-picker__empty") ?? page.createDiv("manager-version-picker__empty");
-            info.setText(t("管理器_选择版本_无版本提示"));
+            info.setText(t("来源_未获取可安装版本_提示"));
         }
 
+        if (this.options.sourceConfirmation) new Setting(page).setName(t('目录_确认替换来源')).setDesc(this.options.sourceConfirmation)
+            .addToggle(toggle => toggle.setValue(false).onChange(value => { this.sourceConfirmed = value; this.updateDownloadState(); }));
+        const preferences = new Setting(page).setName(t('更新规则_标题'));
+        preferences.addButton(button => button.setButtonText(t('更新规则_标题')).onClick(() => {
+            new UpdateRulesModal(this.app, this.manager, this.pluginId, () => {
+                if (!this.closed) { this.renderVersionList(this.versions, manifest?.version || ''); this.updateDownloadState(); }
+            }).open();
+        }));
+        if (this.identity()) preferences.addButton(button => button.setButtonText(t('更新规则_跳过所选')).onClick(() => {
+            const release = this.versions.find(release => release.version === this.selectedVersion), identity = this.identity();
+            if (!release || !identity) return;
+            button.setDisabled(true);
+            void this.manager.updates.skip(this.pluginId, identity, release).then(() => {
+                if (!this.closed) { this.renderVersionList(this.versions, manifest?.version || ''); this.updateDownloadState(); }
+            }).catch(error => { new Notice(error instanceof Error ? error.message : t('安装_错误_通用')); })
+                .finally(() => button.setDisabled(false));
+        }));
         const footer = new Setting(page);
         footer.settingEl.addClass("manager-version-picker__footer");
         footer.nameEl.empty();
@@ -128,18 +165,14 @@ export class UpdateModal extends Modal {
                 btn.setButtonText(t("管理器_选择版本_切换按钮"));
                 btn.setCta();
                 this.downloadButton = btn.buttonEl;
-                btn.setDisabled(!this.selectedVersion);
-                btn.onClick(async () => {
+                this.updateDownloadState();
+                btn.onClick(() => {
                     btn.setDisabled(true);
-                    try {
-                        const ok = await this.manager.downloadUpdate(this.pluginId, this.selectedVersion);
-                        if (ok) {
-                            new Notice(t("管理器_选择版本_成功提示"), 3000);
-                            this.close();
-                        }
-                    } finally {
-                        btn.setDisabled(false);
-                    }
+                    const version = this.selectedVersion;
+                    this.close();
+                    // 安装任务自行报告结果，弹窗不重复通知 / Installation owns progress and result notices.
+                    void (this.installVersion ? this.installVersion(version) : this.manager.downloadUpdate(this.pluginId, version))
+                        .catch(error => { if (this.manager.settings.DEBUG) console.error('[BPM] Version installation failed', error); new Notice(`${t('安装_错误_通用')} ${error instanceof Error ? error.message : ''}`); });
                 });
             })
             .addButton((btn) => {
@@ -155,6 +188,7 @@ export class UpdateModal extends Modal {
         versionList.forEach((release) => {
             const item = this.versionListEl!.createEl("button", { cls: "manager-version-picker__item" });
             item.type = "button";
+            item.disabled = Boolean(release.minAppVersion && !releaseIsCompatible(release));
             item.toggleClass("is-selected", release.version === this.selectedVersion);
             item.toggleClass("is-current", Boolean(localVersion && release.version === localVersion));
             item.setAttribute("aria-pressed", `${release.version === this.selectedVersion}`);
@@ -169,6 +203,8 @@ export class UpdateModal extends Modal {
             if (release.isGithubLatest) {
                 title.createSpan({ cls: "manager-version-picker__badge is-latest", text: t("兼容性_GitHubLatest") });
             }
+            const blocked = this.manager.updates.blockReason(this.pluginId, this.identity(), release.version);
+            if (blocked) title.createSpan({ cls: 'manager-version-picker__badge', text: this.manager.updates.reasonText(blocked) });
             title.createSpan({
                 cls: `manager-version-picker__badge ${release.prerelease ? "is-prerelease" : "is-stable"}`,
                 text: t(release.prerelease ? "安装_发布类型_预发布" : "安装_发布类型_正式版"),
@@ -178,7 +214,7 @@ export class UpdateModal extends Modal {
                     cls: `manager-version-picker__badge ${releaseIsCompatible(release) ? "is-compatible" : "is-incompatible"}`,
                     text: t(releaseIsCompatible(release) ? "兼容性_兼容" : "兼容性_不兼容"),
                 });
-            }
+            } else title.createSpan({ cls: 'manager-version-picker__badge', text: t('目录_兼容性待验证') });
 
             const meta = main.createDiv("manager-version-picker__item-meta");
             if (release.name && release.name !== release.version) meta.createSpan({ text: release.name });
@@ -191,7 +227,7 @@ export class UpdateModal extends Modal {
             item.addEventListener("click", () => {
                 this.selectedVersion = release.version;
                 this.renderVersionList(versionList, localVersion);
-                this.downloadButton?.removeAttribute("disabled");
+                this.updateDownloadState();
             });
         });
     }
@@ -201,5 +237,16 @@ export class UpdateModal extends Modal {
         if (Number.isNaN(date.getTime())) return value;
         return date.toLocaleDateString();
     }
+
+    private identity(): string | undefined { return this.options.sourceIdentity || (this.repo ? sourceIdentity({ kind: 'github', repo: this.repo }) : undefined); }
+    private updateDownloadState(): void {
+        if (!this.downloadButton) return;
+        const selected = this.versions.find(release => release.version === this.selectedVersion);
+        this.downloadButton.disabled = !selected || !this.sourceConfirmed || Boolean(selected.minAppVersion && !releaseIsCompatible(selected))
+            || Boolean(this.manager.updates.blockReason(this.pluginId, this.identity(), this.selectedVersion))
+            || Boolean(this.identity()?.startsWith('catalog:') && (!selected.manifestUrl || !selected.mainUrl));
+    }
+
+    onClose(): void { this.closed = true; this.contentEl.empty(); }
 }
 

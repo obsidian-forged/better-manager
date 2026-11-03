@@ -1,10 +1,17 @@
+import { UpdateService } from './updates/update-service';
+import type { UpdateStatus } from './updates/types';
+import { PluginHistory } from './rollback/plugin-history';
 import type { ReleaseHighlightsModal } from './modal/release-highlights-modal';
 import { SyncUpdateGuard } from './ui/sync-update-guard';
-import { SettingsSessionStore, settingsFingerprint } from './settings/session-store';
+import { settingsFingerprint } from './settings/session-store';
+import { ProtectedConfigSession } from './settings/protected-session';
+import { detectSyncPlugins } from './settings/sync-detector';
+import { SyncWarningModal } from './settings/sync-warning';
 import { PluginIcons } from './icons/plugin-icons';
 import { pluginStorage } from './storage/plugin-storage';
 import { BackgroundTaskCenter, BackgroundTaskHandle } from './tasks/task-center';
 import { DeviceManager } from './devices/device-manager';
+import { preserveNewerPresets } from './devices/device-presets';
 import { OverviewState } from './overview-state';
 import { featureEnabled, toolEnabled } from './features';
 import { DelayWaitNotice } from './delay-wait-notice';
@@ -23,7 +30,7 @@ import { Notice, Platform, requestUrl } from 'obsidian';
 import { BetaSource, ManagerPlugin, BPM_IGNORE_TAG, EONDR_PLUGIN_TAG_ID } from './data/types';
 import { runMigrations } from './migrations';
 import { migrateLegacyRibbonSettings } from './ribbon-migration';
-import { fetchReleaseVersions, installPluginFromGithub, installThemeFromGithub, ReleaseVersion, sanitizeRepo } from './github-install';
+import { enrichStatisticsVersions, fetchReleaseVersions, installPluginFromGithub, installThemeFromGithub, ReleaseVersion, sanitizeRepo } from './github-install';
 import { performSelfCheck } from './self-check';
 import { SystemRibbonManager } from './manager/system-ribbon-manager';
 import { RibbonGroups, RIBBON_GROUP_ITEM_PREFIX } from './manager/ribbon-groups';
@@ -32,22 +39,6 @@ import { markSourceInstalledRelease, sourceHasUpdate as sourceHasConfiguredUpdat
 import { LeftRibbonLike, ObsidianAppWithInternals, ObsidianPluginRegistry, RibbonNativeItem, WindowWithMoment, WorkspaceWithRibbon } from './obsidian-internals';
 import type { RibbonModal } from './modal/ribbon-modal';
 import { githubProxyEnabled, resolveGithubUrl } from './github-url';
-
-type UpdateSource = 'official' | 'github' | 'unknown';
-interface UpdateStatus {
-    source: UpdateSource;
-    localVersion?: string;
-    remoteVersion?: string | null;
-    remotePublishedAt?: string;
-    hasUpdate?: boolean;
-    message?: string;
-    error?: string;
-    checkedAt?: number;
-    repo?: string | null;
-    versions?: ReleaseVersion[];
-    checkMode?: PluginUpdateCheckMode;
-    updateDelayDays?: number;
-}
 
 interface PluginUpdateCheckOptions {
     updateCheckMode?: PluginUpdateCheckMode;
@@ -117,6 +108,8 @@ type CommunityPluginStatsEntry = Record<string, number | string | undefined>;
 
 export default class Manager extends Plugin {
     public readonly pluginIcons = new PluginIcons(this);
+    public readonly updates = new UpdateService(this);
+    public readonly history = new PluginHistory(this);
     /** 设置页任务入口读取的在线下载/检查进度 / Progress shown by the settings task entry. */
     public readonly tasks = new BackgroundTaskCenter();
     /** Serialize settings writes and remember the last successful payload. */
@@ -124,7 +117,8 @@ export default class Manager extends Plugin {
     private persistedSettingsJson = '';
     private readonly syncUpdateGuard = new SyncUpdateGuard();
     private settingsTab?: ManagerSettingTab;
-    private settingsSession?: SettingsSessionStore;
+    public configProtection?: ProtectedConfigSession;
+    private syncWarningModal?: SyncWarningModal;
     private readonly settingsEditors = new Set<object>();
     private noteTip!: NoteTipFeature;
     public settings!: ManagerSettings;
@@ -141,10 +135,15 @@ export default class Manager extends Plugin {
     public systemRibbonManager?: SystemRibbonManager;
     private ribbonGroups = new RibbonGroups(this);
     public updateStatus: Record<string, UpdateStatus> = {};
+    private officialStatsCache: { at: number; entries: Record<string, CommunityPluginStatsEntry> } | null = null;
     private updateProgressNotice: Notice | null = null;
     private updateProgressTask: BackgroundTaskHandle | null = null;
     private pendingExternalDeviceApply = false;
     private externalDeviceApplyRunning = false;
+    /** 最近一次外部设置快照时间；自动保存遇到同步回声时让路，避免写回死循环。 */
+    private lastExternalSettingsAt = 0;
+    private automaticSaveTimer: number | undefined;
+    private suppressAutomaticSaves = false;
 
 
     // 拖拽隐藏功能相关状态
@@ -186,6 +185,7 @@ export default class Manager extends Plugin {
     public async onload() {
         this.appPlugins = (this.app as ObsidianAppWithInternals).plugins;
         this.appWorkspace = this.app.workspace;
+        this.detectReloadLoop();
 
         console.log(`%c ${this.manifest.name} %c v${this.manifest.version} `, `padding: 2px; border-radius: 2px 0 0 2px; color: #fff; background: #5B5B5B;`, `padding: 2px; border-radius: 0 2px 2px 0; color: #fff; background: #409EFF;`);
         await this.loadSettings();
@@ -209,6 +209,7 @@ export default class Manager extends Plugin {
         // 物化当前语言表：en / zh_cn 已常驻，其余语言在这里懒加载完成，
         // 后续 t() 才能直接命中；不 await 会让切换到 ru/ja/... 的用户先看到英文
         await this.translator.ensureLanguage(this.settings.LANGUAGE);
+        this.notifyAutomaticSaveSuppressed();
         let builtinTagsChanged = false;
         const tagCountBeforeBpmEnsure = this.settings.TAGS.length;
         ensureBpmTagExists(this);
@@ -268,12 +269,17 @@ export default class Manager extends Plugin {
         Commands(this.app, this);
 
         if (settingsDirty) {
-            await this.saveSettings();
+            // 迁移/登记只落共享设置，不触碰设备预设；Startup migrations must not capture device state.
+            await this.saveSettings({ captureDevice: false, automatic: true });
         }
 
         this.agreement = new Agreement(this);
         // Keep network activity and source installation out of the Windows cold-start I/O burst.
         this.app.workspace.onLayoutReady(() => {
+            this.scheduleStartupTask("configuration protection", async () => {
+                this.refreshConfigConflict();
+                await this.showSyncWarning();
+            }, 200);
             this.scheduleStartupTask("release highlights", () => this.showReleaseHighlights(), 500);
             this.scheduleStartupTask("plugin updates", () => this.startupCheckForUpdates(), 3000);
             this.scheduleStartupTask("source maintenance", () => this.startupMaintainBetaSources(), 3000);
@@ -298,7 +304,8 @@ export default class Manager extends Plugin {
                 }
                 try {
                     if (this.settings.DEVICE_MANAGEMENT?.enabled) {
-                        await this.devices.apply().catch(error => this.devices.report(error));
+                        // 启动只应用，不把当前运行态回写预设；Opening BPM must not rewrite presets or data.json.
+                        await this.devices.apply({ refreshViews: false, persist: false }).catch(error => this.devices.report(error));
                     } else if (this.settings.DELAY) await this.drainDelayQueue();
                 } catch (error) {
                     this.delayWaitNotice?.stop();
@@ -338,7 +345,10 @@ export default class Manager extends Plugin {
     public onunload() {
         // 卸载后一切延迟回调必须停手，否则会在已卸载的插件上继续操作 ribbon
         this.isUnloaded = true;
+        this.configProtection?.destroy();
+        this.syncWarningModal?.close();
         this.pluginIcons.dispose();
+        this.updates.dispose();
         this.managerModal?.close();
         this.ribbonModal?.close();
         this.settingsTab?.hide();
@@ -350,6 +360,8 @@ export default class Manager extends Plugin {
         void this.devices?.flushProjection().catch(() => { /* 卸载阶段无法提示 */ });
         this.startupTimers.forEach(handle => window.clearTimeout(handle));
         this.startupTimers.clear();
+        if (this.automaticSaveTimer !== undefined) window.clearTimeout(this.automaticSaveTimer);
+        this.automaticSaveTimer = undefined;
         // 打断延时启动队列：清掉休眠/让出句柄，让排空循环立即退出
         this.cancelDelayQueue();
         this.stopRibbonRuntimeFeatures();
@@ -476,7 +488,7 @@ export default class Manager extends Plugin {
                     settingsDirty = true;
                 }
             });
-            if (settingsDirty) void this.saveSettings();
+            if (settingsDirty) void this.saveSettings({ captureDevice: false, automatic: true });
 
             // 2. 写原生状态：BPM 权威，覆盖原生显隐与顺序
             let ribbonChanged = false;
@@ -910,43 +922,35 @@ export default class Manager extends Plugin {
         const storage = this.app as unknown as { loadLocalStorage(key: string): unknown; saveLocalStorage(key: string, value: unknown): void };
         const stored = storage.loadLocalStorage('bpm-settings-cache-owner');
         const owner = typeof stored === 'string' && /^[a-z0-9-]{8,80}$/.test(stored) ? stored
-            : globalThis.crypto?.randomUUID?.() ?? `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+            : window.crypto?.randomUUID?.() ?? `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
         if (stored !== owner) storage.saveLocalStorage('bpm-settings-cache-owner', owner);
-        const adapter = this.app.vault.adapter;
-        const folder = `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
-        const storageFiles = pluginStorage(this);
-        const recoveryName = `recovery/${owner}.cache`;
-        const legacyCache = `${folder}/data-${owner}.cache`;
-        this.settingsSession = new SettingsSessionStore({
-            readShared: async () => this.normalizeSettings(await adapter.exists(`${folder}/data.json`)
-                ? JSON.parse(await adapter.read(`${folder}/data.json`)) as unknown : await this.loadData()),
-            writeShared: value => this.saveData(value),
-            readCache: async () => {
-                const text = await storageFiles.read('data', recoveryName, [legacyCache], true);
-                return text === undefined ? null : JSON.parse(text) as unknown;
-            },
-            writeCache: value => storageFiles.write('data', recoveryName, JSON.stringify(value, null, 2)),
-            removeCache: () => storageFiles.remove('data', recoveryName, [legacyCache]),
-        }, owner);
-        this.settings = this.normalizeSettings(await this.settingsSession.load()) as unknown as ManagerSettings;
+        this.configProtection = new ProtectedConfigSession(this, owner, value => this.normalizeSettings(value),
+            () => { if (this.translator && !this.isUnloaded) this.refreshConfigConflict(); });
+        this.settings = this.normalizeSettings(await this.configProtection.load()) as unknown as ManagerSettings;
         this.persistedSettingsJson = JSON.stringify(this.settings);
     }
 
     private normalizeSettings(value: unknown): Record<string, unknown> {
         if (value !== null && value !== undefined && (typeof value !== 'object' || Array.isArray(value))) throw new Error('Invalid BPM settings file');
-        return { ...DEFAULT_SETTINGS, ...value };
+        const settings: Record<string, unknown> = { ...DEFAULT_SETTINGS, ...value };
+        delete settings._bpmRevision;
+        return settings;
     }
 
     /** 保持设置对象引用，外部更新只替换数据，不驱动视图/外观重建；Preserve references without redrawing. */
     private adoptSettings(value: object): void {
         const next = this.normalizeSettings(value) as unknown as ManagerSettings;
+        // 同步快照不能覆盖刚配置好的本机预设；Never let a stale snapshot replace a newer local preset.
+        if (!this.configProtection) preserveNewerPresets(next.DEVICE_MANAGEMENT, this.settings.DEVICE_MANAGEMENT);
         const devices = this.settings.DEVICE_MANAGEMENT?.devices;
         if (next.DEVICE_MANAGEMENT) next.DEVICE_MANAGEMENT = { ...next.DEVICE_MANAGEMENT, devices: devices ?? [] };
         const target = this.settings as unknown as Record<string, unknown>;
         const incoming = next as unknown as Record<string, unknown>;
         for (const key of Object.keys(target)) if (!(key in incoming)) delete target[key];
         Object.assign(this.settings, next);
-        this.persistedSettingsJson = JSON.stringify(this.devices?.persistedSettings() ?? this.settings);
+        const persisted = this.devices?.persistedSettings() ?? this.settings;
+        this.persistedSettingsJson = JSON.stringify(persisted);
+        // 接受合并结果为基线，但不写盘；外部同步回声不能触发下一次写入。
     }
 
     /** 外部合并后，用磁盘快照决定下次保存是否真的需要写盘。 */
@@ -966,9 +970,28 @@ export default class Manager extends Plugin {
         return pending;
     }
 
+    public refreshConfigConflict(): void {
+        this.managerModal?.refreshConfigConflict?.();
+        this.settingsTab?.refreshConfigConflict();
+    }
+
+    private async showSyncWarning(): Promise<void> {
+        const adapter = this.app.vault.adapter;
+        const path = `${this.app.vault.configDir}/core-plugins.json`;
+        const core: unknown = await adapter.exists(path) ? JSON.parse(await adapter.read(path)) : [];
+        const official = Array.isArray(core) ? core.includes('sync') : core !== null && typeof core === 'object'
+            && Reflect.get(core, 'sync') === true;
+        const detected = detectSyncPlugins(this.appPlugins.enabledPlugins, official);
+        if (!detected.length || this.isUnloaded) return;
+        this.syncWarningModal = new SyncWarningModal(this, detected);
+        this.syncWarningModal.open();
+    }
+
     public beginSettingsEditing(editor: object): void {
+        if (this.settingsEditors.has(editor)) return;
+        const first = this.settingsEditors.size === 0;
         this.settingsEditors.add(editor);
-        this.settingsSession?.begin();
+        if (first) this.configProtection?.begin();
     }
 
     public endSettingsEditing(editor: object): void {
@@ -977,7 +1000,7 @@ export default class Manager extends Plugin {
         void this.queueSettingsOperation(async () => {
             if (this.settingsEditors.size || this.isUnloaded) return;
             const beforeBound = this.devices?.boundRuntimeFingerprint() ?? '';
-            const merged = await this.settingsSession?.finish(this.devices?.persistedSettings() ?? this.settings,
+            const merged = await this.configProtection?.finish(this.devices?.persistedSettings() ?? this.settings,
                 () => this.settingsEditors.size === 0 && !this.isUnloaded);
             if (merged) this.adoptSettings(merged);
             if (beforeBound !== (this.devices?.boundRuntimeFingerprint() ?? '') && this.devices?.data.enabled) {
@@ -1020,20 +1043,16 @@ export default class Manager extends Plugin {
                 const path = `${this.app.vault.configDir}/plugins/${this.manifest.id}/data.json`;
                 const incoming = this.normalizeSettings(JSON.parse(await this.app.vault.adapter.read(path)) as unknown);
                 const visible = this.settingsEditors.size > 0;
-                const changed = this.settingsSession?.hasExternalChange(incoming)
+                const changed = this.configProtection?.hasExternalChange(incoming)
                     ?? settingsFingerprint(incoming) !== settingsFingerprint(this.settings);
+                if (changed) this.lastExternalSettingsAt = Date.now();
                 if (this.syncUpdateGuard.observe(changed)) {
                     new Notice(this.translator.t('同步_外部更新提醒'), 10_000);
                 }
                 // Protect local edits on the first external change, not after a frequency threshold.
-                if (changed && visible) await this.settingsSession?.activateCache(this.devices?.persistedSettings() ?? this.settings);
-                if (this.devices?.isProjectingForeign()) {
-                    const recordsChanged = await this.devices.mergeDeviceRecords();
-                    if (recordsChanged && !visible) this.managerModal?.refreshDevicePanelIfOpen();
-                    return;
-                }
+                if (changed && visible) await this.configProtection?.activateCache(this.devices?.persistedSettings() ?? this.settings);
                 const beforeBound = this.devices?.boundRuntimeFingerprint() ?? '';
-                const result = this.settingsSession?.external(incoming, this.settings);
+                const result = await this.configProtection?.external(incoming, this.devices?.persistedSettings() ?? this.settings);
                 if (result?.apply) {
                     this.adoptSettings(result.apply);
                     this.markExternalPersistence(incoming);
@@ -1042,7 +1061,7 @@ export default class Manager extends Plugin {
                     if (recordsChanged && !visible) this.managerModal?.refreshDevicePanelIfOpen();
                     const afterBound = this.devices?.boundRuntimeFingerprint() ?? '';
                     if (beforeBound !== afterBound && this.devices?.data.enabled) this.pendingExternalDeviceApply = true;
-                } else if (!this.settingsSession) {
+                } else if (!this.configProtection) {
                     this.adoptSettings(incoming);
                 }
                 if (this.settings.DEBUG) console.log('[BPM] External settings merged without rebuilding open views');
@@ -1055,7 +1074,15 @@ export default class Manager extends Plugin {
         }
     }
 
-    public async saveSettings(options: { captureDevice?: boolean } = {}) {
+    public async saveSettings(options: { captureDevice?: boolean; automatic?: boolean } = {}) {
+        // 外部同步刚写入时，自动保存先让路，避免“同步写入 → BPM 写回 → ACK”死循环。
+        if (options.automatic && !this.configProtection) {
+            if (this.suppressAutomaticSaves) return;
+            if (Date.now() - this.lastExternalSettingsAt < 2000) {
+                this.scheduleAutomaticSave();
+                return;
+            }
+        }
         const save = async () => {
             if (options.captureDevice !== false) this.devices?.capture();
             // 其他设备同步过来的设备记录只存在于磁盘，先并回内存再整份写回。
@@ -1065,11 +1092,63 @@ export default class Manager extends Plugin {
             const settings = this.devices?.persistedSettings() ?? this.settings;
             const serialized = JSON.stringify(settings);
             if (serialized === this.persistedSettingsJson) return;
-            if (this.settingsSession) await this.settingsSession.save(settings);
+            if (this.configProtection) await this.configProtection.save(settings, options.automatic);
             else await this.saveData(settings);
             this.persistedSettingsJson = serialized;
         };
         await this.queueSettingsOperation(save);
+    }
+
+    /** 外部同步静默 2 秒后再补一次自动保存；期间持续收到回波则继续等待。 */
+    private scheduleAutomaticSave(): void {
+        if (this.automaticSaveTimer !== undefined || this.isUnloaded) return;
+        this.automaticSaveTimer = window.setTimeout(() => {
+            this.automaticSaveTimer = undefined;
+            if (this.isUnloaded) return;
+            if (Date.now() - this.lastExternalSettingsAt < 2000) {
+                this.scheduleAutomaticSave();
+                return;
+            }
+            void this.saveSettings({ captureDevice: false, automatic: true });
+        }, 2000) as unknown as number;
+    }
+
+    /** 30 秒内反复重载说明被同步插件热重载；本会话停止自动保存，避免写回循环。 */
+    private detectReloadLoop(): void {
+        try {
+            const key = 'better-plugins-manager-load-times';
+            const now = Date.now();
+            const raw = window.localStorage.getItem(key);
+            const parsed: unknown = raw ? JSON.parse(raw) : [];
+            const recent = Array.isArray(parsed)
+                ? parsed.filter((value): value is number => typeof value === 'number'
+                    && Number.isFinite(value) && now - value >= 0 && now - value < 30_000)
+                : [];
+            recent.push(now);
+            window.localStorage.setItem(key, JSON.stringify(recent.slice(-8)));
+            this.suppressAutomaticSaves = recent.length >= 2;
+        } catch {
+            this.suppressAutomaticSaves = false;
+        }
+    }
+
+    /** 供管理器在“更多”按钮上显示同步保护标记。 */
+    public get automaticSavesSuppressed(): boolean {
+        return this.suppressAutomaticSaves;
+    }
+
+    /** 停止自动保存时提示一次，避免用户以为设置丢失。 */
+    private notifyAutomaticSaveSuppressed(): void {
+        if (!this.suppressAutomaticSaves) return;
+        try {
+            const key = 'better-plugins-manager-loop-notice';
+            const last = Number(window.localStorage.getItem(key) || 0);
+            if (Number.isFinite(last) && Date.now() - last < 5 * 60 * 1000) return;
+            window.localStorage.setItem(key, String(Date.now()));
+        } catch {
+            // localStorage 不可用时仍然提示，避免静默失败。
+        }
+        new Notice(this.translator.t("同步_循环保护_说明"), 10_000);
     }
 
     /** 打开管理器：命令、功能区图标共用，已打开时先关闭旧实例避免多个弹窗叠加。 */
@@ -1170,7 +1249,7 @@ export default class Manager extends Plugin {
             try {
                 storage.setSecret?.(GITHUB_TOKEN_SECRET_ID, legacy);
                 this.settings.GITHUB_TOKEN = "";
-                await this.saveSettings();
+                await this.saveSettings({ automatic: true });
             } catch (error) {
                 if (this.settings.DEBUG) console.error("[BPM] migrate GitHub token to secret storage failed", error);
             }
@@ -1285,28 +1364,29 @@ export default class Manager extends Plugin {
     }
 
     private async startupCheckForUpdates() {
-        if (!featureEnabled(this.settings, 'plugins') || !toolEnabled(this.settings, 'updates')) return;
-        if (!this.settings.STARTUP_CHECK_UPDATES) return;
+        if (!featureEnabled(this.settings, 'plugins') || !toolEnabled(this.settings, 'updates') || !this.settings.STARTUP_CHECK_UPDATES) return;
         try {
-            const manifests = Object.values(this.appPlugins.manifests).filter((pm: PluginManifest) => pm.id !== this.manifest.id);
-            const progress = this.showUpdateProgress(manifests.length);
-            let processed = 0;
-            const status = await this.checkUpdates({
-                onProgress: () => { processed++; progress.update(processed); },
-                isCancelled: () => progress.isCancelled()
-            });
-            const count = Object.values(status || {}).filter(s => s.hasUpdate).length;
-            if (count > 0) {
-                const msg = this.translator.t("通知_可更新数量").replace("{count}", `${count}`);
-                new Notice(msg, 5000);
-            }
-            progress.dispose();
-        } catch (e) {
-            if (this.settings.DEBUG) console.error("[BPM] startup check updates failed", e);
-            if (!githubProxyEnabled(this) && !this.hasGithubToken()) {
-                new Notice(this.translator.t("通知_检查更新失败_建议Token"));
-            }
-        }
+            const status = await this.checkUpdates();
+            const count = Object.entries(status).filter(([id, item]) => item.hasUpdate && !this.updates.muted(id)).length;
+            if (count) new Notice(this.translator.t('通知_可更新数量', { count }), 5000);
+        } catch (error) { if (this.settings.DEBUG) console.error('[BPM] Startup updates failed', error); }
+    }
+
+    public async openPluginHistory(pluginId?: string): Promise<void> {
+        if (!this.history.available) return;
+        const { HistoryModal } = await import('./rollback/history-modal.js');
+        new HistoryModal(this.app, this, pluginId).open();
+    }
+
+    public async openUpdateRules(pluginId?: string): Promise<void> {
+        const { UpdateRulesModal } = await import('./updates/update-rules-modal.js');
+        new UpdateRulesModal(this.app, this, pluginId).open();
+    }
+
+    public async openBatchUpdates(): Promise<void> {
+        if (!featureEnabled(this.settings, 'plugins') || !toolEnabled(this.settings, 'updates')) return;
+        const { BatchUpdateModal } = await import('./updates/batch-update-modal.js');
+        new BatchUpdateModal(this.app, this).open();
     }
 
     private sourceHasUpdate(source: BetaSource): boolean {
@@ -1333,22 +1413,22 @@ export default class Manager extends Plugin {
     }
 
     private async checkBetaSource(source: BetaSource): Promise<void> {
-        try {
-            const versions = await fetchReleaseVersions(this, source.repo, { includeManifest: source.type === "plugin" });
-            let localVersion = source.localVersion || "";
-            if (source.type === "plugin") {
-                const pluginId = this.getBetaSourcePluginId(source);
-                localVersion = (this.appPlugins.manifests[pluginId] as PluginManifest | undefined)?.version || source.localVersion || "";
-            }
-            const releaseCheck = syncSourceReleaseCheck(source, versions, localVersion);
-            if (source.mode === "frozen" && !source.frozenVersion) source.frozenVersion = releaseCheck.target?.tag;
-            source.lastChecked = Date.now();
-            source.error = "";
+        if (source.type === 'plugin') {
+            this.getBetaSourcePluginId(source);
+            await this.updates.checkTracked(source);
             await this.refreshBetaSourceInstalledAt(source);
-        } catch (e) {
-            source.error = (e as Error)?.message || String(e);
+            return;
+        }
+        try {
+            const versions = await fetchReleaseVersions(this, source.repo);
+            const check = syncSourceReleaseCheck(source, versions, source.localVersion);
+            if (source.mode === 'frozen' && !source.frozenVersion) source.frozenVersion = check.target?.tag;
             source.lastChecked = Date.now();
-            if (this.settings.DEBUG) console.error("[BPM] beta source check failed", source.repo, e);
+            source.error = '';
+            await this.refreshBetaSourceInstalledAt(source);
+        } catch (error) {
+            source.error = error instanceof Error ? error.message : 'Unknown error';
+            if (this.settings.DEBUG) console.error('[BPM] Theme source check failed', error);
         }
     }
 
@@ -1362,8 +1442,8 @@ export default class Manager extends Plugin {
             await this.checkBetaSource(source);
         }
 
-        await this.saveSettings();
-        const count = sources.filter((source) => this.sourceHasUpdate(source)).length;
+        await this.saveSettings({ captureDevice: false, automatic: true });
+        const count = sources.filter(source => this.sourceHasUpdate(source) && (source.type !== 'plugin' || !this.updates.muted(source.id))).length;
         if (count > 0) {
             new Notice(this.translator.t("通知_来源可更新数量", { count }), 5000);
         }
@@ -1377,65 +1457,28 @@ export default class Manager extends Plugin {
 
     private async startupUpdateBetaSources() {
         if (!this.settings.SOURCE_AUTO_UPDATE) return;
-
-        const sources = (this.settings.BETA_SOURCES || []).filter(s => s.enabled && s.autoUpdate);
-        if (sources.length === 0) return;
+        const sources = (this.settings.BETA_SOURCES || []).filter(source => source.enabled && source.autoUpdate);
         for (const source of sources) {
             try {
-                const checkedRecently = source.lastChecked && Date.now() - source.lastChecked < 60_000;
-                let targetVersion = checkedRecently
-                    ? source.latestReleaseTag || source.latestVersion || ""
-                    : "";
-                let targetPublishedAt = checkedRecently
-                    ? source.latestReleasePublishedAt || source.latestPublishedAt
-                    : undefined;
-                if (!targetVersion) {
-                    const versions = await fetchReleaseVersions(this, source.repo, { includeManifest: source.type === "plugin" });
-                    let localVersion = source.localVersion || "";
-                    if (source.type === "plugin") {
-                        const pluginId = this.getBetaSourcePluginId(source);
-                        localVersion = (this.appPlugins.manifests[pluginId] as PluginManifest | undefined)?.version || source.localVersion || "";
-                    }
-                    const releaseCheck = syncSourceReleaseCheck(source, versions, localVersion);
-                    if (source.mode === "frozen" && !source.frozenVersion) source.frozenVersion = releaseCheck.target?.tag;
-                    targetVersion = releaseCheck.target?.tag || "";
-                    targetPublishedAt = releaseCheck.target?.publishedAt;
-                    source.lastChecked = Date.now();
-                    source.error = "";
-                }
-
-                if (!targetVersion) continue;
-                const configuredTargetVersion = source.mode === "frozen"
-                    ? source.frozenVersion || source.latestReleaseTag || source.latestVersion || ""
-                    : source.latestReleaseTag || source.latestVersion || "";
-                if (source.type === "plugin") {
-                    const pluginId = this.getBetaSourcePluginId(source);
-                    const localVersion = (this.appPlugins.manifests[pluginId] as PluginManifest | undefined)?.version || source.localVersion || "";
-                    source.localVersion = localVersion;
-                    const needsUpdate = sourceHasConfiguredUpdate(source);
-                    if (needsUpdate && targetVersion === configuredTargetVersion) {
-                        const ok = await installPluginFromGithub(this, source.repo, targetVersion, true);
-                        if (ok) {
-                            this.getBetaSourcePluginId(source);
-                            const manifest = this.appPlugins.manifests[source.id] as PluginManifest | undefined;
-                            markSourceInstalledRelease(source, targetVersion, targetPublishedAt, manifest?.version || targetVersion);
-                        }
+                if (source.type === 'plugin') {
+                    const id = this.getBetaSourcePluginId(source);
+                    if (!this.updates.tracksInstallation(source)) { source.updatePolicyReason = 'source-unavailable'; continue; }
+                    const status = await this.updates.check(id, { force: true });
+                    if (status.hasUpdate && status.target && await this.updates.install(id, status, this.updates.muted(id), status.localVersion)) {
+                        markSourceInstalledRelease(source, status.target.version, status.target.publishedAt, this.appPlugins.manifests[id]?.version);
                     }
                 } else {
-                    const needsUpdate = sourceHasConfiguredUpdate(source);
-                    if (needsUpdate && targetVersion === configuredTargetVersion) {
-                        const ok = await installThemeFromGithub(this, source.repo, targetVersion);
-                        if (ok) markSourceInstalledRelease(source, targetVersion, targetPublishedAt, targetVersion);
-                    }
+                    await this.checkBetaSource(source);
+                    const tag = source.latestReleaseTag || source.latestVersion;
+                    if (tag && sourceHasConfiguredUpdate(source) && await installThemeFromGithub(this, source.repo, tag)) markSourceInstalledRelease(source, tag, source.latestReleasePublishedAt, tag);
                 }
                 await this.refreshBetaSourceInstalledAt(source);
-            } catch (e) {
-                source.error = (e as Error)?.message || String(e);
-                source.lastChecked = Date.now();
-                if (this.settings.DEBUG) console.error("[BPM] beta source auto update failed", source.repo, e);
+            } catch (error) {
+                source.error = error instanceof Error ? error.message : 'Unknown error';
+                if (this.settings.DEBUG) console.error('[BPM] Source auto update failed', error);
             }
         }
-        await this.saveSettings();
+        if (sources.length) await this.saveSettings({ captureDevice: false, automatic: true });
     }
 
     public ensureBpmTagAndRecords(): boolean {
@@ -1536,7 +1579,7 @@ export default class Manager extends Plugin {
                 delay: "",
                 note: "",
             });
-            if (shouldSave) void this.saveSettings();
+            if (shouldSave) void this.saveSettings({ automatic: true });
             return true;
         }
         if (!existing.name) {
@@ -1555,7 +1598,7 @@ export default class Manager extends Plugin {
             existing.delay = "";
             changed = true;
         }
-        if (changed && shouldSave) void this.saveSettings();
+        if (changed && shouldSave) void this.saveSettings({ automatic: true });
         return changed;
     }
 
@@ -1970,7 +2013,7 @@ export default class Manager extends Plugin {
             HIDES: this.settings.HIDES,
         });
         const changed = previousStateJson !== nextStateJson;
-        if (changed && shouldSave) void this.saveSettings();
+        if (changed && shouldSave) void this.saveSettings({ automatic: true });
         return changed;
     }
 
@@ -2083,190 +2126,67 @@ export default class Manager extends Plugin {
         return Number.isFinite(days) && days > 0 ? days : 0;
     }
 
-    private resolvePluginUpdateCheckOptions(options?: PluginUpdateCheckOptions): Required<PluginUpdateCheckOptions> {
-        return {
-            updateCheckMode: this.normalizePluginUpdateCheckMode(options?.updateCheckMode ?? this.settings.PLUGIN_UPDATE_CHECK_MODE),
-            compatibilityMode: this.normalizeReleaseCompatibilityMode(options?.compatibilityMode ?? this.settings.PLUGIN_UPDATE_COMPATIBILITY_MODE),
-            updateDelayDays: this.normalizePluginUpdateDelayDays(options?.updateDelayDays ?? this.settings.PLUGIN_UPDATE_DELAY_DAYS),
-        };
-    }
-
-    private applyPluginUpdateStatus(
-        st: UpdateStatus,
-        pm: PluginManifest,
-        repo: string | null,
-        versions: ReleaseVersion[],
-        fallbackRemoteVersion: string | null | undefined,
-        options: Required<PluginUpdateCheckOptions>
-    ) {
-        const localVersion = pm.version || "0.0.0";
-        const remoteFallback = fallbackRemoteVersion || null;
-        st.localVersion = localVersion;
-        st.repo = repo;
-        st.versions = versions;
-        st.checkMode = options.updateCheckMode;
-        st.updateDelayDays = options.updateDelayDays;
-
-        if (versions.length > 0 && repo) {
-            const source: BetaSource = {
-                id: pm.id,
-                repo,
-                type: "plugin",
-                mode: "latest",
-                includePrerelease: false,
-                updateCheckMode: options.updateCheckMode,
-                compatibilityMode: options.compatibilityMode,
-                updateDelayDays: options.updateDelayDays || undefined,
-                autoUpdate: false,
-                enabled: true,
-                localVersion,
-                latestVersion: remoteFallback || undefined,
-                latestReleaseTag: remoteFallback || undefined,
-            };
-            const releaseCheck = syncSourceReleaseCheck(source, versions, localVersion);
-            st.remoteVersion = releaseCheck.target?.tag || null;
-            st.remotePublishedAt = releaseCheck.target?.publishedAt;
-            st.hasUpdate = sourceHasConfiguredUpdate(source);
-            if (source.deferredPublicationDate) st.message = this.translator.t("更新_发布日期不可用_暂缓");
-            return;
-        }
-
-        st.remoteVersion = remoteFallback;
-        st.hasUpdate = options.updateDelayDays > 0
-            ? false
-            : Boolean(remoteFallback && this.compareVersions(remoteFallback, localVersion) > 0);
-        if (remoteFallback && options.updateDelayDays > 0) st.message = this.translator.t("更新_发布日期不可用_暂缓");
-        else if (!st.remoteVersion) st.message = this.translator.t("更新_未获取到远端版本");
-    }
-
-    // 检测插件更新：官方 + GitHub（BPM 或用户指定仓库）
     public async checkUpdates(opts?: PluginUpdateCheckRunOptions): Promise<Record<string, UpdateStatus>> {
-        const manifests = Object.values(this.appPlugins.manifests).filter((pm: PluginManifest) => pm.id !== this.manifest.id);
-        const officialMap = await this.fetchOfficialStats();
-        const statusMap: Record<string, UpdateStatus> = {};
-        const updateOptions = this.resolvePluginUpdateCheckOptions(opts);
-        this.updateStatus = statusMap;
-
-        if (this.settings.DEBUG) console.log("[BPM] checkUpdates start, total manifests:", manifests.length);
-        for (const pm of manifests) {
-            if (opts?.isCancelled?.()) break;
-            const localVersion = pm.version || "0.0.0";
-            const st: UpdateStatus = { source: 'unknown', localVersion, checkedAt: Date.now() };
-            try {
-                // 1) 官方来源
-                const official = officialMap[pm.id];
-                if (official) {
-                    st.source = 'official';
-                    try {
-                        st.repo = await this.repoResolver.resolveRepo(pm.id);
-                    } catch {
-                        st.repo = null;
-                    }
-                    if (st.repo) {
-                        st.versions = await this.fetchGithubVersions(st.repo, updateOptions.updateCheckMode === "release", true);
-                    }
-                    this.applyPluginUpdateStatus(st, pm, st.repo || null, st.versions || [], official, updateOptions);
-                    if (this.settings.DEBUG) console.log("[BPM] update official match", pm.id, localVersion, "->", st.remoteVersion);
-                } else {
-                    // 2) GitHub：BPM 安装或有仓库映射 / 用户填写
-                    let repo: string | null = this.settings.REPO_MAP[pm.id] || null;
-                    if (!repo) {
-                        try {
-                            repo = await this.repoResolver.resolveRepo(pm.id);
-                        } catch {
-                            // ignore
-                        }
-                    }
-                    if (repo) {
-                        st.source = 'github';
-                        st.repo = repo;
-                        st.versions = await this.fetchGithubVersions(repo, updateOptions.updateCheckMode === "release", true);
-                        const remoteVersion = st.versions.length > 0 ? null : await this.fetchGithubManifestVersion(repo);
-                        this.applyPluginUpdateStatus(st, pm, repo, st.versions || [], remoteVersion, updateOptions);
-                        if (!st.remoteVersion) st.message = this.translator.t("更新_未获取到远端版本");
-                        if (this.settings.DEBUG) console.log("[BPM] update github match", pm.id, repo, localVersion, "->", st.remoteVersion);
-                    } else {
-                        st.source = 'unknown';
-                        st.message = this.translator.t("更新_无来源无法检测");
-                        if (this.settings.DEBUG) console.log("[BPM] update unknown source", pm.id);
-                    }
-                }
-            } catch (e) {
-                st.error = (e as Error)?.message || String(e);
-                console.error("[BPM] checkUpdates error", pm.id, e);
-            }
-            statusMap[pm.id] = st;
-            opts?.onProgress?.(pm.id);
-        }
-        this.updateStatus = statusMap;
-        return statusMap;
+        return this.updates.checkAll(opts);
     }
 
     public async checkUpdateForPlugin(pluginId: string, options?: PluginUpdateCheckOptions): Promise<UpdateStatus | null> {
-        const pm = this.appPlugins.manifests[pluginId] as PluginManifest | undefined;
-        if (!pm) return null;
-        const localVersion = pm.version || "0.0.0";
-        const st: UpdateStatus = { source: "unknown", localVersion, checkedAt: Date.now() };
-        const updateOptions = this.resolvePluginUpdateCheckOptions(options);
-        try {
-            const officialMap = await this.fetchOfficialStats();
-            const official = officialMap[pm.id];
-            if (official) {
-                st.source = "official";
-                try {
-                    st.repo = await this.repoResolver.resolveRepo(pm.id);
-                    if (st.repo) st.versions = await this.fetchGithubVersions(st.repo, updateOptions.updateCheckMode === "release", true);
-                } catch {
-                    if (updateOptions.updateCheckMode === "release") throw new Error(this.translator.t("更新_未获取到远端版本"));
-                }
-                this.applyPluginUpdateStatus(st, pm, st.repo || null, st.versions || [], official, updateOptions);
-                this.updateStatus[pm.id] = st;
-                if (this.settings.DEBUG) console.log("[BPM] single update official", pm.id, localVersion, "->", st.remoteVersion);
-                return st;
-            }
-
-            let repo: string | null = this.settings.REPO_MAP[pm.id] || null;
-            if (!repo) {
-                try { repo = await this.repoResolver.resolveRepo(pm.id); } catch { repo = null; }
-            }
-            if (repo) {
-                st.source = "github";
-                st.repo = repo;
-                st.versions = await this.fetchGithubVersions(repo, updateOptions.updateCheckMode === "release", true);
-                const remoteVersion = st.versions.length > 0 ? null : await this.fetchGithubManifestVersion(repo);
-                this.applyPluginUpdateStatus(st, pm, repo, st.versions || [], remoteVersion, updateOptions);
-                if (!st.remoteVersion) st.message = this.translator.t("更新_未获取到远端版本");
-                if (this.settings.DEBUG) console.log("[BPM] single update github", pm.id, repo, localVersion, "->", st.remoteVersion);
-            } else {
-                st.source = "unknown";
-                st.message = this.translator.t("更新_无来源无法检测");
-                if (this.settings.DEBUG) console.log("[BPM] single update unknown source", pm.id);
-            }
-        } catch (e) {
-            st.error = (e as Error)?.message || String(e);
-            console.error("[BPM] checkUpdateForPlugin error", pm.id, e);
-        }
-        this.updateStatus[pm.id] = st;
-        return st;
+        return this.appPlugins.manifests[pluginId] ? this.updates.check(pluginId, options) : null;
     }
 
-    private async fetchOfficialStats(): Promise<Record<string, string>> {
+    public async fetchOfficialStats(): Promise<Record<string, string>> {
+        const entries = await this.fetchOfficialStatsEntries();
+        const result: Record<string, string> = {};
+        for (const [id, entry] of Object.entries(entries)) { const version = this.getLatestVersionFromStats(entry); if (version) result[id] = version; }
+        return result;
+    }
+
+    private async fetchOfficialStatsEntries(): Promise<Record<string, CommunityPluginStatsEntry>> {
+        if (this.officialStatsCache && Date.now() - this.officialStatsCache.at < 5 * 60 * 1000) return this.officialStatsCache.entries;
         const url = "https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/community-plugin-stats.json";
         try {
             const res = await requestUrl({ url: resolveGithubUrl(this, url) });
             const json = res.json as Record<string, CommunityPluginStatsEntry>;
-            const map: Record<string, string> = {};
+            const entries: Record<string, CommunityPluginStatsEntry> = {};
             Object.entries(json || {}).forEach(([id, entry]) => {
-                if (entry && typeof entry === "object") {
-                    const latest = this.getLatestVersionFromStats(entry);
-                    if (latest) map[id] = latest;
-                }
+                if (entry && typeof entry === "object" && !Array.isArray(entry)) entries[id] = entry;
             });
-            return map;
+            this.officialStatsCache = { at: Date.now(), entries };
+            return entries;
         } catch (e) {
             console.error("获取官方插件 stats 失败", e);
             return {};
         }
+    }
+
+    public async fetchOfficialReleaseVersions(id: string, repo: string): Promise<ReleaseVersion[]> {
+        const entries = await this.fetchOfficialStatsEntries();
+        return entries[id] ? enrichStatisticsVersions(this, repo, this.releaseVersionsFromStats(entries[id])) : [];
+    }
+
+    /** 官方插件默认走官方统计；延迟模式需要真实发布日期，改走 API/Atom。 */
+    private useOfficialStats(updateDelayDays: number): boolean {
+        return this.settings.PLUGIN_UPDATE_OFFICIAL_SOURCE !== "github" && updateDelayDays <= 0;
+    }
+
+    /** 非官方插件默认优先 Atom/raw，避免消耗 GitHub API 额度。 */
+    private useUnofficialFallback(): boolean {
+        return this.settings.PLUGIN_UPDATE_UNOFFICIAL_SOURCE !== "github";
+    }
+
+    private releaseVersionsFromStats(entry: CommunityPluginStatsEntry): ReleaseVersion[] {
+        const versions = Object.keys(entry || {})
+            .filter(key => key !== "downloads" && key !== "updated" && typeof entry[key] !== "undefined")
+            .sort((a, b) => this.compareVersions(b, a));
+        const updated = Number(entry.updated);
+        const publishedAt = Number.isFinite(updated) && updated > 0 ? new Date(updated).toISOString() : undefined;
+        return versions.map((version, index) => ({
+            version,
+            prerelease: false,
+            publishedAt: index === 0 ? publishedAt : undefined,
+            isGithubLatest: index === 0,
+            compatibilityChecked: false,
+        }));
     }
 
     private getLatestVersionFromStats(entry: CommunityPluginStatsEntry): string | null {
@@ -2319,9 +2239,9 @@ export default class Manager extends Plugin {
         return null;
     }
 
-    private async fetchGithubVersions(repoInput: string, throwOnError = false, includeManifest = false): Promise<ReleaseVersion[]> {
+    private async fetchGithubVersions(repoInput: string, throwOnError = false, includeManifest = false, preferFallback = false): Promise<ReleaseVersion[]> {
         try {
-            return await fetchReleaseVersions(this, repoInput, { includeManifest });
+            return await fetchReleaseVersions(this, repoInput, { includeManifest, preferFallback });
         } catch (e) {
             console.error("[BPM] fetchGithubVersions error", repoInput, e);
             if (throwOnError) throw e;
@@ -2330,27 +2250,25 @@ export default class Manager extends Plugin {
     }
 
     public async downloadUpdate(pluginId: string, version?: string): Promise<boolean> {
-        const st = this.updateStatus[pluginId];
-        let repo = st?.repo || this.settings.REPO_MAP[pluginId] || null;
-        if (!repo) {
-            try {
-                repo = await this.repoResolver.resolveRepo(pluginId);
-            } catch { repo = null; }
-        }
-        if (!repo) {
-            new Notice(this.translator.t("下载更新_缺少仓库提示"));
+        try {
+            const status = await this.updates.check(pluginId);
+            if (version) {
+                const release = status.versions?.find(item => item.version === version);
+                if (!release) throw new Error(this.updates.reasonText(status.reason || 'metadata-unavailable'));
+                status.target = release;
+            }
+            const ok = await this.updates.install(pluginId, status);
+            if (ok) {
+                this.managerModal?.refreshPluginCard(pluginId, { allowReload: true });
+                void this.updates.check(pluginId).then(() => this.managerModal?.refreshPluginCard(pluginId, { allowReload: false }))
+                    .catch(error => { if (this.settings.DEBUG) console.error('[BPM] Post-install check failed', error); });
+            }
+            return ok;
+        } catch (error) {
+            if (this.settings.DEBUG) console.error('[BPM] Plugin update failed', error);
+            new Notice(error instanceof Error ? error.message : this.translator.t('安装_错误_通用'));
             return false;
         }
-        const ok = await installPluginFromGithub(this, repo, version, false);
-        if (ok) {
-            await this.checkUpdates();
-            try {
-                this.managerModal?.refreshPluginCard(pluginId, { allowReload: true });
-            } catch {
-                this.reloadIfCurrentModal();
-            }
-        }
-        return ok;
     }
 
     /**

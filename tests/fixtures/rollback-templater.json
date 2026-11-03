@@ -1,0 +1,70 @@
+{
+  "pluginId": "templater-obsidian",
+  "previousVersion": "2.0.0",
+  "currentVersion": "2.26.0",
+  "upstream": "https://github.com/SilentVoid13/Templater",
+  "previous": {
+    "command_timeout": 5,
+    "templates_pairs": [
+      [
+        "alpha",
+        "old command"
+      ],
+      [
+        "beta",
+        "old second command"
+      ]
+    ],
+    "folder_templates": [
+      {
+        "folder": "Journal",
+        "template": "Templates/daily.md"
+      },
+      {
+        "folder": "Projects",
+        "template": "Templates/project.md"
+      }
+    ],
+    "trigger_on_file_creation": false,
+    "enable_system_commands": false,
+    "enable_folder_templates": true,
+    "templates_folder": "Templates/Initial",
+    "user_scripts_folder": "Scripts/Old"
+  },
+  "current": {
+    "data_version": 2,
+    "command_timeout": 11,
+    "templates_pairs": [
+      [
+        "beta",
+        "current second command"
+      ],
+      [
+        "new-user-key",
+        "current extra command"
+      ],
+      [
+        "alpha",
+        "current command"
+      ]
+    ],
+    "folder_templates": [
+      {
+        "folder": "Projects",
+        "template": "Templates/current-project.md"
+      },
+      {
+        "folder": "New user folder",
+        "template": "Templates/new-user.md"
+      },
+      {
+        "folder": "Journal",
+        "template": "Templates/current-journal.md"
+      }
+    ],
+    "file_templates": [],
+    "trigger_on_file_creation_mode": "none",
+    "templates_folder": "Templates/Current",
+    "user_scripts_folder": "Scripts/Current"
+  }
+}

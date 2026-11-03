@@ -41,6 +41,7 @@ class Element {
     querySelectorAll() { return []; }
     setAttribute(name, value) { this.attributes[name] = value; }
     getAttribute(name) { return this.attributes[name] ?? null; }
+    removeAttribute(name) { delete this.attributes[name]; }
     setText(value) { this.text = value; }
     empty() { this.children = []; }
     addEventListener(name, callback) { this.listeners[name] = callback; }
@@ -256,9 +257,11 @@ test('global toolbar keeps settings, More and close, with native contact submenu
     modal.openSettingsTab = id => actions.push(id);
     modal.close = () => actions.push('close');
     modal.renderGlobalTools(host);
-    assert.deepEqual(host.children.map(child => child.icon), ['settings', 'more-vertical', 'x']);
-    host.children[0].listeners.click({}); assert.deepEqual(actions, ['bpm']);
-    const more = host.children[1]; more.listeners.click({});
+    const tools = host.children.filter(child => !child.classes.has('manager-sync-notice'));
+    assert.equal(host.children.find(child => child.classes.has('manager-sync-notice')).classes.has('is-active'), false);
+    assert.deepEqual(tools.map(child => child.icon), ['settings', 'more-vertical', 'x']);
+    tools[0].listeners.click({}); assert.deepEqual(actions, ['bpm']);
+    const more = tools[1]; more.listeners.click({});
     const contacts = lastMenu.items.find(item => item.title === '管理器_联系方式');
     assert.equal(contacts.submenu.items.length, 3);
     assert.ok(contacts.submenu.items.some(item => item.title === '管理器_GITHUB_描述'));
@@ -266,10 +269,10 @@ test('global toolbar keeps settings, More and close, with native contact submenu
     lastMenu.items.find(item => item.title === '任务_标题').click();
     assert.equal(more.attributes['aria-expanded'], 'true');
     assert.equal(lastMenu.items.some(item => item.title === '通用_关闭窗口'), false);
-    host.children[2].listeners.click({});
+    tools[2].listeners.click({});
     assert.deepEqual(actions, ['bpm', 'close']);
     modal.taskCenterView.destroy();
-    assert.equal(host.children.length, 3); assert.equal(body.children.length, 0); assert.equal(unsubscribe, 1);
+    assert.equal(tools.length, 3); assert.equal(body.children.length, 0); assert.equal(unsubscribe, 1);
 });
 
 test('recent installs lead the status options and support the shared window, multi-select and exclusion', async () => {

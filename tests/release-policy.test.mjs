@@ -20,6 +20,20 @@ const settings = (overrides = {}) => ({ id: 'a', repo: 'owner/repo', type: 'plug
     includePrerelease: false, autoUpdate: false, enabled: true, updateDelayDays: 2,
     localVersion: '1.0.0', ...overrides });
 
+test('GitHub Latest wins over a newer compatibility release only on supported Obsidian versions', async () => {
+    const versions = [release('4.14.3', '2026-10-28T00:00:00Z', { minAppVersion: '1.8.0' }),
+        release('4.21.1', '2026-10-20T00:00:00Z', { isGithubLatest: true, minAppVersion: '1.13.0' })];
+    const olderHost = await load('src/source-release.ts', { requireApiVersion: minimum => minimum !== '1.13.0' });
+    assert.equal(olderHost.pickSourceTargetRelease(settings({ updateDelayDays: 0 }), versions)?.tag, '4.14.3');
+    assert.equal(source.pickSourceTargetRelease(settings({ updateDelayDays: 0 }), versions)?.tag, '4.21.1');
+});
+
+test('failed manifest lookups cannot be recommended as compatible releases', () => {
+    const versions = [release('2.0.0', '2026-10-20T00:00:00Z', { isGithubLatest: true, compatibilityChecked: false }),
+        release('1.0.0', '2026-10-19T00:00:00Z', { minAppVersion: '1.8.0', compatibilityChecked: true })];
+    assert.equal(source.pickSourceTargetRelease(settings({ updateDelayDays: 0 }), versions)?.tag, '1.0.0');
+});
+
 test('GitHub stable metadata cannot promote SemVer prereleases', () => {
     for (const tag of ['1.33.0-rc-1', 'v1.33.0-rc.1', '1.33.0-beta.1', '2.0.0-1+build.2']) {
         assert.equal(policy.isPrereleaseRelease(tag, false), true, tag);

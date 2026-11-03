@@ -4,7 +4,7 @@
 
 用延迟启动、批量管理、分组标签、设备预设和清晰的管理界面，整理你的插件工作流。
 
-[1.2.6 更新说明](release-notes-1.2.6.md)
+[1.2.12 更新说明](release-notes-1.2.12.md)
 
 [English](https://github.com/obsidian-forged/better-manager/blob/main/README.md) · [日本語](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_JA.md) · [한국어](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_KO.md) · [Español](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_ES.md) · [Français](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_FR.md) · [Русский](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_RU.md) · [版本发布](https://github.com/obsidian-forged/better-manager/releases) · [支持作者](https://ifdian.net/a/eondr)
 
@@ -55,6 +55,12 @@ BPM 按插件、外观、设备、安装来源、迁移和诊断划分页面；�
 | **启动控制** | 分配延迟启动预设，并在列表中查看启动状态 |
 | **插件操作** | 检查更新、下载更新、重启插件、单次启动、打开设置、打开目录、复制 ID、打开仓库、清空配置、隐藏或删除 |
 | **BPM 标签** | BPM 安装的插件会自动标记 `bpm-install`，也支持通过 `bpm-ignore` 忽略管理 |
+
+**更新控制：** 可从总览工具栏、插件右键菜单、版本选择器或基础配置打开“更新规则”，排除某个插件、跳过其安装来源中的指定版本，或将自动提醒静音 1、7、30 天。规则可随时查看和清除，也会保留已卸载插件的规则供检查。静音不隐藏可用更新。
+
+“一键更新可用插件”会先列出当前版本、目标 release、安装来源及跳过原因。确认预览后按顺序安装，目标发生变化时跳过，单项失败后继续其余更新，并保留插件启停状态。完成后显示成功、失败和跳过汇总。命令面板也提供检查更新、预览批量更新和管理规则入口。
+
+网络获取失败会显示 HTTP 状态码，以及服务端提供的原因和重试时间；有明确限流依据时才按限流处理。
 
 ### 🎨 外观总览
 
@@ -201,7 +207,7 @@ BPM 是一个本地 Obsidian 插件管理器，但部分功能会有意使用外
 - **Vault 文件访问**：BPM 会读取插件/主题元数据、用户选中的插件配置文件、迁移包和旧版导出文件夹，用于管理、迁移、备份、导入/导出和冲突排查。BPM 不会把 vault 笔记上传到远程服务。
 - **设备记录**：启用设备管理后，BPM 会为每台设备在插件数据目录写一个小型 JSON 文件（`.obsidian/plugins/better-plugins-manager/data/devices/<id>.json`），用于同步后让各设备互相出现在设备清单里。文件只包含设备 id、显示名称、设备类型和最近上线时间，不含笔记、插件配置或凭据；写入走 Obsidian 的 vault adapter，不访问 vault 外部；从列表移除设备时会删除对应文件。
 - **图标兜底**：优先使用 Obsidian 已注册的图标；指定的 Lucide 图标在本地不存在时，从官方 `lucide-icons/lucide` GitHub 仓库下载 SVG。落到默认插头图标前，BPM 还会查询 Obsidian 社区目录为该插件分配的 Lucide 图标名，并按同样方式解析。SVG 与颜色规则保存到 `data/icons.css`，供离线复用。请求仅含图标名，不含 vault 内容或凭据。可重建的仓库和目录缓存保存在 `cache/`；原生 `data.json` 设置文件保留原位。已有设备与缓存文件会自动迁移。
-- **外部配置与编辑缓存**：首次外部配置变化即提醒暂时关闭外部实时同步，连续提醒按一分钟合并；内容未变以及 BPM 自身成功保存的回声不会触发提醒。打开的 BPM 界面保留当前编辑快照，并使用插件目录下按本机标识区分的 `data/recovery/<local-id>.cache`。最后一个 BPM 界面关闭后，本机改动与最新共享配置合并，保留远端独立改动，同一字段冲突时本机编辑优先；随后应用插件、外观和 Ribbon 的运行配置，不重建 BPM 界面。仅修改筛选条件不会重新应用运行配置。恢复成功后删除缓存，写回失败则保留并在下次启动恢复；不会采用其他设备的缓存。同步工具可能包含这些文件，请按与 `data.json` 相同的隐私要求处理。
+- **配置保护**：每次启动都会把 BPM 设置、设备记录、图标规则及相关 Obsidian 配置保存为插件内 `.bpm/<local-id>/` 的内容快照，相同内容复用已有副本。编辑先暂存为本机草稿，关闭 BPM 编辑窗口后再保存；共享文件未变时不重写，仅用户修改才产生新的配置修订。并发版本分别保留，等待明确选择；已知旧修订按版本对最多自动恢复一次，反复回灌时暂停恢复。本机恢复锚点保存在 Obsidian 的设备本地存储中。快照可能包含凭据等敏感配置，BPM 不会上传；请在外部同步工具中排除 `.bpm/`，插件内的隐藏目录不保证会被所有同步服务自动排除。Obsidian 共享配置只备份供手动恢复，不自动回滚；合法的旧版编辑缓存会迁移。
 - **Base64 编码/解码**：BPM 运行时使用 `btoa`/`atob` 仅用于在本地 Transfer Pack JSON 数据中打包和恢复二进制/文本文件，不用于隐藏 API key、URL、远程代码或可执行 payload。
 
 ---

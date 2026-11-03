@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { build } from 'esbuild';
 
 const menuItems = [];
-globalThis.activeDocument = { createDocumentFragment() { return { createSpan() { return {}; } }; } };
+const headerClasses = new Set();
+globalThis.activeDocument = { createDocumentFragment() { return { createSpan() {
+    return { closest(selector) { assert.equal(selector, '.menu-item'); return { addClass(name) { headerClasses.add(name); } }; } };
+} }; } };
 class Menu {
     addItem(render) {
         const item = { setTitle(value) { this.title = value; return this; },
@@ -45,6 +48,7 @@ test('group uses a native icon, proxies its visible member and removes stale ico
     assert.equal(groups.isGroupItem(groupItem), true);
     assert.equal(groupItem.buttonEl.icon, 'star');
     groupItem.callback({});
+    assert.equal(headerClasses.has('bpm-group-menu-label'), true);
     assert.equal(menuItems.at(-1).title, 'Action');
     menuItems.at(-1).click();
     assert.equal(calls, 1);

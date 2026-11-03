@@ -44,6 +44,7 @@ export class PluginStorage {
 
     async write(area: StorageArea, name: string, text: string): Promise<void> {
         const path = this.path(area, name);
+        if (area === 'data' && await this.manager.configProtection?.stageFile(`data/${name}`, text)) return;
         const adapter = this.manager.app.vault.adapter;
         if (await adapter.exists(path) && await adapter.read(path) === text) return;
         await this.ensureParent(area, name);
@@ -53,11 +54,14 @@ export class PluginStorage {
     /** 先校验复制结果再移除旧恢复文件；普通历史数据保留旧副本，兼容尚未升级的设备。 */
     async read(area: StorageArea, name: string, legacy: string[] = [], move = false): Promise<string | undefined> {
         const path = this.path(area, name);
+        const protectedFile = area === 'data' ? await this.manager.configProtection?.readFile(`data/${name}`) : undefined;
+        if (protectedFile) return protectedFile.value;
         const adapter = this.manager.app.vault.adapter;
         if (await adapter.exists(path)) return adapter.read(path);
         for (const old of legacy) {
             if (!(await adapter.exists(old))) continue;
             const text = await adapter.read(old);
+            if (area === 'data' && await this.manager.configProtection?.stageFile(`data/${name}`, text)) return text;
             try {
                 await this.write(area, name, text);
                 if (await adapter.read(path) !== text) throw new Error('Plugin data migration verification failed');
@@ -72,6 +76,8 @@ export class PluginStorage {
     }
 
     async remove(area: StorageArea, name: string, legacy: string[] = []): Promise<void> {
+        this.path(area, name);
+        if (area === 'data' && await this.manager.configProtection?.stageFile(`data/${name}`, null)) return;
         const adapter = this.manager.app.vault.adapter;
         for (const path of [this.path(area, name), ...legacy]) if (await adapter.exists(path)) await adapter.remove(path);
     }

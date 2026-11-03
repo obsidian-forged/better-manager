@@ -1,24 +1,31 @@
 {
   "name": "better-plugins-manager",
-  "version": "1.2.6",
+  "version": "1.2.12",
   "description": "A more capable plugin manager for Obsidian.",
   "main": "main.js",
   "scripts": {
-    "check": "tsc -noEmit -skipLibCheck && eslint src/icons src/storage src/devices src/catalog src/ui src/features.ts src/overview-state.ts src/settings/search.ts src/settings/search-view.ts src/settings/session-store.ts --max-warnings 0 && node --test tests/responsive-toolbar.test.mjs tests/floating-scrollbars.test.mjs tests/device-management.test.mjs tests/release-policy.test.mjs tests/ribbon-groups.test.mjs tests/ribbon-migration.test.mjs tests/catalog.test.mjs tests/settings-migrations.test.mjs tests/settings-search.test.mjs tests/ribbon-panel.test.mjs tests/sync-update-guard.test.mjs tests/settings-session.test.mjs tests/plugin-storage.test.mjs tests/plugin-icons.test.mjs tests/task-center.test.mjs",
+    "check": "tsc -noEmit -skipLibCheck && eslint src/settings/conflict-choices.ts src/settings/conflict-markers.ts src/settings/config-files.ts src/settings/config-protection.ts src/settings/config-revision.ts src/settings/protected-session.ts src/settings/conflict-model.ts src/settings/conflict-view.ts src/settings/protection-text.ts src/settings/sync-detector.ts src/settings/sync-warning.ts src/network src/rollback src/updates src/install src/source-release.ts src/icons src/storage src/devices src/catalog src/ui src/features.ts src/overview-state.ts src/settings/search.ts src/settings/search-view.ts src/settings/session-store.ts --max-warnings 0 && node --test tests/config-revision.test.mjs tests/config-protection.test.mjs tests/config-files.test.mjs tests/config-conflict.test.mjs tests/css-audit.test.mjs tests/responsive-toolbar.test.mjs tests/floating-scrollbars.test.mjs tests/version-picker.test.mjs tests/rollback.test.mjs tests/http-errors.test.mjs tests/update-management.test.mjs tests/device-management.test.mjs tests/release-policy.test.mjs tests/ribbon-groups.test.mjs tests/ribbon-migration.test.mjs tests/catalog.test.mjs tests/settings-migrations.test.mjs tests/settings-search.test.mjs tests/ribbon-panel.test.mjs tests/sync-update-guard.test.mjs tests/settings-session.test.mjs tests/plugin-storage.test.mjs tests/plugin-icons.test.mjs tests/task-center.test.mjs",
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-    "version": "node version-bump.mjs && git add manifest.json versions.json package-lock.json"
+    "version": "node version-bump.mjs && git add manifest.json versions.json package-lock.json",
+    "audit:css": "node scripts/audit-css.mjs"
   },
   "keywords": [],
   "author": "zero",
   "license": "MIT",
   "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
     "@types/node": "^16.11.6",
     "@typescript-eslint/eslint-plugin": "5.29.0",
     "@typescript-eslint/parser": "5.29.0",
     "esbuild": "0.17.3",
     "obsidian": "latest",
+    "postcss": "^8.5.32",
+    "postcss-selector-parser": "^7.1.4",
     "tslib": "2.4.0",
     "typescript": "4.7.4"
+  },
+  "dependencies": {
+    "markdown-it": "^14.1.0"
   }
 }
