@@ -132,6 +132,7 @@ export default class Manager extends Plugin {
     public configProtection?: ProtectedConfigSession;
     private syncWarningModal?: SyncWarningModal;
     private readonly settingsEditors = new Set<object>();
+    private settingsEditorEpoch = 0;
     private noteTip!: NoteTipFeature;
     public settings!: ManagerSettings;
     public devices!: DeviceManager;
@@ -1016,26 +1017,35 @@ export default class Manager extends Plugin {
         if (this.settingsEditors.has(editor)) return;
         const first = this.settingsEditors.size === 0;
         this.settingsEditors.add(editor);
+        this.settingsEditorEpoch++;
         if (first) this.configProtection?.begin();
     }
 
     public endSettingsEditing(editor: object): void {
-        this.settingsEditors.delete(editor);
+        if (!this.settingsEditors.delete(editor)) return;
+        const epoch = ++this.settingsEditorEpoch;
         if (this.settingsEditors.size || this.isUnloaded) return;
-        void this.queueSettingsOperation(async () => {
-            if (this.settingsEditors.size || this.isUnloaded) return;
-            // Closing a view is not permission to publish. Keep its draft and its choices.
-            this.configProtection?.end();
-            this.refreshSettingsSaveState();
+        const stillClosed = () => !this.isUnloaded && this.settingsEditors.size === 0 && this.settingsEditorEpoch === epoch;
+        void this.queueSettingsOperation(() => {
+            if (stillClosed()) {
+                this.configProtection?.end();
+                this.refreshSettingsSaveState();
+            }
+            return Promise.resolve();
+        }).then(async () => {
+            // Only the opted-in close action may publish. Reopening invalidates the action,
+            // including a reopen/close cycle while an earlier commit is still awaiting I/O.
+            if (!stillClosed() || this.settings.MANUAL_CONFIG_SAVE !== false || !this.hasUnsavedSettings) return;
+            await this.publishPendingSettings(() => stillClosed() && this.settings.MANUAL_CONFIG_SAVE === false, false);
         }).catch(error => {
             this.reportError("Retaining the settings draft failed", error);
             new Notice(settingsSaveMessage(this.settings.LANGUAGE, 'failed'), 10_000);
         });
     }
 
-    /** Shared file events are deliberately inert. The Save action checks the latest disk state. */
+    /** Shared events may feed a read-only warning; only a save action compares/adopts configuration. */
     public onExternalSettingsChange(): void {
-        // In particular, do not read, adopt, pause, reapply styles or repair an old version here.
+        this.configProtection?.observeSharedChange();
     }
 
     public async saveSettings(options: { captureDevice?: boolean; automatic?: boolean } = {}) {
@@ -1064,7 +1074,11 @@ export default class Manager extends Plugin {
 
     /** The only shared settings publication entry point. It is safe to call from a DOM handler. */
     public async savePendingSettings(): Promise<boolean> {
-        if (this.settingsSaveRunning || this.isUnloaded) return false;
+        return this.publishPendingSettings();
+    }
+
+    private async publishPendingSettings(allowed: () => boolean = () => true, notifySuccess = true): Promise<boolean> {
+        if (this.settingsSaveRunning || this.isUnloaded || !allowed()) return false;
         this.settingsSaveRunning = true;
         this.refreshSettingsSaveState();
         try {
@@ -1074,7 +1088,7 @@ export default class Manager extends Plugin {
             const value = copySettingsRecord(this.devices?.persistedSettings() ?? this.settings);
             const epoch = this.settingsEditEpoch, protection = this.configProtection;
             const protectionEpoch = protection?.mutationEpoch;
-            const current = () => !this.isUnloaded && this.settingsEditEpoch === epoch
+            const current = () => !this.isUnloaded && allowed() && this.settingsEditEpoch === epoch
                 && protection?.mutationEpoch === protectionEpoch && !protection?.hasPendingUserAction;
             await staging;
             const result = await this.queueSettingsOperation(async () => {
@@ -1111,10 +1125,10 @@ export default class Manager extends Plugin {
                         await this.devices.apply({ refreshViews: false, persist: false });
                     }
                 }
-                new Notice(settingsSaveMessage(this.settings.LANGUAGE, result.status === 'noop' ? 'unchanged' : 'saved'), 5000);
+                if (notifySuccess) new Notice(settingsSaveMessage(this.settings.LANGUAGE, result.status === 'noop' ? 'unchanged' : 'saved'), 5000);
                 return true;
             }
-            new Notice(settingsSaveMessage(this.settings.LANGUAGE, result.status), 10_000);
+            if (notifySuccess || result.status !== 'cancelled') new Notice(settingsSaveMessage(this.settings.LANGUAGE, result.status), 10_000);
             return false;
         } catch (error) {
             this.reportError("Saving settings failed", error);

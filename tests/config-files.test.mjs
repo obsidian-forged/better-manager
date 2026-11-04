@@ -43,6 +43,24 @@ test('auxiliary changes precede the primary marker and are covered by its digest
     assert.deepEqual(f.publicWrites(),[`${root}/data/icons.css`,`${root}/data.json`]);
     assert.equal(f.store.current.files['data/icons.css'],await hash('new icons'));
 });
+test('shared write/delete registration covers auxiliary files and the primary marker before disk I/O',async()=>{
+    const f=fixture({name:'initial'},'old icons'),registered=new Set(),events=[];
+    const write=f.adapter.write,remove=f.adapter.remove;
+    f.adapter.write=async(path,text)=>{if(!path.includes('/.bpm/'))assert.ok(registered.has(path));return write(path,text);};
+    f.adapter.remove=async path=>{if(!path.includes('/.bpm/'))assert.ok(registered.has(path));return remove(path);};
+    const io=new ConfigFiles(f.adapter,'.obsidian','bpm','device-a',hash,f.local,undefined,{
+        write:async(path,text,action)=>{registered.add(path);events.push(['write',path]);try{await action();}finally{registered.delete(path);}},
+        remove:async(path,action)=>{registered.add(path);events.push(['remove',path]);try{await action();}finally{registered.delete(path);}},
+    });
+    assert.deepEqual([...new Set(await io.sharedPaths())],[`${root}/data.json`,`${root}/data/icons.css`]);
+    const store=new ConfigProtection(io,'device-a',hash),value=await store.load();store.begin(value);
+    store.stageFile('data/icons.css',null,true);value.name='edited';await store.stage(value);
+    const digests={...store.current.files,...await io.fileDigests(store.pendingFiles)};
+    await store.publish(value,digests,()=>true);
+    assert.ok(events.some(([kind,path])=>kind==='remove'&&path===`${root}/data/icons.css`));
+    assert.ok(events.some(([kind,path])=>kind==='write'&&path===`${root}/data.json`));
+    assert.equal(f.files.has(`${root}/data/icons.css`),false);
+});
 test('partially synced auxiliary files cannot be accepted as a complete configuration',async()=>{
     const f=fixture({name:'initial'},'old icons');await f.store.load();
     const remote=await createConfigRevision({name:'remote'},'device-b',[f.store.current],{'data/icons.css':await hash('new icons')},hash);

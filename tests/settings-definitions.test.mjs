@@ -9,7 +9,10 @@ class Element {
     classes = new Set();
     isConnected = true;
     constructor(doc) { this.ownerDocument = doc; }
-    createDiv(cls = '') { const child = new Element(this.ownerDocument); child.parentElement = this; child.addClass(cls); this.children.push(child); return child; }
+    createDiv(options = '') { const child = new Element(this.ownerDocument); child.parentElement = this; child.addClass(typeof options === 'string' ? options : options.cls ?? ''); this.children.push(child); return child; }
+    setText(value) { this.textContent = value; }
+    setAttribute(name, value) { this.attributes ??= {}; this.attributes[name] = value; }
+    append(child) { this.children.push(child); }
     addClass(...classes) { classes.forEach(cls => this.classes.add(cls)); }
     removeClass(...classes) { classes.forEach(cls => this.classes.delete(cls)); }
     hasClass(cls) { return this.classes.has(cls); }
@@ -23,7 +26,10 @@ class Element {
 }
 function document() {
     const doc = {};
-    doc.defaultView = { createDiv: () => new Element(doc) };
+    doc.defaultView = { createDiv: options => { const element = new Element(doc); element.addClass(options?.cls ?? ''); return element; },
+        MutationObserver: class { observe() {} disconnect() {} } };
+    doc.win = doc.defaultView;
+    doc.win.createFragment = () => new Element(doc);
     return doc;
 }
 class Base { constructor(app) { this.app = app; this.containerEl = new Element(document()); } }
@@ -35,7 +41,7 @@ new Function('require', 'module', 'exports', result.outputFiles[0].text)(name =>
 const { ManagerSettingTab, SettingsSearch } = module.exports;
 
 function pages() {
-    return ['General', 'Appearance'].map((label, page) => ({ label, render(container) {
+    return ['General', 'Appearance'].map((label, page) => ({ label, icon: page ? 'palette' : 'settings-2', render(container) {
         const row = container.createDiv('setting-item');
         row.createDiv('setting-item-name').textContent = page ? 'Toolbar labels' : 'Recent install window';
         row.createDiv('setting-item-description').textContent = page ? 'Show labels on hover' : 'Days to mark newly installed plugins';
@@ -57,10 +63,16 @@ test('native definitions mount the live editor on the matching page and legacy d
     const tab = new ManagerSettingTab({}, manager), legacyRoot = tab.containerEl, mounts = [];
     tab.searchPages = pages;
     tab.renderSettings = () => { mounts.push({ root: tab.renderRoot, page: tab.activeTabIndex }); };
-    const definitions = tab.getSettingDefinitions();
+    const rootDefinitions = tab.getSettingDefinitions();
+    assert.equal(rootDefinitions[0].type, 'group');
+    assert.equal(rootDefinitions[0].heading, '管理器_BPM设置_短');
+    const definitions = rootDefinitions[0].items;
     assert.deepEqual(definitions.map(item => [item.type, item.name]), [['page', 'General'], ['page', 'Appearance']]);
     assert.ok(definitions[0].items[0].aliases.includes('Days to mark newly installed plugins'));
     assert.ok(definitions[1].items[0].aliases.includes('Toolbar labels'));
+    assert.equal(definitions[0].desc.children[0].attributes['data-bpm-setting-icon'], 'settings-2');
+    assert.equal(definitions[1].desc.children[0].attributes['data-bpm-setting-icon'], 'palette');
+    assert.equal(definitions[0].desc.children[0].textContent, 'Recent install window');
     const nativeRoot = new Element(document()); nativeRoot.addClass('setting-item');
     const cleanup = definitions[1].items[0].render({ settingEl: nativeRoot });
     assert.deepEqual(mounts.at(-1), { root: nativeRoot, page: 1 });

@@ -55,7 +55,7 @@ export class ConfigEditorReopened extends Error {
     constructor() { super('BPM editor reopened before the configuration commit'); }
 }
 
-/** Shared files change only through an explicit publication, never a file event or editor close. */
+/** Shared files change only through a save action, never directly from a file event. */
 export class ConfigProtection {
     private head!: ConfigSnapshot;
     private draft?: ConfigDraft;

@@ -20,11 +20,13 @@ export class ScopeSelect {
     private readonly fallbackIcon: string;
     private readonly choices = new Map<string, HTMLButtonElement>();
     private readonly outside = (event: Event) => {
-        if (event.target instanceof Node && this.root.contains(event.target)) return;
+        const target = event.target as Node | null;
+        if (target?.instanceOf?.(this.doc.defaultView?.Node ?? Node) && this.root.contains(target)) return;
         this.close();
     };
     private readonly scroll = (event: Event) => {
-        if (event.target instanceof Node && this.menu.contains(event.target)) return;
+        const target = event.target as Node | null;
+        if (target?.instanceOf?.(this.doc.defaultView?.Node ?? Node) && this.menu.contains(target)) return;
         this.close();
     };
     private readonly resize = () => this.close();
@@ -127,6 +129,12 @@ export class ScopeSelect {
         });
     }
     /** 更新摘要与选中态，避免选中值被构造闭包固定；Keep reusable menus in sync after selection. */
+    setOptionLabel(value: string, label: string): void {
+        const choice = this.choices.get(value);
+        choice?.querySelector<HTMLElement>('.manager-multiselect-filter__option-label')?.setText(label);
+        if (this.value === value) this.setValue(value);
+    }
+
     setValue(value: string): void {
         const choice = this.choices.get(value);
         if (!choice) return;

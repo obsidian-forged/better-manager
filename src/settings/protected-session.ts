@@ -7,6 +7,7 @@ import { settingsFingerprint } from './session-store';
 import { ConfigConflictChoices, ConflictItem } from './conflict-choices';
 import { ConflictSide } from './conflict-model';
 import { PrivateCacheWatch } from './private-cache-watch';
+import { SharedConfigWatch } from './shared-config-watch';
 import { FileChangeAdapter, subscribeFileChanges } from '../storage/file-change-listener';
 import { protectionText } from './protection-text';
 import { LocalStateStore } from '../storage/local-state';
@@ -30,9 +31,11 @@ export class ProtectedConfigSession {
     private resolvedBaseline?: ConfigRecord;
     private selections?: ConfigConflictChoices;
     private readonly privateCache: PrivateCacheWatch;
+    private readonly sharedChanges: SharedConfigWatch;
     private stopPrivateWatch?: () => void;
     private privateWarningShown = false;
     private privateErrorShown = false;
+    private sharedErrorShown = false;
     get privateCacheModified(): boolean { return this.privateCache.modified; }
     get usingCache(): boolean { return true; }
     get mutationEpoch(): number { return this.editEpoch; }
@@ -58,8 +61,12 @@ export class ProtectedConfigSession {
         const adapter = manager.app.vault.adapter;
         this.privateCache = new PrivateCacheWatch(`${manager.app.vault.configDir}/plugins/${manager.manifest.id}/.bpm`, adapter, hash,
             () => this.privateCacheChanged(), error => this.privateCacheFailed(error));
+        this.sharedChanges = new SharedConfigWatch(`${manager.app.vault.configDir}/plugins/${manager.manifest.id}`, adapter,
+            () => manager.settings?.SYNC_CHANGE_WARNINGS !== false,
+            path => new Notice(`${protectionText(manager, 'frequentExternalChanges')}\n${path.slice(this.files.root.length + 1)}`, 10_000),
+            error => this.sharedChangesFailed(error));
         this.files = new ConfigFiles(manager.app.vault.adapter, manager.app.vault.configDir, manager.manifest.id, owner, hash,
-            { read: () => storage.loadLocalStorage(key), write: value => storage.saveLocalStorage(key, value) }, this.privateCache);
+            { read: () => storage.loadLocalStorage(key), write: value => storage.saveLocalStorage(key, value) }, this.privateCache, this.sharedChanges);
         this.protection = new ConfigProtection({
             readShared: () => this.files.readShared(this.initializing), readHead: () => this.files.readHead(),
             writeHead: value => this.files.writeHead(value), readDraft: () => this.files.readDraft(),
@@ -97,9 +104,13 @@ export class ProtectedConfigSession {
         if (!value) throw new Error('The synced BPM configuration is incomplete');
         this.initializing = false;
         this.observed = this.fingerprint(this.protection.current.value);
+        // Warning diagnostics add no new initialization requirement. Protection already has
+        // its trusted snapshot; a transient re-read failure only disables this initial baseline.
+        try { await this.sharedChanges.prime(await this.files.sharedPaths()); }
+        catch (error) { this.sharedChangesFailed(error); }
         this.loaded = true;
         this.stopPrivateWatch = subscribeFileChanges(this.manager.app.vault.adapter as FileChangeAdapter,
-            path => this.privateCache.observe(path), error => this.privateCacheFailed(error));
+            path => { this.privateCache.observe(path); this.sharedChanges.observe(path); }, error => this.privateCacheFailed(error));
         if (this.privateCacheModified) this.privateCacheChanged();
         this.pendingBundle = this.files.hasPendingBundle;
         return value;
@@ -118,6 +129,13 @@ export class ProtectedConfigSession {
         this.privateErrorShown = true;
         new Notice(protectionText(this.manager, 'privateCacheError'), 10_000);
     }
+    private sharedChangesFailed(error: unknown): void {
+        if (this.manager.settings?.DEBUG) console.error('[BPM] Shared configuration observation failed', error);
+        if (this.closed || this.sharedErrorShown) return;
+        this.sharedErrorShown = true;
+        new Notice(protectionText(this.manager, 'sharedChangesError'), 10_000);
+    }
+    observeSharedChange(): void { if (this.loaded && !this.closed) this.sharedChanges.observe(`${this.files.root}/data.json`); }
     begin(): void { this.protection.begin(this.current()); }
     end(): void { this.protection.end(); }
     noteUserMutation(): void { this.editEpoch++; }
@@ -239,5 +257,6 @@ export class ProtectedConfigSession {
         this.closed = true;
         this.stopPrivateWatch?.(); this.stopPrivateWatch = undefined;
         this.privateCache.destroy();
+        this.sharedChanges.destroy();
     }
 }

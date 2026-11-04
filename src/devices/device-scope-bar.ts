@@ -34,7 +34,7 @@ class QuickApplyPartsModal extends Modal {
         if (this.configured) this.contentEl.createEl('p', { cls: 'mod-warning', text: t('设备_快速应用_覆盖警告') });
         new Setting(this.contentEl).setName(t('设备_快速应用_范围')).setDesc(t('设备_快速应用_范围说明')).setHeading();
         const row = (key: keyof PresetConfigParts, label: string, icon: string) => {
-            const setting = new Setting(this.contentEl).setName(label).addToggle(toggle => toggle
+            const setting = new Setting(this.contentEl).setClass('quick-apply-parts__row').setName(label).addToggle(toggle => toggle
                 .setValue(this.parts[key])
                 .onChange(value => { this.parts = { ...this.parts, [key]: value }; }));
             setting.nameEl.addClass('quick-apply-parts__row-name');

@@ -10,7 +10,12 @@ test('component rules have one normal cascade and guard wrapper flattening with 
     const root=postcss.parse(css),flatten=[];
     root.walkDecls(decl=>{
         assert.equal(Boolean(decl.important),false,`${decl.parent.selector}: ${decl.prop}`);
-        assert.ok(!['scrollbar-width','scrollbar-color','text-indent','text-decoration-thickness','column-gap'].includes(decl.prop));
+        assert.ok(!['text-indent','text-decoration-thickness','column-gap'].includes(decl.prop));
+        if (['scrollbar-width','scrollbar-color'].includes(decl.prop)) {
+            assert.equal(decl.parent.parent.name, 'supports');
+            assert.match(decl.parent.parent.params, /scrollbar-color: auto/);
+            assert.match(decl.parent.parent.params, /scrollbar-width: auto/);
+        }
         if(decl.prop==='display'&&decl.value==='contents')flatten.push(decl.parent);
     });
     root.walkRules(rule=>assert.ok(!rule.selector.includes(':has(')));
@@ -23,6 +28,35 @@ test('component rules have one normal cascade and guard wrapper flattening with 
         assert.ok(fallback.nodes.some(d=>d.prop==='display'&&d.value==='flex'));
         assert.ok(fallback.nodes.some(d=>d.prop==='flex-wrap'&&d.value==='wrap'));
     }
+});
+
+test('shared tabs retain their appearance alongside native desktop and mobile button defaults', () => {
+    const native = `:root { --radius-s: 4px; }
+        button { border-radius: 5px; padding: 4px 12px; }
+        button:not(.clickable-icon) { background: var(--interactive-normal); color: var(--text-normal); box-shadow: native-shadow; }
+        body.is-mobile button:not(.clickable-icon) { background: var(--interactive-normal); border-radius: 44px; padding: 10px; }
+        button:not(.clickable-icon):hover { background: var(--interactive-hover); box-shadow: native-hover-shadow; }`;
+    for (const phone of [false, true]) {
+        const nodes = componentFixture({ phone, dark: true });
+        const style = componentStyles(native + '\n' + css, { phone });
+        for (const name of ['manager-setting__tabs-item', 'manager-toolbar__tab', 'manager-repo-page__switch', 'manager-install__segment', 'manager-transfer-segment']) {
+            const idle = nodes.get(`${name}/idle`);
+            assert.equal(style(idle, 'background'), 'transparent', `${phone}/${name}`);
+            assert.equal(style(idle, 'color'), 'var(--text-muted)');
+            assert.equal(style(idle, 'box-shadow'), 'none');
+            assert.equal(style(idle, 'border-radius'), '6px');
+            assert.equal(style(idle, 'padding'), '4px 8px');
+        }
+    }
+});
+
+test('external Ribbon filters retain selected colours and search spacing outside the list modal', () => {
+    const nodes = componentFixture({ phone: true });
+    const native = 'button:not(.clickable-icon) { background: native-button; } body.is-mobile button:not(.clickable-icon) { background: native-mobile; } input[type="text"] { padding: 4px 16px; }';
+    const style = componentStyles(native + '\n' + css, { phone: true });
+    assert.equal(style(nodes.get('filterbutton'), 'background'), 'var(--interactive-accent)');
+    assert.equal(style(nodes.get('ribbonsearch'), 'padding'), '6px 12px 6px 32px');
+    assert.equal(style(nodes.get('filtergroup'), 'touch-action'), 'pan-y pinch-zoom');
 });
 
 test('segmented controls preserve selected and hover states across theme variables without priority overrides',()=>{

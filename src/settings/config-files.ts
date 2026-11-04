@@ -39,7 +39,8 @@ export class ConfigFiles implements ConfigProtectionIO {
 
     constructor(private readonly adapter: ConfigFileAdapter, readonly configDir: string, readonly pluginId: string,
         private readonly owner: string, private readonly hash: DigestText, private readonly local: ConfigLocalAnchor,
-        private readonly privateWrites?: PrivateCacheWrites) {
+        private readonly privateWrites?: PrivateCacheWrites,
+        private readonly sharedWrites?: Pick<PrivateCacheWrites, 'write' | 'remove'>) {
         if (!/^[a-z0-9-]{8,80}$/.test(owner)) throw new Error('Invalid configuration cache owner');
         if (!/^[a-zA-Z0-9_-]+$/.test(pluginId) || configDir.includes('..') || configDir.includes('\\') || configDir.startsWith('/')) throw new Error('Invalid plugin configuration directory');
         this.root = `${configDir}/plugins/${pluginId}`;
@@ -74,7 +75,8 @@ export class ConfigFiles implements ConfigProtectionIO {
             if (current && !current()) throw new ConfigEditorReopened();
             await this.adapter.write(path, text);
         };
-        if (this.privateWrites) await this.privateWrites.write(path, text, write); else await write();
+        const retainedWrite = () => this.privateWrites ? this.privateWrites.write(path, text, write) : write();
+        if (this.sharedWrites) await this.sharedWrites.write(path, text, retainedWrite); else await retainedWrite();
         if (await this.adapter.read(path) !== text) {
             this.privateWrites?.altered(path);
             throw new Error('BPM configuration write verification failed');
@@ -133,6 +135,10 @@ export class ConfigFiles implements ConfigProtectionIO {
             if (path.startsWith(`${directory}/`) && isManagedConfigFile(relative)) paths.push(relative);
         }
         return paths.sort();
+    }
+    async sharedPaths(): Promise<string[]> {
+        return [`${this.root}/data.json`, `${this.root}/data/icons.css`,
+            ...(await this.managedPaths()).map(path => `${this.root}/${path}`)];
     }
     async fileDigests(files: Record<string, string | null>): Promise<Record<string, string | null>> {
         const digests: Record<string, string | null> = {};
@@ -367,7 +373,8 @@ export class ConfigFiles implements ConfigProtectionIO {
             if (text === null) {
                 if (await this.adapter.exists(target)) {
                     if (!stillClosed()) throw new ConfigEditorReopened();
-                    await this.adapter.remove(target);
+                    const remove = () => this.adapter.remove(target);
+                    if (this.sharedWrites) await this.sharedWrites.remove(target, remove); else await remove();
                 }
             }
             else await this.writeChanged(target, text, false, stillClosed);

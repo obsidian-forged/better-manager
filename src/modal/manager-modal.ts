@@ -14,6 +14,7 @@ import { CatalogModal } from '../catalog/catalog-modal';
 import { createBpmFilterField, createBpmFilterSelectField } from '../ui/filter-field';
 import { ScopeSelect } from '../ui/scope-select';
 import { ResponsiveToolbar } from '../ui/responsive-toolbar';
+import { ResponsiveTabBar } from '../ui/responsive-tab-bar';
 import { DeviceScopeBar } from '../devices/device-scope-bar';
 import type { DevicePluginFilters, ScopePage } from '../devices/device-presets';
 import {
@@ -1779,6 +1780,7 @@ export class ManagerModal extends Modal {
                 .setIcon("eye-off")
                 .setDisabled(isSelf)
                 .onClick(() => { if (!isSelf) this.togglePluginHidden(plugin.id); }));
+            this.addPluginOrganizationMenu(menu, plugin.id, controlEl);
             menu.addSeparator();
             const knownRepo = this.manager.settings.REPO_MAP?.[plugin.id] || null;
             menu.addItem((item) => item
@@ -1964,6 +1966,60 @@ export class ManagerModal extends Modal {
         this.refreshPluginCard(pluginId, { allowReload: true });
     }
 
+    /** 右键和触屏“更多”共用原生菜单；Share native organization menus across pointer and touch actions. */
+    private addPluginOrganizationMenu(menu: Menu, pluginId: string, anchor: HTMLElement): void {
+        const plugin = this.settings.Plugins.find((item) => item.id === pluginId);
+        if (!plugin) return;
+        const t = (key: string) => this.manager.translator.t(key);
+        const addSubmenu = (title: string, icon: string, available: boolean, populate: (submenu: Menu) => void) => {
+            menu.addItem((item) => {
+                item.setTitle(title).setIcon(icon).setDisabled(!available);
+                if (!available) return;
+                // setSubmenu 尚未公开在 SDK 类型中；旧版缺失时仍用原生 Menu 展开。
+                // The SDK does not declare setSubmenu; older runtimes keep a native-menu fallback.
+                const submenuItem = item as MenuItem & { setSubmenu?: () => Menu };
+                if (typeof submenuItem.setSubmenu === "function") populate(submenuItem.setSubmenu());
+                else item.onClick(() => {
+                    const submenu = new Menu();
+                    populate(submenu);
+                    const rect = anchor.getBoundingClientRect();
+                    submenu.showAtPosition({ x: rect.left, y: rect.bottom });
+                });
+            });
+        };
+        addSubmenu(t("菜单_快速添加分组"), "folder-tree", this.settings.GROUPS.length > 0, (submenu) => {
+            for (const group of this.settings.GROUPS) {
+                const assigned = plugin.group === group.id;
+                submenu.addItem((item) => item.setTitle(group.name || group.id).setIcon("folder-tree")
+                    .setChecked(assigned).setDisabled(assigned)
+                    .onClick(this.action(async () => { await this.assignPluginGroup(pluginId, group.id); })));
+            }
+        });
+        const tags = this.settings.TAGS.filter((tag) => tag.id !== BPM_TAG_ID);
+        addSubmenu(t("菜单_快速添加标签"), "tags", tags.length > 0, (submenu) => {
+            for (const tag of tags) {
+                const assigned = plugin.tags.includes(tag.id);
+                submenu.addItem((item) => item.setTitle(tag.name || tag.id).setIcon("tag")
+                    .setChecked(assigned).setDisabled(assigned)
+                    .onClick(this.action(async () => { await this.assignPluginTag(pluginId, tag.id); })));
+            }
+        });
+    }
+
+    private async assignPluginGroup(pluginId: string, groupId: string): Promise<void> {
+        const plugin = this.settings.Plugins.find((item) => item.id === pluginId);
+        if (!plugin || plugin.group === groupId || !this.settings.GROUPS.some((group) => group.id === groupId)) return;
+        plugin.group = groupId;
+        await this.finishBulkMetadataEdit("批量编辑_已更新分组", 1);
+    }
+
+    private async assignPluginTag(pluginId: string, tagId: string): Promise<void> {
+        const plugin = this.settings.Plugins.find((item) => item.id === pluginId);
+        if (!plugin || tagId === BPM_TAG_ID || plugin.tags.includes(tagId) || !this.settings.TAGS.some((tag) => tag.id === tagId)) return;
+        plugin.tags.push(tagId);
+        await this.finishBulkMetadataEdit("批量编辑_已添加标签", 1);
+    }
+
     private async openPluginHotkeys(pluginId: string) {
         await this.appSetting.open();
         await this.appSetting.openTabById("hotkeys");
@@ -2113,7 +2169,7 @@ export class ManagerModal extends Modal {
     }
 
     private getSelectedManagerPlugins(): ManagerPlugin[] {
-        return this.settings.Plugins.filter((plugin) => this.bulkSelectedPluginIds.has(plugin.id));
+        return this.settings.Plugins.filter((plugin) => plugin.id !== this.manager.manifest.id && this.bulkSelectedPluginIds.has(plugin.id));
     }
 
     private getSelectableDisplayedPluginIds(): string[] {
@@ -2286,7 +2342,10 @@ export class ManagerModal extends Modal {
         text.createSpan({ cls: "manager-bulk-bar__count", text: t("批量编辑_已选择数量", { count: selectedCount, total: displayedCount }) });
 
         const actions = bar.createDiv("manager-bulk-bar__actions");
-        this.createBulkActionButton(actions, "list-checks", t("批量编辑_全选当前列表"), () => this.selectDisplayedPlugins(), displayedCount === 0);
+        const hideSelection = selectedCount === 0 || this.getSelectedManagerPlugins().some((plugin) => !this.settings.HIDES.includes(plugin.id));
+        this.createBulkActionButton(actions, hideSelection ? "eye-off" : "eye", t(hideSelection ? "批量编辑_隐藏" : "批量编辑_取消隐藏"), () => {
+            this.action(async () => { await this.applyBulkHidden(); })();
+        }, disabled || this.manager.devices?.isProjectingForeign("plugins") === true);
         this.createBulkActionButton(actions, "power", t("通用_启用_文本"), () => { this.action(async () => { await this.applyBulkEnabled(true); })(); }, disabled);
         this.createBulkActionButton(actions, "power-off", t("通用_禁用_文本"), () => { this.action(async () => { await this.applyBulkEnabled(false); })(); }, disabled);
         this.createBulkActionButton(actions, "folder-tree", t("批量编辑_设置分组"), (event) => this.showBulkGroupMenu(event), disabled);
@@ -2356,6 +2415,21 @@ export class ManagerModal extends Modal {
         const plugins = this.getSelectedManagerPlugins();
         plugins.forEach((plugin) => { plugin.group = groupId; });
         await this.finishBulkMetadataEdit("批量编辑_已更新分组", plugins.length);
+    }
+
+    private async applyBulkHidden(): Promise<void> {
+        if (this.blockForeignScopeAction(this.manager.translator.t("菜单_隐藏插件_标题"))) return;
+        const plugins = this.getSelectedManagerPlugins();
+        if (plugins.length === 0) return;
+        // 混合选择先统一隐藏，全部隐藏后才能统一显示；Mixed selections hide first, then unhide together.
+        const hiddenIds = new Set(this.settings.HIDES);
+        const hide = plugins.some((plugin) => !hiddenIds.has(plugin.id));
+        for (const plugin of plugins) {
+            if (hide) hiddenIds.add(plugin.id);
+            else hiddenIds.delete(plugin.id);
+        }
+        this.settings.HIDES = [...hiddenIds];
+        await this.finishBulkMetadataEdit(hide ? "批量编辑_已隐藏" : "批量编辑_已取消隐藏", plugins.length);
     }
 
     private async applyBulkAddTag(tagId: string) {
@@ -2474,6 +2548,7 @@ export class ManagerModal extends Modal {
     private vaultsTabEl?: HTMLButtonElement;
     private deviceTabEl?: HTMLButtonElement;
     private devicePanel?: DevicePanel;
+    private pageTabBar?: ResponsiveTabBar;
     private deviceScopeBars = new Map<ScopePage, DeviceScopeBar>();
     private deviceScopeHostInline?: HTMLElement;
     private ribbonTabEl?: HTMLButtonElement;
@@ -2567,6 +2642,7 @@ export class ManagerModal extends Modal {
     }
 
     public async showHead() {
+        this.pageTabBar?.destroy(); this.pageTabBar = undefined;
         this.migratePersistedFilterValues();
         const t = (k: string, vars?: Record<string, string | number | boolean | null | undefined>) => this.manager.translator.t(k, vars);
         const modalEl = this.contentEl.parentElement;
@@ -2696,7 +2772,17 @@ export class ManagerModal extends Modal {
         this.ribbonTabEl = pageTabs.get('ribbon');
         this.troubleshootTabEl = pageTabs.get('troubleshoot');
 
-        this.renderGlobalTools(toolbar.createDiv('manager-global-tools'));
+        const globalTools = toolbar.createDiv('manager-global-tools');
+        this.renderGlobalTools(globalTools);
+        const navigation = this.getPageNavigationItems();
+        this.pageTabBar = new ResponsiveTabBar(toolbar, tabs, t('管理器_切换功能'), this.activePage,
+            navigation.map(item => ({ value: item.page, label: item.label, icon: item.icon })),
+            value => { const target = navigation.find(item => item.page === value); if (target) this.setDesktopPage(target.page); },
+            () => {
+                const actions = globalTools.getBoundingClientRect().width;
+                const identityWidth = identity.getBoundingClientRect().width;
+                return Math.max(0, toolbar.clientWidth - 2 * Math.max(actions, identityWidth) - 16);
+            }, [globalTools, identity]);
         this.createPageTools();
         tabs.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(tab => {
             tab.toggleClass('manager-feature-disabled', !this.isPageEnabled(tab.dataset.page as ManagerPage));
@@ -3659,6 +3745,9 @@ export class ManagerModal extends Modal {
                         })
                 );
                 if (hasManageMenuItems) hasContextMenuItems = true;
+                addContextSeparator();
+                this.addPluginOrganizationMenu(menu, plugin.id, itemEl.settingEl);
+                hasContextMenuItems = true;
                 // [菜单] 分享插件
                 // menu.addItem((item) =>
                 //     item.setTitle("分享插件_标题")
@@ -4099,21 +4188,7 @@ export class ManagerModal extends Modal {
                 let enableIgnoredButton: ExtraButtonComponent | null = null;
 
 
-                if (isMobile && [
-                    "checkUpdate",
-                    "downloadUpdate",
-                    "singleStart",
-                    "restart",
-                    ...(ManagerPlugin.tags?.includes(BPM_IGNORE_TAG) ? ["enableIgnored"] : []),
-                    "hide",
-                    "note",
-                    "hotkeys",
-                    "copyId",
-                    "openRepo",
-                    "openSettings",
-                    "openDir",
-                    "delete",
-                ].some((id) => this.actionInMore(id as MainPageActionId))) {
+                if (isMobile) {
                     const moreButton = new ExtraButtonComponent(itemEl.controlEl);
                     moreButton.setIcon("more-vertical");
                     moreButton.setTooltip(this.manager.translator.t("管理器_更多操作_描述"));
@@ -4146,7 +4221,9 @@ export class ManagerModal extends Modal {
                                 }));
                             hasCurrentGroup = true;
                         }
-                        hasPreviousGroup = hasCurrentGroup;
+                        if (hasCurrentGroup) menu.addSeparator();
+                        this.addPluginOrganizationMenu(menu, plugin.id, itemEl.settingEl);
+                        hasPreviousGroup = true;
                         hasCurrentGroup = false;
 
                         if (!this.settings.DELAY && this.isMainPageActionInMenu("singleStart")) {
@@ -4786,6 +4863,7 @@ export class ManagerModal extends Modal {
         this.ensureAllowedActivePage();
         this.syncHeaderIdentity();
         this.syncToolVisibility();
+        this.pageTabBar?.setValue(this.activePage === 'sources' ? 'install' : this.activePage);
         const isPlugins = this.activePage === "plugins";
         const isThemes = this.activePage === "themes";
         const isInstall = this.activePage === "install";
@@ -8648,6 +8726,9 @@ export class ManagerModal extends Modal {
             this.markFeatureDifference(tab, Boolean(item && differences.has(this.conflictFeaturePage(item.page))));
         });
         const changedLabels = items.filter(item => differences.has(this.conflictFeaturePage(item.page))).map(item => item.label);
+        for (const item of items) this.pageTabBar?.setOptionLabel(item.page, differences.has(this.conflictFeaturePage(item.page))
+            ? `${item.label} · ${protectionText(this.manager, 'differences')}` : item.label);
+        if (this.pageTabBar) this.markFeatureDifference(this.pageTabBar.trigger, changedLabels.length > 0, changedLabels.join(' · '));
         this.modalEl.querySelectorAll<HTMLElement>('.manager-mobile-page-switch').forEach(button =>
             this.markFeatureDifference(button, changedLabels.length > 0, changedLabels.join(' · ')));
         const hiddenDifferences = [...differences].filter(page => !visiblePages.has(page));
@@ -8763,6 +8844,7 @@ export class ManagerModal extends Modal {
     }
 
     public onClose(): void {
+        this.pageTabBar?.destroy(); this.pageTabBar = undefined;
         this.opened = false;
         this.nextRenderGeneration();
         this.shortcutDocument?.removeEventListener('keydown', this.onShortcut);

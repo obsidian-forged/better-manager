@@ -7738,7 +7738,7 @@ body.is-tablet .manager-container--mobile .bpm-mobile-filter-fields .manager-fil
     border-radius: var(--radius-m);
 }
 
-.ribbon-manager-modal .ribbon-filter-btn {
+.ribbon-manager-filter-bar button.ribbon-filter-btn {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -7753,33 +7753,33 @@ body.is-tablet .manager-container--mobile .bpm-mobile-filter-fields .manager-fil
     cursor: pointer;
 }
 
-.ribbon-manager-modal .ribbon-filter-btn-icon {
+.ribbon-manager-filter-bar .ribbon-filter-btn-icon {
     display: flex;
     align-items: center;
     width: 16px;
     height: 16px;
 }
 
-.ribbon-manager-modal .ribbon-filter-btn-icon svg {
+.ribbon-manager-filter-bar .ribbon-filter-btn-icon svg {
     width: 16px;
     height: 16px;
 }
 
-.ribbon-manager-modal .ribbon-filter-btn-text {
+.ribbon-manager-filter-bar .ribbon-filter-btn-text {
     white-space: nowrap;
 }
 
-.ribbon-manager-modal .ribbon-filter-btn:hover {
+.ribbon-manager-filter-bar button.ribbon-filter-btn:hover {
     background: var(--background-modifier-hover);
     color: var(--text-normal);
 }
 
-.ribbon-manager-modal .ribbon-filter-btn.is-active {
+.ribbon-manager-filter-bar button.ribbon-filter-btn.is-active {
     background: var(--interactive-accent);
     color: var(--text-on-accent);
 }
 
-.ribbon-manager-modal .ribbon-filter-btn.is-active .ribbon-filter-btn-icon {
+.ribbon-manager-filter-bar button.ribbon-filter-btn.is-active .ribbon-filter-btn-icon {
     color: var(--text-on-accent);
 }
 
@@ -7809,17 +7809,17 @@ body.is-tablet .manager-container--mobile .bpm-mobile-filter-fields .manager-fil
     height: 14px;
 }
 
-.ribbon-manager-modal .ribbon-search-input {
+.ribbon-manager-filter-bar input.ribbon-search-input {
     width: 200px;
     padding: 6px 12px 6px 32px;
-    font-size: 13px;
-    border-radius: var(--radius-s);
+    font-size: var(--font-ui-small);
+    border-radius: var(--input-radius);
     border: 1px solid var(--background-modifier-border);
-    background: var(--background-primary);
+    background: var(--background-modifier-form-field);
     transition: border-color 0.2s ease;
 }
 
-.ribbon-manager-modal .ribbon-search-input:focus {
+.ribbon-manager-filter-bar input.ribbon-search-input:focus {
     border-color: var(--interactive-accent);
     outline: none;
 }
@@ -8694,6 +8694,7 @@ body.is-tablet .ribbon-manager-control-visibility button {
 
 /* BPM unified density pass */
 .manager-container,
+.manager-setting__container,
 .manager-tag-editor,
 .manager-setting-tag__container,
 .manager-taxonomy-setting {
@@ -12118,10 +12119,13 @@ body.is-phone .manager-container.manager-container--main.manager-container--mobi
     align-items: stretch;
     gap: 12px;
     min-height: 58px;
-    padding: 10px 12px;
     border-left-width: 3px;
     border-left-color: transparent;
     background: color-mix(in srgb, var(--bpm-card) 96%, var(--bpm-surface));
+}
+
+.manager-container .manager-theme-overview .manager-appearance-section__list > .manager-theme-card.setting-item {
+    padding: var(--bpm-item-padding);
 }
 
 .manager-container .manager-theme-overview .manager-theme-card:hover {
@@ -13145,7 +13149,7 @@ body.is-tablet .manager-container.manager-container--main .manager-overview-head
 }
 /* 手机栏整体居中，操作从开头单行滚动；Centered mobile bars with start-aligned scrolling actions. */
 body.is-phone .manager-container--mobile .manager-overview-heading { flex-direction: column; flex-wrap: nowrap; align-items: center; }
-body.is-phone .manager-container--mobile .manager-overview-heading .manager-food { flex: 0 0 auto; width: 100%; }
+body.is-phone .manager-container--mobile .manager-overview-heading .manager-food { flex: 0 0 auto; width: 100%; flex-shrink: 0; }
 body.is-phone .manager-container--mobile .manager-overview-heading .manager-page-tools {
     display: block; flex: 0 0 auto; width: max-content; max-width: 100%; margin-inline: auto;
     overflow-x: auto; overflow-y: hidden; touch-action: pan-x; overscroll-behavior-x: contain;
@@ -13153,7 +13157,7 @@ body.is-phone .manager-container--mobile .manager-overview-heading .manager-page
 body.is-phone .manager-container--mobile .manager-page-tools .manager-bar__action { width: max-content; max-width: none; }
 body.is-phone .manager-container--mobile .manager-page-tools .setting-item-control {
     display: flex; flex: 0 0 auto; max-width: none;
-    min-width: 0; gap: var(--size-4-2);
+    min-width: 0; gap: var(--size-4-2); flex-shrink: 0;
 }
 .manager-container--mobile .manager-global-tools--mobile { align-self: center; flex-wrap: nowrap; }
 .manager-container--mobile .manager-global-tools > button,
@@ -13172,7 +13176,7 @@ body.is-tablet .manager-container--mobile .manager-page-tools .setting-item-cont
     position: static; inset: auto; transform: none; margin: 0; padding: 0;
     display: inline-flex; align-items: center; justify-content: center; flex: 0 0 var(--bpm-touch-size);
     width: var(--bpm-touch-size); height: var(--bpm-touch-size); min-width: var(--bpm-touch-size); min-height: var(--bpm-touch-size);
-    border: 1px solid var(--text-error); border-radius: var(--bpm-radius-sm); color: var(--text-error); box-shadow: none;
+    border: 1px solid var(--bpm-control-border, var(--text-error)); border-radius: var(--bpm-radius-sm); color: var(--text-error); box-shadow: none;
 }
 
 /* 同行卡片等高，详情从底部向上填充；Equal row heights with bottom-anchored optional details. */
@@ -13363,6 +13367,18 @@ body .manager-setting__tabs .manager-setting__tabs-item[data-state="active"] .ma
     width: 100%;
     min-width: 0;
 }
+
+.manager-setting__navigation { flex: 1 1 auto; min-width: 0; }
+.manager-setting-navigation__entry.setting-item { gap: var(--size-4-3); }
+.manager-setting-navigation__icon {
+    display: inline-flex;
+    flex: 0 0 var(--icon-m);
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+}
+.manager-setting-navigation__icon svg { width: var(--icon-m); height: var(--icon-m); }
+.manager-setting-navigation__summary { overflow-wrap: anywhere; }
 
 .manager-setting__brand {
     display: inline-flex;
@@ -13833,6 +13849,7 @@ body.is-phone .manager-container--mobile .manager-overview-heading .manager-food
     flex-wrap: nowrap;
     justify-content: flex-start;
     overflow-x: auto;
+    flex-shrink: 0;
 }
 
 body.is-phone .manager-container--mobile .bpm-stat-chip__label {
@@ -13847,12 +13864,14 @@ body.is-phone .manager-container--mobile .bpm-stat-chip {
 body.is-phone .manager-container--mobile .manager-page-tools {
     width: 100%;
     overflow-x: visible;
+    flex-shrink: 0;
 }
 
 body.is-phone .manager-container--mobile .manager-page-tools .setting-item-control {
     flex-wrap: wrap;
     justify-content: center;
     width: 100%;
+    flex-shrink: 0;
 }
 
 /* 隐藏标签时，长按功能项临时显示标签 */
@@ -13972,7 +13991,7 @@ body.is-phone .manager-container.manager-container--main.manager-container--mobi
 .manager-personalize .manager-personalize__icon { display: inline-flex; flex-shrink: 0; }
 .manager-personalize .manager-personalize__icon svg,
 .manager-personalize .manager-personalize__tool svg { width: var(--icon-s); height: var(--icon-s); }
-.manager-personalize .manager-personalize__actions {
+.manager-setting__container .manager-personalize .manager-personalize__tools > .setting-item.manager-personalize__actions {
     flex: 1 1 auto;
     width: 100%;
     min-width: 0;
@@ -13991,7 +14010,7 @@ body.is-phone .manager-container.manager-container--main.manager-container--mobi
     max-width: 100%;
     gap: var(--size-4-1);
 }
-.manager-personalize .manager-personalize__tool {
+.manager-personalize .manager-personalize__tools .setting-item-control > button.manager-personalize__tool {
     display: inline-flex;
     flex: 0 0 auto;
     align-items: center;
@@ -14006,9 +14025,9 @@ body.is-phone .manager-container.manager-container--main.manager-container--mobi
     color: var(--text-muted);
     box-shadow: none;
 }
-.manager-personalize .manager-personalize__tool:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+.manager-personalize .manager-personalize__tools .setting-item-control > button.manager-personalize__tool:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
 body .manager-personalize .manager-personalize__feature.is-active,
-.manager-personalize .manager-personalize__tool.is-active {
+.manager-personalize .manager-personalize__tools .setting-item-control > button.manager-personalize__tool.is-active {
     border-color: color-mix(in srgb, var(--interactive-accent) 45%, var(--bpm-border));
     background: color-mix(in srgb, var(--interactive-accent) 14%, var(--background-primary));
     color: var(--text-accent);
@@ -14156,9 +14175,6 @@ button.manager-setting-search__result:hover { background: var(--background-modif
 .manager-setting-search__target { outline: 1px solid var(--interactive-accent); outline-offset: var(--size-4-1); }
 
 /* 受管横栏统一定位与原生轨道隐藏；Managed strips own positioning and native-track suppression. */
-.bpm-scroll-strip.is-strip-scrollable {
-    touch-action: pan-y pinch-zoom;
-}
 .bpm-scroll-strip {
     position: relative;
 }
@@ -14638,7 +14654,7 @@ button.manager-setting-search__result:hover { background: var(--background-modif
     max-width: min(520px, calc(100vw - 32px));
 }
 
-.quick-apply-parts-modal .setting-item {
+.modal.quick-apply-parts-modal .setting-item.quick-apply-parts__row {
     min-height: 0;
     margin: 0;
     padding: 2px 0;
@@ -14827,8 +14843,7 @@ button.manager-setting-search__result:hover { background: var(--background-modif
     gap: 3px;
 }
 
-.manager-plugin-card__view-toggle,
-.manager-plugin-card__view-default {
+.manager-container .manager-plugin-card__view-bar > button:is(.manager-plugin-card__view-toggle, .manager-plugin-card__view-default) {
     flex: 0 0 16px;
     width: 16px;
     min-width: 16px;
@@ -14889,16 +14904,6 @@ body.mod-windows .manager-container.manager-container--main.manager-container__t
     margin-top: 10px;
     margin-bottom: 150px;
     max-height: calc(100vh - 160px);
-}
-
-/* 个性化 BPM 的工具图标：独立于管理器容器的固定图标按钮尺寸 */
-
-/* 空图标修复：平板 app.css 给 button 的左右内边距会挤压图标 */
-.manager-personalize .manager-personalize__tools .manager-personalize__tool {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
 }
 
 .manager-personalize .manager-personalize__tools .manager-personalize__tool svg {
@@ -15091,8 +15096,8 @@ body .manager-container.manager-container--main .manager-overview-heading.bpm-re
 .manager-setting__topbar > .bpm-settings-save:hover:not(:disabled) { background: var(--background-modifier-hover); }
 .manager-setting__topbar > .bpm-settings-save svg { width: var(--icon-size); height: var(--icon-size); }
 .manager-container--mobile .manager-global-tools > button.bpm-settings-save {
-    min-width: var(--bpm-action-size);
-    min-height: var(--bpm-action-size);
+    min-width: var(--bpm-touch-size);
+    min-height: var(--bpm-touch-size);
 }
 .manager-container .manager-global-tools .bpm-settings-save.has-unsaved-settings,
 .manager-setting__topbar > .bpm-settings-save.has-unsaved-settings {
@@ -15371,7 +15376,6 @@ body .manager-container.manager-container--main .manager-overview-heading.bpm-re
     box-shadow: none;
     overflow-x: auto;
     overflow-y: hidden;
-    touch-action: pan-x;
 }
 .manager-setting__tabs {
     --bpm-segment-flex: 0 0 auto;
@@ -15396,7 +15400,7 @@ body .manager-container.manager-container--main .manager-overview-heading.bpm-re
     justify-content: flex-start;
     overscroll-behavior-x: contain;
 }
-.manager-repo-page__switcher { --bpm-repo-group-width: fit-content; flex: 0 0 auto; align-self: center; }
+.manager-repo-page__switcher { --bpm-repo-group-width: fit-content; flex: 0 1 auto; align-self: center; }
 .manager-transfer-strategy__controls { min-width: 0; }
 .manager-container--mobile .manager-repo-page__switcher { align-self: flex-start; margin-inline: auto; justify-content: safe center; }
 .manager-container .manager-theme-overview .manager-appearance-tabs { flex: 0 0 auto; align-self: flex-start; justify-content: flex-start; }
@@ -15413,11 +15417,7 @@ body .manager-container.manager-container--main .manager-overview-heading.bpm-re
     padding: 0 3px;
     margin-inline: auto;
 }
-.manager-setting__tabs-item,
-.manager-toolbar__tab,
-.manager-repo-page__switch,
-.manager-install__segment,
-.manager-transfer-segment {
+:is(.manager-container, .manager-setting__container) :is(.manager-setting__tabs, .manager-toolbar__tabs, .manager-repo-page__switcher, .manager-install__segmented, .manager-transfer-strategy__controls) > button:is(.manager-setting__tabs-item, .manager-toolbar__tab, .manager-repo-page__switch, .manager-install__segment, .manager-transfer-segment):not(:where([hidden], .manager-feature-disabled)) {
     -webkit-appearance: none;
     appearance: none;
     position: relative;
@@ -15433,7 +15433,7 @@ body .manager-container.manager-container--main .manager-overview-heading.bpm-re
     margin: 0;
     padding: 4px 8px;
     border: 1px solid transparent;
-    border-radius: var(--radius-s, 6px);
+    border-radius: var(--bpm-segment-radius, 6px);
     background: transparent;
     color: var(--bpm-segment-color, var(--text-normal));
     box-shadow: none;
@@ -15454,34 +15454,34 @@ body.theme-dark :is(.manager-setting__tabs, .manager-toolbar__tabs, .manager-rep
     --bpm-segment-default-active-border: var(--background-modifier-border);
     --bpm-segment-default-active-background: color-mix(in srgb, var(--background-modifier-form-field) 30%, transparent);
 }
-:is(.manager-setting__tabs-item, .manager-toolbar__tab, .manager-repo-page__switch, .manager-install__segment, .manager-transfer-segment):hover {
+:is(.manager-container, .manager-setting__container) :is(.manager-setting__tabs, .manager-toolbar__tabs, .manager-repo-page__switcher, .manager-install__segmented, .manager-transfer-strategy__controls) > button:is(.manager-setting__tabs-item, .manager-toolbar__tab, .manager-repo-page__switch, .manager-install__segment, .manager-transfer-segment):hover {
     border-color: transparent;
     color: var(--bpm-segment-color, var(--text-normal));
     background: transparent;
     box-shadow: none;
 }
-.manager-setting__tabs-item_is-active,
-:is(.manager-setting__tabs-item, .manager-toolbar__tab, .manager-repo-page__switch, .manager-install__segment, .manager-transfer-segment):is(.is-active, [aria-selected="true"], [aria-pressed="true"], [data-state="active"]) {
+:is(.manager-container, .manager-setting__container) :is(.manager-setting__tabs, .manager-toolbar__tabs, .manager-repo-page__switcher, .manager-install__segmented, .manager-transfer-strategy__controls) > button.manager-setting__tabs-item_is-active,
+:is(.manager-container, .manager-setting__container) :is(.manager-setting__tabs, .manager-toolbar__tabs, .manager-repo-page__switcher, .manager-install__segmented, .manager-transfer-strategy__controls) > button:is(.manager-setting__tabs-item, .manager-toolbar__tab, .manager-repo-page__switch, .manager-install__segment, .manager-transfer-segment):is(.is-active, [aria-selected="true"], [aria-pressed="true"], [data-state="active"]) {
     border-color: var(--bpm-segment-active-border, var(--bpm-segment-default-active-border, transparent));
     background: var(--bpm-segment-active-background, var(--bpm-segment-default-active-background, var(--background-primary)));
     color: var(--bpm-segment-active-color, var(--text-normal));
     box-shadow: var(--bpm-segment-active-shadow, 0 1px 2px rgba(0, 0, 0, 0.05));
     transition: none;
 }
-:is(.manager-setting__tabs-item, .manager-toolbar__tab, .manager-repo-page__switch, .manager-install__segment, .manager-transfer-segment):focus-visible {
+:is(.manager-container, .manager-setting__container) :is(.manager-setting__tabs, .manager-toolbar__tabs, .manager-repo-page__switcher, .manager-install__segmented, .manager-transfer-strategy__controls) > button:is(.manager-setting__tabs-item, .manager-toolbar__tab, .manager-repo-page__switch, .manager-install__segment, .manager-transfer-segment):focus-visible {
     outline: 1px solid var(--interactive-accent);
     outline-offset: 0;
     border-color: var(--interactive-accent);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--interactive-accent) 50%, transparent);
 }
-.manager-setting__tabs > :is(.manager-setting__tabs-item:hover, .manager-setting__tabs-item:focus-visible),
-.manager-toolbar__tabs > :is(.manager-toolbar__tab:hover, .manager-toolbar__tab:focus-visible) {
+:is(.manager-container, .manager-setting__container) .manager-setting__tabs > button:is(.manager-setting__tabs-item:hover, .manager-setting__tabs-item:focus-visible),
+:is(.manager-container, .manager-setting__container) .manager-toolbar__tabs > button:is(.manager-toolbar__tab:hover, .manager-toolbar__tab:focus-visible) {
     border-color: var(--bpm-segment-active-border);
     background: var(--bpm-segment-active-background);
     color: var(--bpm-segment-active-color);
     box-shadow: none;
 }
-:is(.manager-setting__tabs-item, .manager-toolbar__tab, .manager-repo-page__switch, .manager-install__segment, .manager-transfer-segment):is(:disabled, [aria-disabled="true"]) {
+:is(.manager-container, .manager-setting__container) :is(.manager-setting__tabs, .manager-toolbar__tabs, .manager-repo-page__switcher, .manager-install__segmented, .manager-transfer-strategy__controls) > button:is(.manager-setting__tabs-item, .manager-toolbar__tab, .manager-repo-page__switch, .manager-install__segment, .manager-transfer-segment):is(:disabled, [aria-disabled="true"]) {
     pointer-events: none;
     opacity: 0.5;
 }
@@ -15527,3 +15527,30 @@ body.theme-dark :is(.manager-setting__tabs, .manager-toolbar__tabs, .manager-rep
     width: 0;
     height: 0;
 }
+/* 受管滚动条拥有手势，不能被页面布局覆盖；Managed strips retain vertical scrolling and own horizontal drags. */
+.bpm-scroll-strip.is-strip-scrollable { touch-action: pan-y pinch-zoom; }
+/* 保留 1.2.12 的原生轨道尺寸与颜色；旧引擎继续使用上面的 WebKit/悬停滑块回退。
+   Preserve native scrollbar geometry on supporting engines; older engines use the themed fallback. */
+@supports (scrollbar-color: auto) and (scrollbar-width: auto) {
+    .manager-container,
+    .manager-item-container,
+    .ribbon-manager-modal,
+    .ribbon-manager-modal .draggable-list-container {
+        scrollbar-width: var(--scrollbar-native-width);
+        scrollbar-color: var(--scrollbar-thumb-bg) var(--scrollbar-bg);
+    }
+    .manager-container .bpm-scroll-strip,
+    .manager-setting__container .bpm-scroll-strip,
+    .ribbon-manager-modal .bpm-scroll-strip { scrollbar-width: none; }
+}
+
+/* 设置和功能分页共用按实际宽度折叠的菜单；Shared tab navigation keeps narrow headers on one row. */
+.bpm-responsive-tabs { position: relative; min-width: 0; }
+.bpm-responsive-tabs > .bpm-responsive-tabs__select { display: none; }
+.bpm-responsive-tabs.is-tabs-compact > .bpm-responsive-tabs__rail { display: none; }
+.bpm-responsive-tabs.is-tabs-compact > .bpm-responsive-tabs__select { display: inline-flex; max-width: 100%; }
+.bpm-responsive-tabs.is-tabs-measuring > .bpm-responsive-tabs__rail {
+    display: inline-flex; position: absolute; visibility: hidden; pointer-events: none;
+    width: max-content; max-width: none; inset-inline-start: 0; inset-block-start: 0;
+}
+.manager-toolbar.bpm-responsive-tabs > .bpm-responsive-tabs__select { grid-column: 2; grid-row: 1; justify-self: center; }

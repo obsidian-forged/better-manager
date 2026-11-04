@@ -177,6 +177,96 @@ test('file echoes stay inert and only an explicit Save reports newly received di
     assert.equal(notices.length,count);assert.equal(manager.configProtection.protection.paused,false);assert.notEqual(manager.settings.LANGUAGE,'fr');
     assert.equal(await manager.savePendingSettings(),false);assert.ok(Object.keys(adapter.files).some(path=>path.includes('/conflicts/')));assert.ok(notices.length>count);
 });
+
+async function drainEditorClose(manager) {
+    // A close publishes outside the staging queue so it cannot deadlock its own Save request.
+    for (let pass = 0; pass < 3; pass++) { await new Promise(resolve => setImmediate(resolve)); await manager.settingsSaveQueue; }
+}
+async function closeSaveFixture() {
+    const adapter = memoryAdapter(), { manager } = await fixture({ adapter });
+    manager.settings.MANUAL_CONFIG_SAVE = false;
+    const path = '.obsidian/plugins/self/data.json';
+    adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
+    await manager.loadSettings();
+    return { adapter, manager, path };
+}
+
+test('manual saving remains the default for new and previously stored settings', async () => {
+    assert.equal(DEFAULT_SETTINGS.MANUAL_CONFIG_SAVE, true);
+    const adapter = memoryAdapter(), { manager } = await fixture({ adapter });
+    const path = '.obsidian/plugins/self/data.json', stored = structuredClone(manager.devices.persistedSettings());
+    delete stored.MANUAL_CONFIG_SAVE; adapter.files[path] = JSON.stringify(stored);
+    await manager.loadSettings();
+    assert.equal(manager.settings.MANUAL_CONFIG_SAVE, true);
+});
+
+test('failure to prime read-only sync warnings reports the limitation without breaking configuration protection', async () => {
+    const adapter = memoryAdapter(), { manager } = await fixture({ adapter });
+    const path = '.obsidian/plugins/self/data.json';
+    adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
+    const read = adapter.read, before = notices.length; let failures = 0;
+    adapter.read = async target => {
+        if (target === path && manager.configProtection?.protection.current) { failures++; throw new Error('Transient diagnostic read failure'); }
+        return read(target);
+    };
+    await manager.loadSettings();
+    assert.equal(failures, 1); assert.equal(notices.length, before + 1);
+    assert.match(notices.at(-1), /External BPM settings changes could not be checked/);
+    assert.equal(manager.settings.RECENT_INSTALL_DAYS, 7);
+    assert.ok(manager.configProtection.protection.current.id);
+    adapter.read = read;
+    assert.ok((await manager.configProtection.files.readShared()).id);
+    manager.configProtection.destroy();
+});
+
+test('optional close saving waits for the last editor and retains the explicit Save entry point', async () => {
+    const { adapter, manager, path } = await closeSaveFixture(), first = {}, second = {};
+    const original = adapter.files[path];
+    manager.beginSettingsEditing(first); manager.beginSettingsEditing(second);
+    manager.settings.RECENT_INSTALL_DAYS = 19; await manager.saveSettings({ captureDevice: false });
+    manager.endSettingsEditing(first); await drainEditorClose(manager);
+    assert.equal(adapter.files[path], original);
+    manager.endSettingsEditing(second); await drainEditorClose(manager);
+    assert.equal(JSON.parse(adapter.files[path]).RECENT_INSTALL_DAYS, 19);
+    assert.equal(manager.hasUnsavedSettings, false);
+    assert.equal(await manager.savePendingSettings(), true);
+});
+
+test('optional close saving preserves both conflicting versions and never adopts external settings', async () => {
+    const { adapter, manager, path } = await closeSaveFixture(), editor = {};
+    manager.beginSettingsEditing(editor);
+    manager.settings.RECENT_INSTALL_DAYS = 19; await manager.saveSettings({ captureDevice: false });
+    const remote = JSON.parse(adapter.files[path]); remote.LANGUAGE = 'fr'; adapter.files[path] = JSON.stringify(remote);
+    const incoming = adapter.files[path];
+    manager.endSettingsEditing(editor); await drainEditorClose(manager);
+    assert.equal(adapter.files[path], incoming);
+    assert.equal(manager.configProtection.protection.paused, true);
+    assert.equal(manager.settings.RECENT_INSTALL_DAYS, 19); assert.notEqual(manager.settings.LANGUAGE, 'fr');
+    assert.ok(Object.keys(adapter.files).some(path => path.includes('/conflicts/')));
+    assert.equal(manager.hasUnsavedSettings, true);
+});
+
+test('reopening during an opted-in close save cancels it before shared publication', async () => {
+    const { adapter, manager, path } = await closeSaveFixture(), editor = {}, reopened = {};
+    const original = adapter.files[path]; manager.beginSettingsEditing(editor);
+    manager.settings.RECENT_INSTALL_DAYS = 19; await manager.saveSettings({ captureDevice: false });
+    let release, entered;
+    const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
+    manager.devices.mergeDeviceRecords = async () => { entered(); await gate; return false; };
+    manager.endSettingsEditing(editor); await started;
+    manager.beginSettingsEditing(reopened); release(); await drainEditorClose(manager);
+    assert.equal(adapter.files[path], original); assert.equal(manager.hasUnsavedSettings, true);
+});
+
+test('session-only changes never become a close-save publication or a pending draft', async () => {
+    const { adapter, manager, path } = await closeSaveFixture(), editor = {};
+    manager.settings.DEVICE_MANAGEMENT.enabled = true;
+    manager.beginSettingsEditing(editor);
+    const original = adapter.files[path];
+    manager.overview.setMode('plugins', 'session'); await manager.overview.setPluginState('a', { enabled: false });
+    manager.endSettingsEditing(editor); await drainEditorClose(manager);
+    assert.equal(adapter.files[path], original); assert.equal(manager.hasUnsavedSettings, false);
+});
 test('manual edits after confirmation retain the other selected fields until explicit Save',async()=>{
     const adapter=memoryAdapter(),{manager}=await fixture({adapter}),path='.obsidian/plugins/self/data.json';
     adapter.files[path]=JSON.stringify(manager.devices.persistedSettings());await manager.loadSettings();manager.beginSettingsEditing({});

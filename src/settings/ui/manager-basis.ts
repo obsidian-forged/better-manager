@@ -3,6 +3,8 @@ import BaseSetting from "../base-setting";
 import { ButtonComponent, DropdownComponent, Setting, ToggleComponent, TextComponent, setIcon } from "obsidian";
 import Commands from "src/command";
 import { githubProxyEnabled } from "src/github-url";
+import { addSettingTags } from '../setting-tags';
+import { protectionText } from '../protection-text';
 // import { GROUP_STYLE, ITEM_STYLE, TAG_STYLE } from "src/data/data";
 
 export default class ManagerBasis extends BaseSetting {
@@ -56,9 +58,9 @@ export default class ManagerBasis extends BaseSetting {
         }
 
         const toolsWrap = personalizeEl.createDiv('manager-personalize__tools');
-        const toolsSetting = new Setting(toolsWrap).setClass('manager-personalize__actions').setName('');
+        const toolsSetting = new Setting(toolsWrap).setClass('manager-personalize__actions').setClass('mod-action').setName('');
         for (const id of TOOL_IDS.filter(toolAvailable)) {
-            const button = toolsSetting.controlEl.createEl('button', { cls: 'manager-personalize__tool' });
+            const button = toolsSetting.controlEl.createEl('button', { cls: 'manager-personalize__tool clickable-icon' });
             button.type = 'button';
             button.setAttribute('aria-label', t0('功能开关_' + id));
             button.toggleClass('is-active', toolEnabled(this.settings, id));
@@ -93,6 +95,21 @@ export default class ManagerBasis extends BaseSetting {
             this.settingTab.renderSettings();
             this.render();
         }));
+
+        const syncText = (key: Parameters<typeof protectionText>[1]) => protectionText(this.manager, key);
+        const syncTags = [syncText('realtimeSyncTag'), syncText('compatibilityTag')];
+        addSettingTags(new Setting(this.containerEl)
+            .setName(syncText('manualSaveName')).setDesc(syncText('manualSaveDescription')), syncTags)
+            .addToggle(toggle => toggle.setValue(this.settings.MANUAL_CONFIG_SAVE !== false).onChange(this.action(async value => {
+                this.settings.MANUAL_CONFIG_SAVE = value;
+                await this.manager.saveSettings({ captureDevice: false });
+            })));
+        addSettingTags(new Setting(this.containerEl)
+            .setName(syncText('changeWarningsName')).setDesc(syncText('changeWarningsDescription')), syncTags)
+            .addToggle(toggle => toggle.setValue(this.settings.SYNC_CHANGE_WARNINGS !== false).onChange(this.action(async value => {
+                this.settings.SYNC_CHANGE_WARNINGS = value;
+                await this.manager.saveSettings({ captureDevice: false });
+            })));
 
         const persistenceBar = new Setting(this.containerEl)
             .setName(this.manager.translator.t("设置_基础设置_筛选持久化_标题"))

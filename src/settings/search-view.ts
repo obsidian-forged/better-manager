@@ -4,6 +4,7 @@ import { rankSettings, SearchableSetting } from './search';
 
 export interface SettingsSearchPage {
     label: string;
+    icon?: string;
     render(container: HTMLElement): void;
 }
 export interface SettingsSearchItem extends SearchableSetting { page: number; ordinal: number; }

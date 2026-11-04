@@ -113,6 +113,10 @@ export interface ManagerSettings {
     // 基础设置页
     /** 是否持久化管理页筛选状态；关闭时筛选只在当前弹窗生命周期内生效。 */
     PERSISTENCE: boolean;
+    /** Keep shared configuration publication explicit; opt out to save when the last editor closes. */
+    MANUAL_CONFIG_SAVE: boolean;
+    /** Warn after three effective external changes to one configuration file within three seconds. */
+    SYNC_CHANGE_WARNINGS: boolean;
     /** 最近安装标签显示窗口（天）；0 表示关闭标签。 */
     RECENT_INSTALL_DAYS: number;
     /** 管理器弹窗是否居中显示；关闭时桌面端会偏上显示。 */
@@ -305,6 +309,8 @@ export const DEFAULT_SETTINGS: ManagerSettings = {
 
     // 基础设置页
     PERSISTENCE: false,
+    MANUAL_CONFIG_SAVE: true,
+    SYNC_CHANGE_WARNINGS: true,
     RECENT_INSTALL_DAYS: 7,
     CENTER: false,
     DELAY: false,
