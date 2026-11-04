@@ -2,7 +2,10 @@ import { Notice, Platform } from 'obsidian';
 import type Manager from '../main';
 import { featureEnabled } from '../features';
 import { pluginStorage } from '../storage/plugin-storage';
+import { LocalStateStore } from '../storage/local-state';
+import { FileChangeAdapter, hasFileChangeNotifications, subscribeFileChanges } from '../storage/file-change-listener';
 import { mergeSettings, settingsFingerprint } from '../settings/session-store';
+import { toText } from '../shared/text';
 import type { RibbonGroup, RibbonItem } from '../data/types';
 import { applyPresetToSettings, capturePreset, cloneAppearance, clonePreset,
     allPresets, detectDeviceType, detectSystemPlatform, DEVICE_TYPES, DeviceManagement, DevicePluginFilters, DevicePluginState, DevicePreset, DeviceScope, DeviceType,
@@ -24,7 +27,6 @@ const isManagedDevice = (value: unknown): value is ManagedDevice => {
 
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>
     value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
-type LocalStorageApp = { loadLocalStorage(key: string): unknown; saveLocalStorage(key: string, value: unknown): void; };
 type CustomCssLike = {
     theme?: string;
     enabledSnippets?: Set<string> | string[];
@@ -33,40 +35,7 @@ type CustomCssLike = {
     loadSnippets?(): Promise<void>;
     loadTheme?(): Promise<void>;
 };
-type CapacitorDevice = { getId?(): Promise<{ identifier?: string }> };
-type DeviceFileAdapter = { onFileChange?: (path: string) => void };
-type DeviceFileHookState = { original?: (path: string) => void; listeners: Set<(path: string) => void> };
-const DEVICE_FILE_HOOK = '__bpmDeviceFileHook';
-
-/** 监听适配器的文件变更事件；不接管全局 handler，也不做轮询。 */
-function registerDeviceFileListener(adapter: DeviceFileAdapter | undefined, listener: (path: string) => void): () => void {
-    if (!adapter) return () => undefined;
-    const hooked = adapter as DeviceFileAdapter & { [DEVICE_FILE_HOOK]?: DeviceFileHookState };
-    let state = hooked[DEVICE_FILE_HOOK];
-    if (!state) {
-        const original = adapter.onFileChange;
-        state = { original, listeners: new Set() };
-        hooked[DEVICE_FILE_HOOK] = state;
-        adapter.onFileChange = function (path: string) {
-            try {
-                state?.original?.call(adapter, path);
-            } finally {
-                for (const callback of state?.listeners ?? []) {
-                    try { callback(path); } catch { /* 单个监听器失败不影响其他监听 / Isolate listeners. */ }
-                }
-            }
-        };
-    }
-    state.listeners.add(listener);
-    return () => {
-        state?.listeners.delete(listener);
-        if (state && state.listeners.size === 0) {
-            if (state.original) adapter.onFileChange = state.original;
-            else delete adapter.onFileChange;
-            delete hooked[DEVICE_FILE_HOOK];
-        }
-    };
-}
+const callable = (value: unknown): value is (...args: unknown[]) => unknown => typeof value === 'function';
 interface StoredIdentity { id?: unknown; type?: unknown; platformId?: unknown; presetId?: unknown; }
 interface LiveSnapshot {
     ribbon: RibbonItem[];
@@ -96,8 +65,10 @@ export class DeviceManager {
     private selections: Partial<Record<ScopePage, string>> = {};
     private projection?: Projection;
     private stopDeviceFileWatch?: () => void;
+    private mobileModel = '';
 
-    constructor(private readonly manager: Manager) {}
+    private readonly localState: LocalStateStore;
+    constructor(private readonly manager: Manager) { this.localState = new LocalStateStore(manager); }
     get data(): DeviceManagement {
         const data = this.manager.settings.DEVICE_MANAGEMENT;
         if (!data) throw new Error('Device management has not been initialized');
@@ -154,34 +125,34 @@ export class DeviceManager {
     /** 设备记录只靠文件变更事件同步；不轮询、不主动扫描目录。 */
     private startDeviceFileWatch(): void {
         if (this.stopDeviceFileWatch) return;
-        const adapter = this.manager.app?.vault?.adapter as DeviceFileAdapter | undefined;
+        const adapter = this.manager.app?.vault?.adapter as FileChangeAdapter | undefined;
         const configDir = this.manager.app?.vault?.configDir;
         const prefix = this.deviceFilePrefix();
         if (!adapter || !configDir || !prefix) return;
         let timer: number | undefined;
         const schedule = () => {
-            if (timer !== undefined) globalThis.clearTimeout(timer);
-            timer = globalThis.setTimeout(() => {
+            if (timer !== undefined) window.clearTimeout(timer);
+            timer = window.setTimeout(() => {
                 timer = undefined;
                 if (!this.ready || this.busy || !this.data.enabled) return;
                 void this.mergeDeviceRecords()
                     .then(changed => { if (changed) this.manager.managerModal?.refreshDevicePanelIfOpen(); })
                     .catch(error => this.report(error));
-            }, 150) as unknown as number;
+            }, 150);
         };
         const isDeviceFile = (path: string): boolean =>
             path.startsWith(prefix) || path.startsWith(`${configDir}/better-plugins-manager-device-`);
-        const hasFileChangeEvent = typeof adapter.onFileChange === 'function';
-        const unregister = registerDeviceFileListener(adapter, path => { if (isDeviceFile(path)) schedule(); });
-        const win = typeof globalThis.window === 'object' ? globalThis.window : undefined;
-        const doc = typeof globalThis.document === 'object' ? globalThis.document : undefined;
+        const hasFileChangeEvent = hasFileChangeNotifications(adapter);
+        const unregister = subscribeFileChanges(adapter, path => { if (isDeviceFile(path)) schedule(); }, error => this.report(error));
+        const win = window;
+        const doc = win.document;
         const onFocus = () => { if (!hasFileChangeEvent) schedule(); };
         const onVisibility = () => { if (doc?.visibilityState === 'visible') onFocus(); };
         win?.addEventListener('focus', onFocus);
         doc?.addEventListener('visibilitychange', onVisibility);
         this.stopDeviceFileWatch = () => {
             unregister();
-            if (timer !== undefined) globalThis.clearTimeout(timer);
+            if (timer !== undefined) win.clearTimeout(timer);
             win?.removeEventListener('focus', onFocus);
             doc?.removeEventListener('visibilitychange', onVisibility);
         };
@@ -302,32 +273,20 @@ export class DeviceManager {
     private readHostname(): string {
         if (!Platform.isDesktopApp) return '';
         try {
-            const nodeRequire = (globalThis as { require?: (id: string) => unknown }).require;
-            const os = nodeRequire?.('os') as { hostname?: () => string } | undefined;
-            return String(os?.hostname?.() || '').trim();
+            const nodeRequire: unknown = Reflect.get(window, 'require');
+            const os = callable(nodeRequire) ? asRecord(nodeRequire('os')) : undefined;
+            const hostname = os?.hostname;
+            return callable(hostname) ? toText(hostname.call(os)).trim() : '';
         } catch (error) {
             if (this.manager.settings.DEBUG) console.error('[BPM] Hostname unavailable', error);
             return '';
         }
     }
-    /** 仅用于没有原生 API 的硬件型号；OS 判定仍以 Platform 为准。 */
+    /** 原生设备 API 提供型号，系统类型只由 Platform 判断。 Native model with platform fallback. */
     private readMobileModel(): string {
         if (!Platform.isMobileApp) return '';
-        const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
-        if (Platform.isIosApp || /iPhone|iPad|iPod/.test(ua)) {
-            if (Platform.isTablet || /iPad/.test(ua)) return 'iPad';
-            return /iPod/.test(ua) ? 'iPod' : 'iPhone';
-        }
-        if (/Android/i.test(ua)) {
-            const block = (ua.match(/\(([^)]*)\)/) || [])[1] || '';
-            const segments = block.split(';').map(segment => segment.trim());
-            const androidIndex = segments.findIndex(segment => /^Android\s/i.test(segment));
-            for (let index = androidIndex >= 0 ? androidIndex + 1 : 0; index < segments.length; index += 1) {
-                const segment = segments[index];
-                if (!segment || /^wv$/i.test(segment) || /^[a-z]{2}(-[A-Za-z]{2})?$/.test(segment)) continue;
-                return segment.replace(/\s*Build\/.*$/i, '').trim();
-            }
-        }
+        if (this.mobileModel) return this.mobileModel;
+        if (Platform.isIosApp) return Platform.isTablet ? 'iPad' : 'iPhone';
         return '';
     }
     /** 空名或三种语言的类型名都视为自动生成，允许升级；用户命名保持不动。 */
@@ -472,6 +431,30 @@ export class DeviceManager {
         this.ensureBinding(this.boundPresetId, true);
         this.selections = {};
         this.persistIdentity();
+    }
+
+    /** 保存选择结果后重建外域投影，不能把旧预览捕获回预设。 Reproject from the committed selection. */
+    public reconcileAfterExplicitSave(): void {
+        const previous = this.projection;
+        this.projection = undefined;
+        this.reconcileAfterExternal();
+        if (!this.ready) return;
+        const livePlugins = this.pluginStates();
+        for (const scope of this.scopeOptions()) {
+            const preset = this.presetById(scope.presetId)?.preset;
+            if (!preset) continue;
+            const plugins = this.isLiveScope(scope) ? { ...livePlugins, ...(this.data.enabled ? preset.plugins : {}) } : preset.plugins;
+            this.manager.overview.reconcileSavedState(scope.presetId, plugins, preset.appearance);
+        }
+        const effective = this.manager.overview.effectivePlugins(livePlugins, this.boundPresetId);
+        for (const plugin of this.manager.settings.Plugins) {
+            const state = effective[plugin.id];
+            if (state) { plugin.enabled = state.enabled; plugin.delay = state.delay; }
+        }
+        if (!previous || !this.ready || !this.data.enabled) return;
+        if (this.presetById(previous.scope.presetId)) this.selections[previous.page] = previous.scope.key;
+        const scope = this.selectedScope(previous.page);
+        if (!this.isLiveScope(scope)) this.project(scope, previous.page);
     }
 
     /** 筛选只影响视图，不能触发运行态重载；View filters must not reapply plugin/theme/Ribbon state. */
@@ -783,18 +766,18 @@ export class DeviceManager {
     /* ---------- 身份 / Identity ---------- */
 
     private persistIdentity(): void {
-        const storage = this.manager.app as unknown as LocalStorageApp;
+        const storage = this.localState;
         storage.saveLocalStorage(this.storageKey, { id: this.id, type: this.type,
             platformId: this.platformIdentity, presetId: this.boundPresetId });
     }
     private platformIdentity = '';
 
     private async loadIdentity(): Promise<StoredIdentity | undefined> {
-        const storage = this.manager.app as unknown as LocalStorageApp;
+        const storage = this.localState;
         let stored: StoredIdentity | undefined;
         try {
             const value = storage.loadLocalStorage(this.storageKey);
-            if (typeof value === 'object' && value !== null) stored = value as StoredIdentity;
+            if (typeof value === 'object' && value !== null) stored = value;
         } catch (error) {
             this.report(error);
         }
@@ -843,14 +826,20 @@ export class DeviceManager {
         }
         target.configured = true;
         target.updatedAt = Date.now();
-        if (this.manager.settings.DEBUG) console.log('[BPM] Migrated legacy device overrides into preset', target.id);
     }
 
     /** 移动端用 Capacitor 的设备标识做稳定身份；桌面端没有该插件。 */
     private async readPlatformIdentity(): Promise<string> {
         try {
-            const capacitor = (globalThis as { Capacitor?: { Plugins?: { Device?: CapacitorDevice } } }).Capacitor;
-            const identifier = await capacitor?.Plugins?.Device?.getId?.();
+            const capacitor = asRecord(Reflect.get(window, 'Capacitor'));
+            const plugins = asRecord(capacitor?.Plugins), device = asRecord(plugins?.Device);
+            const getInfo = device?.getInfo;
+            if (Platform.isMobileApp && callable(getInfo)) {
+                const info = asRecord(await getInfo.call(device));
+                this.mobileModel = toText(info?.model).trim();
+            }
+            const getId = device?.getId;
+            const identifier = callable(getId) ? asRecord(await getId.call(device)) : undefined;
             const value = identifier?.identifier;
             if (typeof value !== 'string' || !value) return '';
             return await this.hashIdentity(value);
@@ -862,7 +851,7 @@ export class DeviceManager {
     private async hashIdentity(value: string): Promise<string> {
         const prefix = Platform.isMobileApp ? (Platform.isAndroidApp ? 'android' : 'ios') : 'desktop';
         const input = `${prefix}:${value}`;
-        const subtle = globalThis.crypto?.subtle;
+        const subtle = window.crypto?.subtle;
         if (subtle) {
             const data = new TextEncoder().encode(input);
             const digest = await subtle.digest('SHA-256', data);
@@ -876,8 +865,8 @@ export class DeviceManager {
         return (hash >>> 0).toString(16).padStart(8, '0').repeat(4);
     }
     private randomId(): string {
-        return typeof globalThis.crypto?.randomUUID === 'function'
-            ? globalThis.crypto.randomUUID()
+        return typeof window.crypto?.randomUUID === 'function'
+            ? window.crypto.randomUUID()
             : `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     }
     private customCss(): CustomCssLike | undefined {
@@ -897,34 +886,22 @@ export class DeviceManager {
         try { return await task(); } finally { this.busy = false; }
     }
 
-    private localStore(): { load(key: string): unknown; save(key: string, value: unknown): void } | null {
-        const storage = this.manager.app as unknown as {
-            loadLocalStorage?: (key: string) => unknown;
-            saveLocalStorage?: (key: string, value: unknown) => void;
-        };
-        const load = storage.loadLocalStorage;
-        const save = storage.saveLocalStorage;
-        if (typeof load !== 'function' || typeof save !== 'function') return null;
-        return { load: key => load.call(storage, key), save: (key, value) => save.call(storage, key, value) };
-    }
-
     /** 关闭设备管理时保留“当时绑定预设”的快照，重开时做三方合并。 */
     private rememberDisabledBinding(): void {
         const bound = this.boundPreset();
-        const store = this.localStore();
-        if (!bound || !store) return;
+        const store = this.localState;
+        if (!bound) return;
         try {
-            store.save(this.disabledBindingKey, { presetId: bound.id, base: clonePreset(bound) });
+            store.saveLocalStorage(this.disabledBindingKey, { presetId: bound.id, base: clonePreset(bound) });
         } catch (error) { this.report(error); }
     }
 
     private takeDisabledBinding(): { presetId: string; base: DevicePreset } | null {
-        const store = this.localStore();
-        if (!store) return null;
+        const store = this.localState;
         let raw: unknown;
         try {
-            raw = store.load(this.disabledBindingKey);
-            store.save(this.disabledBindingKey, null);
+            raw = store.loadLocalStorage(this.disabledBindingKey);
+            store.saveLocalStorage(this.disabledBindingKey, null);
         } catch (error) { this.report(error); return null; }
         const record = asRecord(raw);
         if (!record || typeof record.presetId !== 'string') return null;
@@ -944,8 +921,7 @@ export class DeviceManager {
         try {
             const local = snapshotPreset(this.manager.settings, { appearance: this.readLiveAppearance() },
                 { id: target.id, name: target.name, configured: true });
-            const merged = mergeSettings(saved.base as unknown as object, local as unknown as object,
-                target as unknown as object) as unknown as DevicePreset;
+            const merged = mergeSettings(saved.base, local, target) as unknown as DevicePreset;
             const before = JSON.stringify([target.plugins, target.filters, target.ribbon, target.ribbonGroups, target.ribbonEnabled, target.appearance]);
             target.plugins = merged.plugins;
             target.filters = merged.filters;

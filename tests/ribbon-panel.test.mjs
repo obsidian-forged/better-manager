@@ -10,6 +10,7 @@ class Element {
     children = [];
     classes = new Set();
     attributes = {};
+    dataset = {};
     listeners = {};
     isConnected = true;
     scrollTop = 0;
@@ -53,9 +54,10 @@ class Element {
 class Base { constructor(app) { this.app = app; this.contentEl = new Element(); } }
 class Button {
     constructor(parent) { this.buttonEl = parent.createEl('button'); }
-    setIcon() { return this; }
+    setIcon(icon) { this.buttonEl.icon = icon; return this; }
     setButtonText(text) { this.buttonEl.text = text; return this; }
     setTooltip() { return this; }
+    setDisabled(disabled) { this.buttonEl.disabled = disabled; return this; }
     onClick(callback) { this.buttonEl.click = callback; return this; }
 }
 class Text {
@@ -123,6 +125,24 @@ test('standalone mobile Ribbon keeps its own single device selector', () => {
     const { panel, scopes } = fixture();
     panel.display(new Element());
     assert.equal(scopes(), 1);
+});
+
+test('Ribbon frames cancel through their own windows and preserve pending configuration work on close', () => {
+    const { panel } = fixture();
+    const cancelled = [];
+    const view = name => ({ requestAnimationFrame: () => 7, cancelAnimationFrame: id => cancelled.push([name, id]) });
+    const first = new Element(), second = new Element();
+    first.ownerDocument = { defaultView: view('first') };
+    second.ownerDocument = { defaultView: view('second') };
+    let restored = 0, staged = 0;
+    panel.scheduleFrame(first, () => restored++);
+    panel.scheduleFrame(second, () => staged++, true);
+    panel.clearFrames();
+    assert.deepEqual(cancelled, [['first', 7], ['second', 7]]);
+    assert.equal(restored, 0);
+    assert.equal(staged, 1);
+    panel.clearFrames();
+    assert.equal(staged, 1);
 });
 
 function statusFixture() {
@@ -241,7 +261,7 @@ test('mobile page changes synchronize identity and filters without rebuilding ch
     } finally { obsidian.Platform.isMobile = wasMobile; }
 });
 
-test('global toolbar keeps settings, More and close, with native contact submenu and background tasks in More', async () => {
+test('global toolbar places explicit Save before More and keeps close outside its native menu', async () => {
     const built = await build({ entryPoints: ['src/modal/manager-modal.ts'], bundle: true, platform: 'node', format: 'cjs', write: false,
         external: ['obsidian', 'electron'], loader: { '.webp': 'dataurl' }, logLevel: 'silent' });
     const loaded = { exports: {} };
@@ -250,18 +270,25 @@ test('global toolbar keeps settings, More and close, with native contact submenu
     const host = new Element(), body = new Element(); host.ownerDocument.body = body; body.ownerDocument = host.ownerDocument;
     const actions = [];
     let unsubscribe = 0;
-    modal.manager = { manifest: { id: 'bpm' }, translator: { t: key => key }, tasks: {
+    modal.manager = { manifest: { id: 'bpm' }, settings: { LANGUAGE: 'en' }, hasUnsavedSettings: false, isSavingSettings: false,
+        async savePendingSettings() { actions.push('save'); return true; }, translator: { t: key => key }, tasks: {
         subscribe: () => () => { unsubscribe++; }, runningCount: () => 0, snapshots: () => [],
     } };
     modal.bindLongPressTooltip = () => {};
+    modal.refreshConfigConflict = () => {};
     modal.openSettingsTab = id => actions.push(id);
     modal.close = () => actions.push('close');
     modal.renderGlobalTools(host);
     const tools = host.children.filter(child => !child.classes.has('manager-sync-notice'));
     assert.equal(host.children.find(child => child.classes.has('manager-sync-notice')).classes.has('is-active'), false);
-    assert.deepEqual(tools.map(child => child.icon), ['settings', 'more-vertical', 'x']);
+    assert.deepEqual(tools.map(child => child.icon), ['settings', 'save', 'more-vertical', 'x']);
     tools[0].listeners.click({}); assert.deepEqual(actions, ['bpm']);
-    const more = tools[1]; more.listeners.click({});
+    assert.equal(tools[1].disabled, false);
+    assert.equal(tools[1].attributes['aria-label'], 'Check and save settings');
+    modal.manager.hasUnsavedSettings = true; modal.refreshSettingsSaveState();
+    assert.equal(tools[1].classes.has('has-unsaved-settings'), true);
+    tools[1].click(); assert.deepEqual(actions, ['bpm', 'save']);
+    const more = tools[2]; more.listeners.click({});
     const contacts = lastMenu.items.find(item => item.title === '管理器_联系方式');
     assert.equal(contacts.submenu.items.length, 3);
     assert.ok(contacts.submenu.items.some(item => item.title === '管理器_GITHUB_描述'));
@@ -269,10 +296,10 @@ test('global toolbar keeps settings, More and close, with native contact submenu
     lastMenu.items.find(item => item.title === '任务_标题').click();
     assert.equal(more.attributes['aria-expanded'], 'true');
     assert.equal(lastMenu.items.some(item => item.title === '通用_关闭窗口'), false);
-    tools[2].listeners.click({});
-    assert.deepEqual(actions, ['bpm', 'close']);
+    tools[3].listeners.click({});
+    assert.deepEqual(actions, ['bpm', 'save', 'close']);
     modal.taskCenterView.destroy();
-    assert.equal(tools.length, 3); assert.equal(body.children.length, 0); assert.equal(unsubscribe, 1);
+    assert.equal(tools.length, 4); assert.equal(body.children.length, 0); assert.equal(unsubscribe, 1);
 });
 
 test('recent installs lead the status options and support the shared window, multi-select and exclusion', async () => {

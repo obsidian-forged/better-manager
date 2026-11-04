@@ -604,7 +604,7 @@ export class CatalogModal extends Modal {
         for (const screenshot of entry.screenshots) {
             const figure = material.createEl("figure", { cls: "markdown-rendered" });
             const load = new ButtonComponent(figure).setButtonText(screenshot.caption || this.t("目录_加载截图"));
-            const feedback = figure.createEl("span", { attr: { role: "status" } });
+            const feedback = figure.createSpan({ attr: { role: "status" } });
             if (screenshot.caption) figure.createEl("figcaption", { text: screenshot.caption });
             load.setTooltip(this.t("目录_截图说明"));
             load.onClick(() => {

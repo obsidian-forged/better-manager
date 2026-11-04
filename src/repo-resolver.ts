@@ -159,7 +159,7 @@ export class RepoResolver {
 			await this.writeCache();
 			return map;
 		} catch (e) {
-			console.error("[BPM] Failed to fetch community plugin list", e);
+			if (this.manager.settings.DEBUG) console.error("[BPM] Failed to fetch community plugin list", e);
 			return {};
 		}
 	}

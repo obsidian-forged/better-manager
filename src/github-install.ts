@@ -1,10 +1,11 @@
 import { Notice, normalizePath, requestUrl } from "obsidian";
-import { assertHttpSuccess, errorMessage, HttpRequestError, resourceMissing } from './network/http-error';
-import Manager from "main";
+import { assertHttpSuccess, errorMessage, errorObject, HttpRequestError, resourceMissing } from './network/http-error';
+import type Manager from "main";
 import { resolveGithubUrl } from "./github-url";
 import { isPrereleaseRelease } from "./release-policy";
 import type { BackgroundTaskHandle } from "./tasks/task-center";
 import { parseInstallManifest } from './catalog/install-manifest';
+import { record } from './catalog/catalog';
 import { installPluginFiles, PluginInstallOptions } from './install/plugin-installer';
 
 /**
@@ -83,6 +84,9 @@ const RELEASE_FALLBACK_CACHE_TTL_MS = 60 * 1000;
 const releaseVersionCache = new Map<string, { expiresAt: number; versions: ReleaseVersion[] }>();
 
 const getToken = async (manager: Manager): Promise<string | undefined> => manager.getGithubToken();
+const reportFallbackFailure = (manager: Manager, context: string, error: unknown): void => {
+	if (!resourceMissing(error) && manager.settings.DEBUG) console.error(`[BPM] ${context}`, error);
+};
 
 const buildHeaders = (token?: string, accept = "application/vnd.github+json"): Record<string, string> => {
 	const headers: Record<string, string> = {
@@ -122,11 +126,30 @@ export const sanitizeRepo = (input: string): string => {
  * requestUrl 默认会在 400+ 时直接 throw；这里显式设置 throw: false，
  * 让我们能保留 GitHub rate limit 等响应头，后续错误提示会更准确。
  */
-const fetchJson = async <T>(manager: Manager, url: string, token?: string): Promise<T> => {
+const fetchJson = async (manager: Manager, url: string, token?: string): Promise<unknown> => {
 	const target = resolveGithubUrl(manager, url);
 	const res = await requestUrl({ url: target, headers: buildHeaders(new URL(target).hostname === 'api.github.com' ? token : undefined), throw: false });
 	assertHttpSuccess(res);
-	return res.json as T;
+	const value: unknown = res.json;
+	return value;
+};
+
+/** Validate network payloads before release fields reach update decisions or downloads. */
+const parseRelease = (value: unknown): ReleaseResponse => {
+	if (!record(value) || typeof value.tag_name !== 'string' || !value.tag_name.trim()) throw new Error('Invalid GitHub release: missing tag');
+	const assets: ReleaseAsset[] = [];
+	if (value.assets !== undefined && !Array.isArray(value.assets)) throw new Error('Invalid GitHub release assets');
+	if (Array.isArray(value.assets)) for (const candidate of value.assets) {
+		const asset: unknown = candidate;
+		if (!record(asset) || typeof asset.name !== 'string' || typeof asset.browser_download_url !== 'string') throw new Error('Invalid GitHub release asset');
+		assets.push({ name: asset.name, browser_download_url: asset.browser_download_url });
+	}
+	return { tag_name: value.tag_name, assets,
+		name: typeof value.name === 'string' ? value.name : undefined,
+		body: typeof value.body === 'string' ? value.body : undefined,
+		draft: value.draft === true, prerelease: value.prerelease === true,
+		published_at: typeof value.published_at === 'string' ? value.published_at : undefined,
+		html_url: typeof value.html_url === 'string' ? value.html_url : undefined };
 };
 
 /** 读取文本响应，主要用于下载 release asset 和 raw.githubusercontent.com 文件。 */
@@ -149,7 +172,7 @@ const getRelease = async (manager: Manager, repo: string, version?: string, toke
 	const url = requestedVersion
 		? `${API_BASE}/repos/${repo}/releases/tags/${encodeURIComponent(requestedVersion)}`
 		: `${API_BASE}/repos/${repo}/releases/latest`;
-	return fetchJson<ReleaseResponse>(manager, url, token);
+	return parseRelease(await fetchJson(manager, url, token));
 };
 
 const pickAsset = (release: ReleaseResponse, name: string): string | null =>
@@ -189,7 +212,7 @@ const fetchRawFromTag = async (manager: Manager, repo: string, tag: string, file
 		try {
 			return await fetchText(manager, `https://raw.githubusercontent.com/${repo}/${candidateTag}/${file}`, token);
 		} catch (error) {
-			if (!resourceMissing(error)) throw error;
+			if (!resourceMissing(error)) throw errorObject(error);
 			// Try the next common tag spelling.
 		}
 	}
@@ -216,8 +239,8 @@ const fetchPluginFilesFromReleaseAssets = async (manager: Manager, release: Rele
 		mainJsUrl ? fetchText(manager, mainJsUrl, token) : Promise.resolve(null),
 		stylesUrl ? fetchText(manager, stylesUrl, token) : Promise.resolve(null),
 	]);
-	if (styles.status === 'rejected') throw styles.reason;
-	for (const result of [manifestText, mainJs]) if (result.status === 'rejected' && !resourceMissing(result.reason)) throw result.reason;
+	if (styles.status === 'rejected') throw errorObject(styles.reason);
+	for (const result of [manifestText, mainJs]) if (result.status === 'rejected' && !resourceMissing(result.reason)) throw errorObject(result.reason);
 
 	return {
 		manifestText: settledValue(manifestText),
@@ -242,7 +265,7 @@ const fetchPluginFilesFromRawTag = async (
 	const [manifestText, mainJs, styles] = await Promise.all([
 		current.manifestText ?? fetchRawFromTag(manager, repo, tag, "manifest.json", token),
 		current.mainJs ?? fetchRawFromTag(manager, repo, tag, "main.js", token),
-		current.styles ?? fetchRawFromTag(manager, repo, tag, "styles.css", token).catch(error => { if (!resourceMissing(error)) throw error; return null; }),
+		current.styles ?? fetchRawFromTag(manager, repo, tag, "styles.css", token).catch(error => { if (!resourceMissing(error)) throw errorObject(error); return null; }),
 	]);
 
 	return { manifestText, mainJs, styles };
@@ -260,9 +283,9 @@ const fetchPluginFilesFromReleaseDownload = async (
 ): Promise<PluginFiles> => {
 	const base = `https://github.com/${repo}/releases/download/${encodeURIComponent(tag)}`;
 	const [manifestText, mainJs, styles] = await Promise.all([
-		fetchText(manager, `${base}/manifest.json`, token).catch(() => null),
-		fetchText(manager, `${base}/main.js`, token).catch(() => null),
-		fetchText(manager, `${base}/styles.css`, token).catch(() => null),
+		fetchText(manager, `${base}/manifest.json`, token).catch(error => { reportFallbackFailure(manager, 'Downloading a release manifest failed; trying the source tag', error); return null; }),
+		fetchText(manager, `${base}/main.js`, token).catch(error => { reportFallbackFailure(manager, 'Downloading a release build failed; trying the source tag', error); return null; }),
+		fetchText(manager, `${base}/styles.css`, token).catch(error => { reportFallbackFailure(manager, 'Downloading release styles failed; trying the source tag', error); return null; }),
 	]);
 	return { manifestText, mainJs, styles };
 };
@@ -291,7 +314,7 @@ const fetchReleaseManifestText = async (
 		try {
 			return await fetchText(manager, manifestUrl, token);
 		} catch (error) {
-			if (!resourceMissing(error)) throw error;
+			if (!resourceMissing(error)) throw errorObject(error);
 			// Fall back to the source tag below.
 		}
 	}
@@ -301,7 +324,7 @@ const fetchReleaseManifestText = async (
 	try {
 		return await fetchRawFromTag(manager, repo, tag, "manifest.json", token);
 	} catch (error) {
-		if (!resourceMissing(error)) throw error;
+		if (!resourceMissing(error)) throw errorObject(error);
 		return null;
 	}
 };
@@ -326,8 +349,8 @@ const enrichReleaseVersionWithManifest = async (
 			minAppVersion: typeof manifest.minAppVersion === "string" ? manifest.minAppVersion : undefined,
 			compatibilityChecked: true,
 		};
-	} catch {
-		return { ...version, compatibilityChecked: false };
+	} catch (error) {
+		return { ...version, compatibilityChecked: false, metadataError: errorMessage(error) };
 	}
 };
 
@@ -380,9 +403,10 @@ export const fetchReleaseVersionsFromAtom = async (manager: Manager, repoInput: 
 			headers: { Accept: "application/atom+xml, application/xml;q=0.9", "User-Agent": "better-plugins-manager" },
 			throw: false,
 		});
-		if (res.status >= 400) return [];
+		assertHttpSuccess(res);
 		return parseAtomReleaseVersions(res.text, repo);
-	} catch {
+	} catch (error) {
+		reportFallbackFailure(manager, 'The release Atom feed is unavailable; trying a raw manifest', error);
 		return [];
 	}
 };
@@ -394,8 +418,9 @@ const fetchManifestVersionFromRaw = async (manager: Manager, repo: string, ref: 
 			headers: { Accept: "application/json", "User-Agent": "better-plugins-manager" },
 			throw: false,
 		});
-		if (res.status >= 400) return null;
-		const manifest = JSON.parse(res.text) as { version?: unknown; minAppVersion?: unknown };
+		assertHttpSuccess(res);
+		const manifest: unknown = JSON.parse(res.text);
+		if (!record(manifest)) return null;
 		const version = typeof manifest.version === "string" ? manifest.version.trim() : "";
 		if (!version) return null;
 		return {
@@ -408,7 +433,8 @@ const fetchManifestVersionFromRaw = async (manager: Manager, repo: string, ref: 
 			compatibilityChecked: true,
 			isGithubLatest: true,
 		};
-	} catch {
+	} catch (error) {
+		reportFallbackFailure(manager, 'A fallback release manifest is unavailable', error);
 		return null;
 	}
 };
@@ -501,13 +527,15 @@ export const fetchReleaseVersions = async (
 	}
 
 	try {
-		const latestRelease = await getRelease(manager, repo, undefined, token).catch(error => { if (!resourceMissing(error)) throw error; return null; });
+		const latestRelease = await getRelease(manager, repo, undefined, token).catch(error => { if (!resourceMissing(error)) throw errorObject(error); return null; });
 		const latestTag = latestRelease?.tag_name || undefined;
 		const releases: ReleaseResponse[] = [];
 		for (let page = 1; ; page++) {
 			const url = `${API_BASE}/repos/${repo}/releases?per_page=${RELEASES_PER_PAGE}&page=${page}`;
-			const pageReleases = await fetchJson<ReleaseResponse[]>(manager, url, token);
-			if (!Array.isArray(pageReleases) || pageReleases.length === 0) break;
+			const payload = await fetchJson(manager, url, token);
+			if (!Array.isArray(payload)) throw new Error('Invalid GitHub release list');
+			const pageReleases = payload.map(parseRelease);
+			if (pageReleases.length === 0) break;
 			releases.push(...pageReleases);
 			if (pageReleases.length < RELEASES_PER_PAGE) break;
 		}
@@ -528,7 +556,7 @@ export const fetchReleaseVersions = async (
 					catch (error) { failed = true; failure = error; }
 				}
 			}));
-			if (failed) throw failure;
+			if (failed) throw errorObject(failure);
 		}
 
 		const versions = releaseEntries.map((entry) => entry.version);
@@ -549,7 +577,7 @@ export const fetchReleaseVersions = async (
 			cacheReleaseVersions(cacheKey, fallback, RELEASE_FALLBACK_CACHE_TTL_MS);
 			return fallback;
 		}
-		throw error;
+		throw errorObject(error);
 	}
 };
 
@@ -589,40 +617,23 @@ export const installPluginFromGithub = async (
 			const fallback = await fetchFallbackReleaseVersions(manager, repo, false);
 			tag = fallback[0]?.version || "";
 		}
-		if (!release && !tag) throw apiError ?? new Error("未找到发布 tag，无法下载原始文件。");
+		if (!release && !tag) throw apiError === undefined ? new Error("未找到发布 tag，无法下载原始文件。") : errorObject(apiError);
 		task.update({ title: manager.translator.t("任务_下载插件文件", { name: repo }), progress: 0.2 });
 
-		if (manager.settings.DEBUG) console.log("[BPM] install from GitHub", { repo, version, tag, apiFallback: !release });
 
 		let files = release
 			? await fetchPluginFilesFromReleaseAssets(manager, release, token)
 			: await fetchPluginFilesFromReleaseDownload(manager, repo, tag, token);
 
-		if (manager.settings.DEBUG) {
-			console.log("[BPM] release assets picked", {
-				manifest: Boolean(files.manifestText),
-				main: Boolean(files.mainJs),
-				styles: Boolean(files.styles),
-			});
-		}
 
 		task.update({ progress: 0.58 });
 		if (!files.manifestText || !files.mainJs) {
 			if (!tag) throw new Error("未找到发布 tag，无法下载原始文件。");
 			try {
 				files = await fetchPluginFilesFromRawTag(manager, repo, tag, token, files);
-				if (manager.settings.DEBUG) {
-					console.log("[BPM] fallback to raw tag", {
-						repo,
-						tag,
-						manifest: Boolean(files.manifestText),
-						main: Boolean(files.mainJs),
-						styles: Boolean(files.styles),
-					});
-				}
 			} catch (error) {
 				if (manager.settings.DEBUG) console.error("[BPM] fallback to raw tag failed", error);
-				throw error;
+				throw errorObject(error);
 			}
 		}
 
@@ -672,8 +683,10 @@ export const installThemeFromGithub = async (manager: Manager, repoInput: string
 			fetchText(manager, themeUrl, token),
 		]);
 
-		const manifest = JSON.parse(manifestText) as { name: string };
-		if (!manifest?.name) {
+		const manifest: unknown = JSON.parse(manifestText);
+		if (!record(manifest) || typeof manifest.name !== 'string' || !manifest.name.trim()
+			|| ['.', '..'].includes(manifest.name) || /[\\/]/.test(manifest.name)
+			|| Array.from(manifest.name).some(character => character.charCodeAt(0) < 32)) {
 			task.fail();
 			new Notice(manager.translator.t("安装_错误_主题manifest缺少名称"));
 			return false;
@@ -690,9 +703,12 @@ export const installThemeFromGithub = async (manager: Manager, repoInput: string
 			adapter.write(`${themePath}manifest.json`, manifestText),
 		]);
 
-		// customCss is an internal Obsidian API, so optional chaining keeps older builds safe.
-		// @ts-ignore
-		manager.app.customCss?.setTheme?.(manifest.name);
+		// 内部主题 API 先检查能力，异步失败交由统一错误处理 / Capability-check the native theme API.
+		const customCss: unknown = Reflect.get(manager.app, 'customCss');
+		if (record(customCss) && typeof customCss.setTheme === 'function') {
+			const applied: unknown = Reflect.apply(customCss.setTheme, customCss, [manifest.name]);
+			await applied;
+		}
 
 		task.done();
 		new Notice(manager.translator.t("安装_主题成功_提示", { name: manifest.name }));

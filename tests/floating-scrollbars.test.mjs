@@ -6,6 +6,7 @@ const loaded = { exports: {} };
 new Function('module', 'exports', compiled.outputFiles[0].text)(loaded, loaded.exports);
 const { FloatingScrollbars } = loaded.exports;
 class Element {
+    instanceOf(ctor) { return this instanceof ctor; }
     classes = new Set(); children = []; listeners = new Map(); captures = new Set(); scrollLeft = 0; clientWidth = 220; scrollWidth = 520;
     addClass(...names) { names.forEach(name => this.classes.add(name)); }
     removeClass(...names) { names.forEach(name => this.classes.delete(name)); }

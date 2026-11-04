@@ -249,7 +249,7 @@ export interface ManagerSettings {
 
     // 旧版 Markdown 导出目录，仅保留用于迁移旧数据；新版导入导出使用管理器内的配置包页面。
     /** @deprecated 插件信息导出目录，相对 vault 根目录；新版不再读取。 */
-    EXPORT_DIR: string;
+    EXPORT_DIR?: string;
 
     // 冲突排查页
     /** 插件冲突排查流程的持久化状态，用于关闭弹窗或重启后恢复进度。 */
@@ -391,7 +391,6 @@ export const DEFAULT_SETTINGS: ManagerSettings = {
     SHARED_VAULTS: [],
 
     // 旧版 Markdown 导出兼容字段
-    EXPORT_DIR: "",
 
     // 冲突排查页
 }

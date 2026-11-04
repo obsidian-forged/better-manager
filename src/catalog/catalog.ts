@@ -139,7 +139,7 @@ export function compareCatalogVersions(a: string, b: string): number {
 }
 
 export function parseStats(value: unknown): Record<string, CatalogStats> {
-    const result: Record<string, CatalogStats> = Object.create(null);
+    const result = Object.create(null) as Record<string, CatalogStats>;
     if (!record(value)) return result;
     for (const [id, raw] of Object.entries(value)) {
         if (!record(raw)) continue;
@@ -205,7 +205,7 @@ export function parseReleases(value: unknown): RepositoryDetails["releases"] {
     if (!Array.isArray(value)) throw new Error("Invalid GitHub release response");
     return value.flatMap((item: unknown) => {
         if (!record(item) || item.draft === true || !text(item.tag_name)) return [];
-        const asset = Array.isArray(item.assets) ? item.assets.find((asset: unknown) => record(asset) && asset.name === "main.js") : undefined;
+        const asset: unknown = Array.isArray(item.assets) ? item.assets.find((asset: unknown) => record(asset) && asset.name === "main.js") : undefined;
         return [{ tag: text(item.tag_name), publishedAt: date(item.published_at), prerelease: item.prerelease === true,
             downloads: record(asset) ? count(asset.download_count) : undefined, notes: text(item.body) || undefined }];
     });
@@ -237,7 +237,7 @@ export class CatalogService {
             const official = raw.id === "official";
             const parsed = parseCatalog({ schemaVersion: 1, name: raw.name, plugins: raw.plugins }, "Catalog");
             // 缓存仍作为不可信输入校验 / Validate persisted snapshots as untrusted input.
-            const stats: Record<string, CatalogStats> = Object.create(null);
+            const stats = Object.create(null) as Record<string, CatalogStats>;
             if (record(raw.stats)) for (const [id, stat] of Object.entries(raw.stats)) {
                 if (!record(stat)) continue;
                 const flat: Record<string, unknown> = { downloads: stat.downloads, updated: stat.updated };

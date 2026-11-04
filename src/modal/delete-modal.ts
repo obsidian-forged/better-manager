@@ -1,4 +1,4 @@
-import { App, ButtonComponent, ExtraButtonComponent, Modal, Setting, setIcon } from "obsidian";
+import { App, ButtonComponent, ExtraButtonComponent, Modal, Notice, Setting, setIcon } from "obsidian";
 import { ManagerSettings } from "../settings/data";
 import Manager from "main";
 import { getExtraButtonElement } from "src/obsidian-internals";
@@ -58,12 +58,13 @@ export class DeleteModal extends Modal {
             await this.deleteCallback();
             this.close();
         } catch (error) {
-            console.error("[BPM] uninstall plugin failed", error);
+            if (this.manager.settings.DEBUG) console.error("[BPM] uninstall plugin failed", error);
+            new Notice(`${this.t('安装_错误_通用')} ${error instanceof Error ? error.message : ''}`);
             this.setBusy(false);
         }
     }
 
-    private async showHead() {
+    private showHead(): void {
         const modalEl = this.contentEl.parentElement;
         if (!modalEl) return;
         modalEl.addClass("manager-delete__container");
@@ -91,7 +92,7 @@ export class DeleteModal extends Modal {
         closeButton.onClick(() => this.close());
     }
 
-    private async showData() {
+    private showData(): void {
         const pluginName = this.target.name || this.target.id || this.t("卸载_未知插件");
         const pluginId = this.target.id || "";
         const page = this.contentEl.createDiv("manager-delete__page");
@@ -148,15 +149,13 @@ export class DeleteModal extends Modal {
         });
     }
 
-    onOpen() {
-        void (async () => {
-            await this.showHead();
-            await this.showData();
-            this.cancelButton?.buttonEl.focus();
-        })();
+    onOpen(): void {
+        this.showHead();
+        this.showData();
+        this.cancelButton?.buttonEl.focus();
     }
 
-    onClose() {
+    onClose(): void {
         this.contentEl.empty();
     }
 }

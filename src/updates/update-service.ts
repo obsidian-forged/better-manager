@@ -7,6 +7,7 @@ import { compareCatalogVersions } from '../catalog/catalog';
 import { findReleaseByTag, releaseIsCompatible, releaseTagsMatch, sourceHasUpdate, syncSourceReleaseCheck } from '../source-release';
 import { notificationsMuted, readInstalledRelease, readUpdateRule, sourceIdentity, updateBlockReason, UpdateGuardError, writeUpdateRule } from './update-policy';
 import type { BatchUpdatePlan, BatchUpdateReport, BatchUpdateResult, InstallationSource, UpdateCheckOptions, UpdateReason, UpdateRule, UpdateStatus } from './types';
+import { errorObject } from '../network/http-error';
 
 interface CheckContext { official?: Promise<Record<string, string>>; refreshes: Map<string, Promise<void>> }
 
@@ -238,7 +239,7 @@ export class UpdateService {
         if (status.installationSource.kind === 'github') {
             const ok = await installPluginFromGithub(this.manager, status.installationSource.repo, target.version, false, id,
                 { quiet, guard, onError, expectedManifestVersion: target.manifestVersion, publishedAt: target.publishedAt, isGithubLatest: target.isGithubLatest });
-            if (!ok && error && quiet) throw error;
+            if (!ok && error && quiet) throw errorObject(error);
             return ok;
         }
         const service = getCatalogService(this.manager);
@@ -248,7 +249,7 @@ export class UpdateService {
         const release = entry?.releases.find(release => release.version === target.version);
         if (!entry || !release || release.manifest !== target.manifestUrl || release.main !== target.mainUrl || release.styles !== target.stylesUrl) throw new Error(this.reasonText('changed'));
         const ok = await installCatalogRelease(this.manager, entry, release, { quiet, guard, onError, expectedManifestVersion: target.manifestVersion });
-        if (!ok && error && quiet) throw error;
+        if (!ok && error && quiet) throw errorObject(error);
         return ok;
     }
 

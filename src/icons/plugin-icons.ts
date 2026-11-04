@@ -102,7 +102,7 @@ export class PluginIcons {
             element.removeAttribute('class');
         }
         const imported = doc.importNode(root, true);
-        return imported instanceof (doc.defaultView?.SVGSVGElement ?? SVGSVGElement) ? imported : undefined;
+        return imported.instanceOf(doc.defaultView?.SVGSVGElement ?? SVGSVGElement) ? imported : undefined;
     }
 
     private download(name: string, doc: Document): Promise<string | undefined> {

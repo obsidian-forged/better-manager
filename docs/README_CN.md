@@ -4,13 +4,13 @@
 
 用延迟启动、批量管理、分组标签、设备预设和清晰的管理界面，整理你的插件工作流。
 
-[1.2.12 更新说明](release-notes-1.2.12.md)
+[1.2.13 更新说明](release-notes-1.2.13.md)
 
 [English](https://github.com/obsidian-forged/better-manager/blob/main/README.md) · [日本語](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_JA.md) · [한국어](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_KO.md) · [Español](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_ES.md) · [Français](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_FR.md) · [Русский](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_RU.md) · [版本发布](https://github.com/obsidian-forged/better-manager/releases) · [支持作者](https://ifdian.net/a/eondr)
 
 ![Latest Release](https://img.shields.io/github/v/release/obsidian-forged/better-manager?style=flat-square&label=release) ![GitHub Downloads](https://img.shields.io/github/downloads/obsidian-forged/better-manager/total?style=flat-square&label=downloads) ![Last Commit](https://img.shields.io/github/last-commit/obsidian-forged/better-manager?style=flat-square&label=last%20commit) ![Issues](https://img.shields.io/github/issues/obsidian-forged/better-manager?style=flat-square&label=issues) ![Stars](https://img.shields.io/github/stars/obsidian-forged/better-manager?style=flat-square&label=stars) ![License](https://img.shields.io/github/license/obsidian-forged/better-manager?style=flat-square&label=license) ![Obsidian Plugin](https://img.shields.io/badge/Obsidian-plugin-7C3AED?style=flat-square&logo=obsidian&logoColor=white) ![Minimum Obsidian Version](https://img.shields.io/badge/Obsidian-%E2%89%A5%201.5.8-7C3AED?style=flat-square) ![TypeScript](https://img.shields.io/badge/TypeScript-ready-3178C6?style=flat-square&logo=typescript&logoColor=white) ![Platform](https://img.shields.io/badge/platform-desktop%20%7C%20mobile-4B5563?style=flat-square) ![i18n](https://img.shields.io/badge/i18n-7%20languages-0F766E?style=flat-square) ![GitHub Source Tracking](https://img.shields.io/badge/GitHub-source%20tracking-181717?style=flat-square&logo=github&logoColor=white) ![Sponsor on Afdian](https://img.shields.io/badge/Afdian-sponsor-946ce6?style=flat-square)
 
-![Screenshot](img/1.2.0/index.png)
+![Screenshot](img/1.2.12/index.png)
 
 ---
 
@@ -44,7 +44,7 @@ BPM 按插件、外观、设备、安装来源、迁移和诊断划分页面；�
 
 日常插件管理的主页面。
 
-![Plugin View](img/1.2.0/PluginView.png)
+![Plugin View](img/1.2.12/PluginView.png)
 
 | 区域 | 功能 |
 |------|------|
@@ -68,13 +68,15 @@ BPM 按插件、外观、设备、安装来源、迁移和诊断划分页面；�
 
 ### 📱 设备管理
 
+![设备命名预设](img/1.2.12/devicePresets.png)
+
 在管理器打开「设备管理」（移动端：从当前视图菜单选择「设备管理」），开启「按设备类型管理」，确认本机类型。设备类型固定为「电脑、平板、手机」三类；每类可以保存多份命名预设，初始各有一份并继承现有配置；默认不开启接管。
 
 每份预设分别保存插件开关、延迟档位、外观和 Ribbon 显隐与顺序。设备管理页负责本机类型、预设的新建/复制/改名/删除、以及选择本机套用哪一份；每份预设都可以从其他预设复用配置。某个类型还没有配置时，如果其他类型只有一份已配置预设会自动套用；有多份时不会擅自选择，可在设备页用「复用其他预设的配置」手动挑选。设备清单只作展示。管理器自身与 BPM 忽略的插件不参与设备切换；分组、标签、延迟档位定义仍为全局配置。设备管理器不会在移动端启动仅支持桌面的插件。
 
-「插件总览、外观总览、边栏编排」三栏顶部都有同一个「按设备配置」下拉，按类型分组列出命名预设。编辑本机正在使用的那份会立即应用；编辑其他预设只写入配置，对应设备收到同步更新后，在未编辑 BPM 界面时应用运行配置。插件开关与延迟档位、外观（主题与 CSS 片段开关）、Ribbon 显隐与顺序按预设独立保存；安装来源、导入导出、冲突诊断，以及分组、标签、延迟档位定义保持全局。
+「插件总览、外观总览、边栏编排」三栏顶部都有同一个「按设备配置」下拉，按类型分组列出命名预设。编辑本机正在使用的预设会在当前会话中生效；「持久保存」模式下，点击顶栏「保存」后才持久化配置，其他预设的编辑在保存前保留为本机草稿。「仅本次会话」模式下的插件和外观调整只影响当前会话，不写入预设，也不触发保存；切回持久模式不会补存先前的临时调整。插件开关与延迟档位、外观（主题与 CSS 片段开关）、Ribbon 显隐与顺序按预设独立保存；安装来源、导入导出、冲突诊断，以及分组、标签、延迟档位定义保持全局。
 
-设备记录按「每台设备一个小文件」保存在插件的 `data/devices/` 目录里，同步后各设备就能互相出现在清单中；本机选用的预设仍只存在本地。名称默认取桌面主机名或移动端型号，可手动修改；本机类型按 Obsidian 平台信息自动识别，可在设备页手动指定或「按平台重新检测」。平台标识刷新（同步系统或软件更新）时会把旧设备记录迁移到新标识，本机选择的预设存在本地、不受影响；若该预设已被其他设备删除，会回退到同类型默认预设并提示。不提供单设备配置：移动端没有可靠的长期设备标识，按设备分叉会让同步后的配置无法对账。需要区分同类设备时，用多份命名预设并在各设备上各选一份。清除应用数据或重装可能产生新的设备记录，重新选择预设即可。打开的 BPM 界面保留当前编辑快照；最后一个界面关闭后，将本机编辑与最新收到的配置合并，保留远端独立字段，同一字段冲突时本机编辑优先。文件系统冲突仍由同步工具处理。
+设备记录按「每台设备一个小文件」保存在插件的 `data/devices/` 目录里，同步后各设备就能互相出现在清单中；本机选用的预设仍只存在本地。名称默认取桌面主机名或移动端型号，可手动修改；本机类型按 Obsidian 平台信息自动识别，可在设备页手动指定或「按平台重新检测」。平台标识刷新（同步系统或软件更新）时会把旧设备记录迁移到新标识，本机选择的预设存在本地、不受影响；若该预设已被其他设备删除，会回退到同类型默认预设并提示。不提供单设备配置：移动端没有可靠的长期设备标识，按设备分叉会让同步后的配置无法对账。需要区分同类设备时，用多份命名预设并在各设备上各选一份。清除应用数据或重装可能产生新的设备记录，重新选择预设即可。打开的 BPM 界面保留当前编辑快照和本机草稿。点击顶栏「更多」左侧的「保存」，才会对照最新共享配置检查冲突。冲突项目旁的来源胶囊可预览本机或远端配置，不立即改变插件运行状态；选择需要的版本后，再点击「保存」。关闭窗口会保留草稿，不提交到共享配置。文件系统冲突仍由同步工具处理。
 
 #### 移动端设备为什么可能出现重复记录
 
@@ -92,7 +94,7 @@ Obsidian 原生启用的插件可能先于管理器启动；若需要接管启�
 
 Install Hub 负责从 GitHub 安装插件/主题，并管理安装后可跟踪的来源。
 
-![Install Hub](img/1.2.0/installHub.png)
+![Install Hub](img/1.2.12/installHub.png)
 
 | 区域 | 功能 |
 |------|------|
@@ -108,7 +110,7 @@ Install Hub 负责从 GitHub 安装插件/主题，并管理安装后可跟踪�
 
 Transfer Pack 用于在不同 Obsidian 库之间迁移插件配置，不需要手动整理清单。
 
-![Transfer Pack](img/1.2.0/transferPack.png)
+![Transfer Pack](img/1.2.12/transferPack.png)
 
 | 区域 | 功能 |
 |------|------|
@@ -125,7 +127,7 @@ Transfer Pack 用于在不同 Obsidian 库之间迁移插件配置，不需要�
 
 Ribbon Order 保持 Obsidian 左侧 Ribbon 顺序稳定，尤其适合延迟启动插件在启动后才注册图标的情况。
 
-![Ribbon Order](img/1.2.0/ribbonOrder.png)
+![Ribbon Order](img/1.2.12/ribbonOrder.png)
 
 | 区域 | 功能 |
 |------|------|
@@ -139,7 +141,7 @@ Ribbon Order 保持 Obsidian 左侧 Ribbon 顺序稳定，尤其适合延迟启�
 
 Conflict Diagnosis 通过步骤引导插件冲突测试，并把测试状态和结果保存在一个页面中。
 
-![Conflict Diagnosis](img/1.2.0/conflictScan.png)
+![Conflict Diagnosis](img/1.2.12/conflictScan.png)
 
 | 区域 | 功能 |
 |------|------|
@@ -194,6 +196,7 @@ Conflict Diagnosis 通过步骤引导插件冲突测试，并把测试状态和�
 - **左键** 点击主要控件进行切换、编辑、安装、导入或执行操作。
 - **右键** 插件项目打开上下文菜单。
 - **悬停** 工具栏按钮查看提示；触屏设备可使用长按提示。
+- **保存持久修改**：点击顶栏「更多」左侧的「保存」。关闭 BPM 会保留本机草稿，不写入共享配置。「生效方式 → 仅本次会话」下的插件和外观调整不产生待保存修改，无需点击保存；切回持久模式不会补存这些临时调整。
 - **工具栏标签** 默认仅当前页显示，悬停可查看其他标签；可在 **设置 → 样式** 调整。
 
 ---
@@ -207,8 +210,10 @@ BPM 是一个本地 Obsidian 插件管理器，但部分功能会有意使用外
 - **Vault 文件访问**：BPM 会读取插件/主题元数据、用户选中的插件配置文件、迁移包和旧版导出文件夹，用于管理、迁移、备份、导入/导出和冲突排查。BPM 不会把 vault 笔记上传到远程服务。
 - **设备记录**：启用设备管理后，BPM 会为每台设备在插件数据目录写一个小型 JSON 文件（`.obsidian/plugins/better-plugins-manager/data/devices/<id>.json`），用于同步后让各设备互相出现在设备清单里。文件只包含设备 id、显示名称、设备类型和最近上线时间，不含笔记、插件配置或凭据；写入走 Obsidian 的 vault adapter，不访问 vault 外部；从列表移除设备时会删除对应文件。
 - **图标兜底**：优先使用 Obsidian 已注册的图标；指定的 Lucide 图标在本地不存在时，从官方 `lucide-icons/lucide` GitHub 仓库下载 SVG。落到默认插头图标前，BPM 还会查询 Obsidian 社区目录为该插件分配的 Lucide 图标名，并按同样方式解析。SVG 与颜色规则保存到 `data/icons.css`，供离线复用。请求仅含图标名，不含 vault 内容或凭据。可重建的仓库和目录缓存保存在 `cache/`；原生 `data.json` 设置文件保留原位。已有设备与缓存文件会自动迁移。
-- **配置保护**：每次启动都会把 BPM 设置、设备记录、图标规则及相关 Obsidian 配置保存为插件内 `.bpm/<local-id>/` 的内容快照，相同内容复用已有副本。编辑先暂存为本机草稿，关闭 BPM 编辑窗口后再保存；共享文件未变时不重写，仅用户修改才产生新的配置修订。并发版本分别保留，等待明确选择；已知旧修订按版本对最多自动恢复一次，反复回灌时暂停恢复。本机恢复锚点保存在 Obsidian 的设备本地存储中。快照可能包含凭据等敏感配置，BPM 不会上传；请在外部同步工具中排除 `.bpm/`，插件内的隐藏目录不保证会被所有同步服务自动排除。Obsidian 共享配置只备份供手动恢复，不自动回滚；合法的旧版编辑缓存会迁移。
-- **Base64 编码/解码**：BPM 运行时使用 `btoa`/`atob` 仅用于在本地 Transfer Pack JSON 数据中打包和恢复二进制/文本文件，不用于隐藏 API key、URL、远程代码或可执行 payload。
+- **配置保护**：每次启动都会把 BPM 设置、设备记录、图标规则及相关 Obsidian 配置保存为插件内 `.bpm/<local-id>/` 的内容快照，相同内容复用已有副本。永久配置的编辑先暂存为可恢复的本机草稿；仅本次会话的插件和外观调整不写入预设，也不触发保存。只有点击顶栏「保存」才会检查最新共享配置的冲突并写入所选修改；共享文件未变时不重写，仅内容变化才产生新的配置修订。并发版本分别保留，等待明确选择。关闭窗口不提交草稿，外部配置变化也不会打断编辑或触发自动恢复。本机恢复锚点保存在 Obsidian 的设备本地存储中。快照可能包含凭据等敏感配置，BPM 不会上传；请在外部同步工具中排除 `.bpm/`，插件内的隐藏目录不保证会被所有同步服务自动排除。检测到 `.bpm/` 恢复目录被外部修改时，BPM 会提醒将目录加入同步排除列表；本机正常写入不触发该提醒。Obsidian 共享配置只备份供手动恢复，不自动回滚；合法的旧版编辑缓存会迁移。
+- **Base64 编码/解码**：BPM 运行时使用 `btoa`/`atob` 打包和恢复本地 Transfer Pack 文件，以及解码 GitHub 内容 API 返回的仓库文档。解码结果作为数据处理，不作为代码执行。
+
+![恢复目录同步排除提示](img/1.2.12/syncProtection.png)
 
 ---
 ## 🔍 冲突诊断教程

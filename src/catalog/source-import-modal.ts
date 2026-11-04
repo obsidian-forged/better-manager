@@ -155,7 +155,7 @@ export class CatalogSourceImportModal extends Modal {
         if (this.busy || this.closed) return;
         this.busy = true;
         const disabled = this.controls.map(control => control instanceof ButtonComponent ? control.buttonEl.disabled : control.inputEl.disabled);
-        this.controls.forEach(control => control.setDisabled(true));
+        this.controls.forEach(control => { control.setDisabled(true); });
         if (this.fileInput) this.fileInput.disabled = true;
         this.status.setText(this.t("目录_加载"));
         this.status.setAttribute("role", "status");
@@ -169,7 +169,7 @@ export class CatalogSourceImportModal extends Modal {
         } finally {
             this.busy = false;
             if (!this.closed) {
-                this.controls.forEach((control, index) => control.setDisabled(disabled[index]));
+                this.controls.forEach((control, index) => { control.setDisabled(disabled[index]); });
                 if (this.fileInput) this.fileInput.disabled = false;
                 this.importButton.setDisabled(!this.preview);
             }

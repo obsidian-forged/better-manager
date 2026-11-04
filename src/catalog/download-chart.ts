@@ -2,18 +2,14 @@ import type { VersionDownloads } from "./catalog";
 
 /** 分类版本轴，不伪造时间趋势 / Categorical version axis, not a historical time series. */
 export function renderDownloadChart(container: HTMLElement, points: VersionDownloads[], label: string): void {
-    const namespace = "http://www.w3.org/2000/svg";
-    const svg = container.ownerDocument.createElementNS(namespace, "svg");
+    const svg = container.createSvg("svg");
     svg.setAttribute("viewBox", "0 0 640 240");
     svg.setAttribute("width", "100%");
     svg.setAttribute("role", "img");
     svg.setAttribute("aria-label", label);
-    container.appendChild(svg);
-    const element = (tag: string, attrs: Record<string, string>, value?: string) => {
-        const node = container.ownerDocument.createElementNS(namespace, tag);
-        for (const [key, val] of Object.entries(attrs)) node.setAttribute(key, val);
+    const element = <K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string>, value?: string) => {
+        const node = svg.createSvg(tag, { attr: attrs });
         if (value !== undefined) node.textContent = value;
-        svg.appendChild(node);
         return node;
     };
     const maximum = Math.max(1, ...points.map(point => point.downloads));
@@ -26,9 +22,8 @@ export function renderDownloadChart(container: HTMLElement, points: VersionDownl
     element("polyline", { points: coordinates.map(point => `${point.x},${point.y}`).join(" "), fill: "none", stroke: "currentColor", "stroke-width": "2" });
     for (const point of coordinates) {
         const dot = element("circle", { cx: `${point.x}`, cy: `${point.y}`, r: "3", fill: "currentColor" });
-        const title = container.ownerDocument.createElementNS(namespace, "title");
+        const title = dot.createSvg("title");
         title.textContent = `${point.version}: ${point.downloads.toLocaleString()}`;
-        dot.appendChild(title);
     }
     if (points.length) {
         element("text", { x: "70", y: "220", fill: "currentColor" }, points[0].version.slice(0, 24));

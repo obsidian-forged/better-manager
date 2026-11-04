@@ -2,7 +2,7 @@ import { setIcon } from 'obsidian';
 import type Manager from '../main';
 import { protectionText } from '../settings/protection-text';
 
-/** Shared slot with the stable branch's cloud warning; conflict takes priority in that same slot. */
+/** Shared notification slot; configuration choices take priority over recovery folder advice. */
 export class SyncNoticeView {
     private readonly notice: HTMLElement;
     constructor(private readonly manager: Manager, parent: HTMLElement, private readonly resolve: () => void) {
@@ -16,13 +16,14 @@ export class SyncNoticeView {
     }
     refresh(): void {
         const conflict = Boolean(this.manager.configProtection?.protection.paused);
-        const active = conflict || Boolean(this.manager.automaticSavesSuppressed);
+        const privateCache = Boolean(this.manager.configProtection?.privateCacheModified);
+        const active = conflict || privateCache;
         this.notice.toggleClass('is-active', active);
         this.notice.empty();
         this.notice.setAttribute('role', active ? 'button' : 'status');
         if (!active) { this.notice.removeAttribute('tabindex'); this.notice.removeAttribute('aria-label'); return; }
         this.notice.setAttribute('tabindex', '0');
-        const label = conflict ? protectionText(this.manager, 'resolve') : this.manager.translator.t('同步_循环保护_短');
+        const label = protectionText(this.manager, conflict ? 'resolve' : 'privateCacheShort');
         this.notice.setAttribute('aria-label', label);
         setIcon(this.notice.createSpan('manager-sync-notice__icon'), conflict ? 'triangle-alert' : 'cloud-alert');
         this.notice.createSpan({ cls: 'manager-sync-notice__text', text: label });

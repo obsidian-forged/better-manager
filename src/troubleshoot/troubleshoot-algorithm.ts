@@ -46,8 +46,7 @@ export class TroubleshootAlgorithm {
         const enabled: string[] = [];
         const settings = this.manager.settings;
 
-        // @ts-ignore
-        const manifests = this.app.plugins.manifests as Record<string, PluginManifest>;
+        const manifests = this.manager.appPlugins.manifests;
 
         if (settings.DELAY) {
             for (const mp of settings.Plugins) {
@@ -58,8 +57,7 @@ export class TroubleshootAlgorithm {
                 }
             }
         } else {
-            // @ts-ignore
-            const appPlugins = this.app.plugins;
+                const appPlugins = this.manager.appPlugins;
             for (const id of appPlugins.enabledPlugins) {
                 if (!manifests[id]) continue;
                 if (id === this.bpmId || CORE_PLUGINS_EXCLUDE.includes(id)) continue;
@@ -74,8 +72,7 @@ export class TroubleshootAlgorithm {
      * 获取所有插件的 manifest
      */
     getAllManifests(): Record<string, PluginManifest> {
-        // @ts-ignore
-        return this.app.plugins.manifests;
+        return this.manager.appPlugins.manifests;
     }
 
     /**
@@ -83,10 +80,8 @@ export class TroubleshootAlgorithm {
      */
     async setEnabledPlugins(pluginsToEnable: string[]): Promise<void> {
         const settings = this.manager.settings;
-        // @ts-ignore
-        const appPlugins = this.app.plugins;
-        // @ts-ignore
-        const manifests = this.app.plugins.manifests as Record<string, PluginManifest>;
+        const appPlugins = this.manager.appPlugins;
+        const manifests = this.manager.appPlugins.manifests;
 
         const enableSet = new Set(pluginsToEnable);
 
@@ -653,7 +648,9 @@ export class TroubleshootAlgorithm {
      * 重启 Obsidian
      */
     restartObsidian(): void {
-        // @ts-ignore
-        this.app.commands.executeCommandById('app:reload');
+        const commands: unknown = Reflect.get(this.app, 'commands');
+        if (!commands || typeof commands !== 'object' || !('executeCommandById' in commands)
+            || typeof commands.executeCommandById !== 'function') throw new Error('The Obsidian restart command is unavailable');
+        Reflect.apply(commands.executeCommandById, commands, ['app:reload']);
     }
 }

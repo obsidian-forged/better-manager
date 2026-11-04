@@ -104,7 +104,7 @@ export default class ManagerGroup extends BaseSetting {
                 .onChange((value) => {
                     group.color = value;
                     void this.manager.saveSettings();
-                    tagEl.setAttribute('style', this.manager.generateTagStyle(value, this.settings.GROUP_STYLE));
+                    this.manager.applyTagStyle(tagEl, value, this.settings.GROUP_STYLE);
                 })
             )
             item.addText(cb => cb

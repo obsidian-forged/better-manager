@@ -93,133 +93,140 @@ test('reapplying an unchanged appearance does not write or reload native styles'
     assert.deepEqual(calls, []);
 });
 
-test('external settings changes keep live object references and never reload interface or styles', async () => {
-    const adapter = memoryAdapter(); const { manager } = await fixture({ adapter });
-    const path = '.obsidian/plugins/self/data.json';
-    adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
-    manager.saveData = async value => { adapter.files[path] = JSON.stringify(value); };
-    await manager.loadSettings();
-    const current = manager.settings;
-    let renders = 0;
-    manager.managerModal = { modalEl: { isConnected: true }, refreshStyleSettings() { renders++; }, reloadShowData() { renders++; } };
-    manager.app.customCss = { async loadTheme() { renders++; }, async loadSnippets() { renders++; } };
-    const editor = {};
-    manager.beginSettingsEditing(editor);
-    const previousWindow = globalThis.window;
-    globalThis.window = { addEventListener() {}, removeEventListener() {}, crypto: webcrypto, setTimeout: callback => setTimeout(callback, 0), clearTimeout };
-    try {
-        for (const days of [8, 9, 10]) {
-            const remote = JSON.parse(adapter.files[path]); remote.RECENT_INSTALL_DAYS = days;
-            adapter.files[path] = JSON.stringify(remote);
-            await manager.refreshSettingsQuietly();
-            assert.equal(manager.settings, current);
-            assert.equal(manager.settings.RECENT_INSTALL_DAYS, 7);
-        }
-        assert.ok(Object.keys(adapter.files).some(path => path.includes('/conflicts/')));
-        manager.settings.RECENT_INSTALL_DAYS = 14; await manager.saveSettings();
-        assert.equal(JSON.parse(adapter.files[path]).RECENT_INSTALL_DAYS, 10);
-        assert.equal(manager.configProtection.protection.paused, true);
-        await manager.configProtection.choose(manager.devices.persistedSettings(), manager.configProtection.protection.pendingFiles);
-        manager.endSettingsEditing(editor); await manager.settingsSaveQueue;
-        assert.equal(manager.settings, current);
-        assert.equal(JSON.parse(adapter.files[path]).RECENT_INSTALL_DAYS, 14);
-        assert.equal(renders, 0);
-    } finally { globalThis.window = previousWindow; }
+test('the void plugin lifecycle stops initialization after an unload during settings I/O', async () => {
+    const manager = new Manager();
+    manager.app = { plugins: {}, workspace: {} };
+    let release, started = 0, destroyed = 0;
+    const blocked = new Promise(resolve => { release = resolve; });
+    manager.loadSettings = async () => { started++; await blocked; };
+    manager.configProtection = { destroy() { destroyed++; } };
+    manager.addRibbonIcon = () => { throw new Error('Initialization resumed after unload'); };
+    assert.equal(manager.onload(), undefined);
+    assert.equal(started, 1);
+    manager.onunload();
+    release();
+    await manager.initialization;
+    assert.ok(destroyed >= 1);
+    assert.equal(manager.startupTimers.size, 0);
+    assert.equal(manager.devices, undefined);
 });
 
-test('concurrent external fields require an explicit choice and preserve local unsaved fields', async () => {
-    const adapter = memoryAdapter(); const { manager } = await fixture({ adapter });
-    const path = '.obsidian/plugins/self/data.json';
-    adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
-    manager.saveData = async value => { adapter.files[path] = JSON.stringify(value); };
-    await manager.loadSettings();
-    const editor = {}; manager.beginSettingsEditing(editor);
-    const previousWindow = globalThis.window;
-    globalThis.window = { addEventListener() {}, removeEventListener() {}, crypto: webcrypto, setTimeout: callback => setTimeout(callback, 0), clearTimeout };
-    try {
-        manager.settings.RECENT_INSTALL_DAYS = 14;
-        const remote = JSON.parse(adapter.files[path]);
-        remote.LANGUAGE = 'fr';
-        adapter.files[path] = JSON.stringify(remote);
-        await manager.refreshSettingsQuietly();
-        assert.equal(manager.settings.RECENT_INSTALL_DAYS, 14);
-        assert.notEqual(manager.settings.LANGUAGE, 'fr');
-        await manager.saveSettings();
-        assert.equal(JSON.parse(adapter.files[path]).RECENT_INSTALL_DAYS, 7);
-        assert.equal(manager.configProtection.protection.paused, true);
-        const selected = structuredClone(manager.devices.persistedSettings()); selected.LANGUAGE = 'fr';
-        await manager.configProtection.choose(selected, manager.configProtection.protection.pendingFiles);
-        manager.endSettingsEditing(editor); await manager.settingsSaveQueue;
-        const saved = JSON.parse(adapter.files[path]);
-        assert.equal(saved.RECENT_INSTALL_DAYS, 14);
-        assert.equal(saved.LANGUAGE, 'fr');
-    } finally { globalThis.window = previousWindow; }
+test('a failed asynchronous initialization releases native resources and reports the failure', async () => {
+    const manager = new Manager(), before = notices.length;
+    manager.app = { workspace: {} };
+    manager.settings = structuredClone(DEFAULT_SETTINGS);
+    manager.initialize = async () => { throw new Error('Initialization test failure'); };
+    let unloaded = 0;
+    manager.unload = () => { unloaded++; manager.onunload(); };
+    assert.equal(manager.onload(), undefined);
+    await manager.initialization;
+    assert.equal(unloaded, 1);
+    assert.equal(notices.length, before + 1);
+    assert.equal(manager.isUnloaded, true);
 });
 
-test('the first external edit warns and protects an open editor while own save echoes are ignored', async () => {
-    const adapter = memoryAdapter(); const { manager } = await fixture({ adapter });
-    const path = '.obsidian/plugins/self/data.json';
-    adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
-    manager.saveData = async value => { adapter.files[path] = JSON.stringify(value); };
-    await manager.loadSettings();
-    const previousWindow = globalThis.window; globalThis.window = { addEventListener() {}, removeEventListener() {}, crypto: webcrypto, setTimeout: callback => setTimeout(callback, 0), clearTimeout };
-    const initialNotices = notices.length;
+test('yield cancellation releases both the owning window frame and its fallback timer', async () => {
+    const { manager } = await fixture(), previousFrame = window.requestAnimationFrame, previousCancel = window.cancelAnimationFrame;
+    const frames = new Map(), cancelled = [];
+    window.requestAnimationFrame = callback => { frames.set(42, callback); return 42; };
+    window.cancelAnimationFrame = handle => { cancelled.push(handle); frames.delete(handle); };
     try {
-        manager.beginSettingsEditing({});
-        manager.settings.RECENT_INSTALL_DAYS = 12; await manager.saveSettings();
-        await manager.refreshSettingsQuietly();
-        assert.equal(notices.length, initialNotices);
-        assert.equal(manager.configProtection.protection.paused, false);
-        assert.ok(Object.keys(adapter.files).some(path => path.endsWith('/draft.json')));
-        const remote = JSON.parse(adapter.files[path]); remote.LANGUAGE = 'fr'; adapter.files[path] = JSON.stringify(remote);
-        await manager.refreshSettingsQuietly();
-        assert.equal(notices[initialNotices], '同步_外部更新提醒');
-        assert.ok(Object.keys(adapter.files).some(path => path.includes('/conflicts/')));
-        assert.notEqual(manager.settings.LANGUAGE, 'fr');
-    } finally { globalThis.window = previousWindow; }
+        const pending = manager.yieldToMainThread();
+        assert.equal(frames.size, 1);
+        manager.cancelDelayQueue();
+        await pending;
+        assert.deepEqual(cancelled, [42]);
+        assert.equal(frames.size, 0);
+        assert.equal(manager.delayYieldTimer, null);
+        assert.equal(manager.delayYieldFrame, null);
+    } finally {
+        window.requestAnimationFrame = previousFrame;
+        window.cancelAnimationFrame = previousCancel;
+    }
 });
 
-test('external preset changes cannot close or rebuild an editor and apply only after the final editor closes', async () => {
-    const adapter = memoryAdapter(); const { manager, settings } = await fixture({ adapter });
-    settings.DEVICE_MANAGEMENT.enabled = true;
-    const path = '.obsidian/plugins/self/data.json'; adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
-    manager.saveData = async value => { adapter.files[path] = JSON.stringify(value); };
-    await manager.loadSettings();
-    let applications = 0, closes = 0, rebuilds = 0;
-    manager.devices.apply = async options => { applications++; assert.equal(options.refreshViews, false); assert.equal(options.persist, false); };
-    manager.managerModal = { modalEl: { isConnected: true }, close() { closes++; }, refreshRibbonFeatureAvailability() { rebuilds++; } };
-    const first = {}, second = {}; manager.beginSettingsEditing(first); manager.beginSettingsEditing(second);
-    const previousWindow = globalThis.window; globalThis.window = { addEventListener() {}, removeEventListener() {}, crypto: webcrypto, setTimeout: callback => setTimeout(callback, 0), clearTimeout };
-    try {
-        const remote = JSON.parse(adapter.files[path]); firstOf(remote, 'computer').plugins.a.enabled = false;
-        adapter.files[path] = JSON.stringify(await remoteChild(manager, remote)); await manager.refreshSettingsQuietly();
-        assert.equal(applications, 0); assert.equal(closes, 0); assert.equal(rebuilds, 0);
-        manager.endSettingsEditing(first); await manager.settingsSaveQueue;
-        assert.equal(applications, 0);
-        manager.endSettingsEditing(second); await manager.settingsSaveQueue;
-        await new Promise(resolve => setImmediate(resolve));
-        assert.equal(applications, 1); assert.equal(closes, 0); assert.equal(rebuilds, 0);
-    } finally { globalThis.window = previousWindow; }
+test('shared file events and editor close do not read, pause, apply or publish settings', async () => {
+    const adapter=memoryAdapter(),{manager}=await fixture({adapter}),path='.obsidian/plugins/self/data.json';
+    adapter.files[path]=JSON.stringify(manager.devices.persistedSettings());await manager.loadSettings();const current=manager.settings;
+    let renders=0,reads=0;const read=adapter.read;adapter.read=async path=>{reads++;return read(path);};
+    manager.managerModal={modalEl:{isConnected:true},refreshStyleSettings(){renders++;},reloadShowData(){renders++;}};
+    const editor={};manager.beginSettingsEditing(editor);
+    for(const days of [8,9,10]){const remote=JSON.parse(adapter.files[path]);remote.RECENT_INSTALL_DAYS=days;adapter.files[path]=JSON.stringify(remote);manager.onExternalSettingsChange();}
+    assert.equal(reads,0);assert.equal(manager.settings,current);assert.equal(manager.settings.RECENT_INSTALL_DAYS,7);assert.equal(manager.configProtection.protection.paused,false);
+    manager.settings.RECENT_INSTALL_DAYS=14;await manager.saveSettings();manager.endSettingsEditing(editor);await manager.settingsSaveQueue;
+    assert.equal(JSON.parse(adapter.files[path]).RECENT_INSTALL_DAYS,10);assert.equal(manager.hasUnsavedSettings,true);
+    assert.equal(await manager.savePendingSettings(),false);assert.equal(manager.configProtection.protection.paused,true);
+    await manager.configProtection.choose(manager.devices.persistedSettings(),manager.configProtection.protection.pendingFiles);
+    assert.equal(await manager.savePendingSettings(),true);assert.equal(JSON.parse(adapter.files[path]).RECENT_INSTALL_DAYS,14);assert.equal(manager.settings,current);assert.equal(renders,0);
 });
 
-test('remote filter changes never reapply plugin, appearance or Ribbon runtime state', async () => {
-    const adapter = memoryAdapter(); const { manager, settings } = await fixture({ adapter });
-    settings.DEVICE_MANAGEMENT.enabled = true;
-    const path = '.obsidian/plugins/self/data.json'; adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
-    manager.saveData = async value => { adapter.files[path] = JSON.stringify(value); };
-    await manager.loadSettings();
-    let applications = 0; manager.devices.apply = async () => { applications++; };
-    const editor = {}; manager.beginSettingsEditing(editor);
-    const previousWindow = globalThis.window; globalThis.window = { addEventListener() {}, removeEventListener() {}, crypto: webcrypto, setTimeout: callback => setTimeout(callback, 0), clearTimeout };
-    try {
-        const before = manager.devices.boundRuntimeFingerprint();
-        const remote = JSON.parse(adapter.files[path]); firstOf(remote, 'computer').filters.search = 'remote search';
-        adapter.files[path] = JSON.stringify(await remoteChild(manager, remote)); await manager.refreshSettingsQuietly();
-        manager.endSettingsEditing(editor); await manager.settingsSaveQueue;
-        assert.equal(manager.devices.boundRuntimeFingerprint(), before);
-        assert.equal(firstOf(manager.settings, 'computer').filters.search, 'remote search');
-        assert.equal(applications, 0);
-    } finally { globalThis.window = previousWindow; }
+test('explicit Save preserves local edits and requires a reviewed choice for concurrent fields', async () => {
+    const adapter=memoryAdapter(),{manager}=await fixture({adapter}),path='.obsidian/plugins/self/data.json';
+    adapter.files[path]=JSON.stringify(manager.devices.persistedSettings());await manager.loadSettings();manager.beginSettingsEditing({});
+    manager.settings.RECENT_INSTALL_DAYS=14;await manager.saveSettings();const remote=JSON.parse(adapter.files[path]);remote.LANGUAGE='fr';adapter.files[path]=JSON.stringify(remote);
+    manager.onExternalSettingsChange();assert.equal(manager.configProtection.protection.paused,false);assert.equal(await manager.savePendingSettings(),false);
+    const selected=structuredClone(manager.devices.persistedSettings());selected.LANGUAGE='fr';await manager.configProtection.choose(selected,manager.configProtection.protection.pendingFiles);
+    assert.equal(await manager.savePendingSettings(),true);const saved=JSON.parse(adapter.files[path]);assert.equal(saved.RECENT_INSTALL_DAYS,14);assert.equal(saved.LANGUAGE,'fr');assert.equal(manager.settings.LANGUAGE,'fr');
+});
+
+test('file echoes stay inert and only an explicit Save reports newly received differences', async () => {
+    const adapter=memoryAdapter(),{manager}=await fixture({adapter}),path='.obsidian/plugins/self/data.json';
+    adapter.files[path]=JSON.stringify(manager.devices.persistedSettings());await manager.loadSettings();manager.beginSettingsEditing({});const count=notices.length;
+    manager.settings.RECENT_INSTALL_DAYS=12;await manager.saveSettings();manager.onExternalSettingsChange();assert.equal(notices.length,count);
+    const remote=JSON.parse(adapter.files[path]);remote.LANGUAGE='fr';adapter.files[path]=JSON.stringify(remote);manager.onExternalSettingsChange();
+    assert.equal(notices.length,count);assert.equal(manager.configProtection.protection.paused,false);assert.notEqual(manager.settings.LANGUAGE,'fr');
+    assert.equal(await manager.savePendingSettings(),false);assert.ok(Object.keys(adapter.files).some(path=>path.includes('/conflicts/')));assert.ok(notices.length>count);
+});
+test('manual edits after confirmation retain the other selected fields until explicit Save',async()=>{
+    const adapter=memoryAdapter(),{manager}=await fixture({adapter}),path='.obsidian/plugins/self/data.json';
+    adapter.files[path]=JSON.stringify(manager.devices.persistedSettings());await manager.loadSettings();manager.beginSettingsEditing({});
+    manager.settings.RECENT_INSTALL_DAYS=14;await manager.saveSettings();const remote=JSON.parse(adapter.files[path]);remote.LANGUAGE='fr';adapter.files[path]=JSON.stringify(remote);
+    assert.equal(await manager.savePendingSettings(),false);const selected=structuredClone(manager.devices.persistedSettings());selected.LANGUAGE='fr';
+    await manager.configProtection.choose(selected,manager.configProtection.protection.pendingFiles);
+    manager.settings.RECENT_INSTALL_DAYS=21;await manager.saveSettings({captureDevice:false});
+    assert.equal(manager.configProtection.protection.confirmedSelection.value.LANGUAGE,'fr');assert.equal(await manager.savePendingSettings(),true);
+    const saved=JSON.parse(adapter.files[path]);assert.equal(saved.LANGUAGE,'fr');assert.equal(saved.RECENT_INSTALL_DAYS,21);
+});
+test('a user edit while Save is staging cancels that click and keeps the newer draft',async()=>{
+    const adapter=memoryAdapter(),{manager}=await fixture({adapter}),path='.obsidian/plugins/self/data.json';
+    adapter.files[path]=JSON.stringify(manager.devices.persistedSettings());await manager.loadSettings();manager.beginSettingsEditing({});manager.settings.RECENT_INSTALL_DAYS=14;await manager.saveSettings();
+    let release,entered;const blocked=new Promise(resolve=>{release=resolve;}),started=new Promise(resolve=>{entered=resolve;});
+    manager.devices.mergeDeviceRecords=async()=>{entered();await blocked;return false;};
+    const publishing=manager.savePendingSettings();await started;manager.settings.RECENT_INSTALL_DAYS=21;const later=manager.saveSettings({captureDevice:false});release();
+    assert.equal(await publishing,false);await later;assert.equal(JSON.parse(adapter.files[path]).RECENT_INSTALL_DAYS,7);
+    assert.equal(manager.hasUnsavedSettings,true);assert.equal(manager.configProtection.protection.current.value.RECENT_INSTALL_DAYS,7);
+    assert.equal(manager.settings.RECENT_INSTALL_DAYS,21);
+});
+test('explicit Save retries an incomplete bundle after its missing file arrives',async()=>{
+    const adapter=memoryAdapter(),{manager}=await fixture({adapter}),path='.obsidian/plugins/self/data.json';
+    adapter.files[path]=JSON.stringify(manager.devices.persistedSettings());await manager.loadSettings();manager.beginSettingsEditing({});
+    const head=manager.configProtection.protection.current,remote=structuredClone(head.value);remote.LANGUAGE='fr';
+    const incoming=await createConfigRevision(remote,'remote-device',[head],{...head.files,'data/icons.css':await hash('remote icons')},hash);
+    adapter.files[path]=JSON.stringify(encodeConfig(incoming));assert.equal(await manager.savePendingSettings(),false);assert.equal(manager.configProtection.protection.paused,false);
+    adapter.files['.obsidian/plugins/self/data/icons.css']='remote icons';assert.equal(await manager.savePendingSettings(),false);assert.equal(manager.configProtection.protection.paused,true);
+    await manager.configProtection.prepareConflictChoices();await manager.configProtection.selectConflictSection('file:data/icons.css','incoming');await manager.configProtection.confirmConflictChoices();
+    assert.equal(await manager.savePendingSettings(),true);assert.equal(JSON.parse(adapter.files[path])._bpmRevision.files['data/icons.css'],await hash('remote icons'));
+});
+
+test('a reviewed remote preset applies only after explicit Save and never on editor close', async () => {
+    const adapter=memoryAdapter(),{manager,settings}=await fixture({adapter});settings.DEVICE_MANAGEMENT.enabled=true;
+    const path='.obsidian/plugins/self/data.json';adapter.files[path]=JSON.stringify(manager.devices.persistedSettings());await manager.loadSettings();
+    let applications=0,closes=0,rebuilds=0;manager.devices.apply=async options=>{applications++;assert.equal(options.persist,false);};
+    manager.managerModal={modalEl:{isConnected:true},close(){closes++;},refreshRibbonFeatureAvailability(){rebuilds++;}};
+    const first={},second={};manager.beginSettingsEditing(first);manager.beginSettingsEditing(second);const remote=JSON.parse(adapter.files[path]);firstOf(remote,'computer').plugins.a.enabled=false;
+    adapter.files[path]=JSON.stringify(await remoteChild(manager,remote));manager.onExternalSettingsChange();manager.endSettingsEditing(first);manager.endSettingsEditing(second);await manager.settingsSaveQueue;
+    assert.equal(applications,0);assert.equal(await manager.savePendingSettings(),false);await manager.configProtection.choose(remote,manager.configProtection.protection.pendingFiles);
+    assert.equal(await manager.savePendingSettings(),true);assert.equal(applications,1);assert.equal(closes,0);assert.equal(rebuilds,0);
+});
+
+test('saving a reviewed filter-only change does not reload plugin, appearance or Ribbon runtime state', async () => {
+    const adapter=memoryAdapter(),{manager,settings}=await fixture({adapter});settings.DEVICE_MANAGEMENT.enabled=true;
+    const path='.obsidian/plugins/self/data.json';adapter.files[path]=JSON.stringify(manager.devices.persistedSettings());await manager.loadSettings();
+    let applications=0;manager.devices.apply=async()=>{applications++;};const editor={};manager.beginSettingsEditing(editor);const before=manager.devices.boundRuntimeFingerprint();
+    const remote=JSON.parse(adapter.files[path]);firstOf(remote,'computer').filters.search='remote search';adapter.files[path]=JSON.stringify(await remoteChild(manager,remote));manager.onExternalSettingsChange();
+    manager.endSettingsEditing(editor);await manager.settingsSaveQueue;assert.notEqual(firstOf(manager.settings,'computer').filters.search,'remote search');
+    assert.equal(await manager.savePendingSettings(),false);await manager.configProtection.choose(remote,manager.configProtection.protection.pendingFiles);assert.equal(await manager.savePendingSettings(),true);
+    assert.equal(manager.devices.boundRuntimeFingerprint(),before);assert.equal(firstOf(manager.settings,'computer').filters.search,'remote search');assert.equal(applications,0);
 });
 
 test('background Ribbon reconciliation preserves views while explicit feature changes can refresh them', async () => {
@@ -349,6 +356,7 @@ test('session plugin state changes runtime without leaking into either native au
     manager.overview.setMode('plugins', 'persistent');
     await manager.overview.setPluginState('a', { enabled: false });
     assert.equal(manager.devices.persistedSettings().Plugins.find(plugin => plugin.id === 'a').enabled, false);
+    assert.equal(manager.devices.persistedSettings().Plugins.find(plugin => plugin.id === 'a').delay, '');
     assert.equal(manager.appPlugins.enabledPlugins.has('a'), false);
 });
 
@@ -541,25 +549,15 @@ test('ordinary saves only update the bound preset and disabling management prese
     assert.equal(firstOf(settings, 'phone').plugins.a.enabled, true);
     calls.length = 0;
     await manager.devices.setEnabled(false);
-    assert.deepEqual(calls, [['save']]);
+    assert.deepEqual(calls, []); assert.equal(manager.hasUnsavedSettings, true);
 });
 
-test('failed persistence does not rebind or overwrite the saved preset', async () => {
-    const { manager, settings } = await fixture();
-    await manager.devices.setEnabled(true);
-    const before = structuredClone(firstOf(settings, 'computer'));
-    // 设备记录不再写 data.json，只有其它设置变化时才会落盘；先制造一处真实改动。
-    settings.GROUPS = [{ id: 'g1', name: 'G1', color: '#000000' }];
-    manager.saveData = async () => { throw new Error('disk full'); };
-    await assert.rejects(manager.devices.assign(manager.devices.id, 'tablet'), /disk full/);
-    assert.equal(manager.devices.type, 'computer');
-    assert.equal(settings.DEVICE_MANAGEMENT.devices[0].type, 'computer');
-    const draft = model.clonePreset(before);
-    draft.plugins.a.enabled = false;
-    await assert.rejects(manager.devices.savePresetById(before.id, draft), /disk full/);
-    assert.deepEqual(firstOf(settings, 'computer'), before);
-    await assert.rejects(manager.devices.setEnabled(false), /disk full/);
-    assert.equal(settings.DEVICE_MANAGEMENT.enabled, true);
+test('a failed explicit Save retains staged device choices and exposes them as unsaved', async () => {
+    const {manager,settings}=await fixture();await manager.devices.setEnabled(true);manager.saveData=async()=>{throw Error('disk full');};
+    await manager.devices.assign(manager.devices.id,'tablet');assert.equal(manager.devices.type,'tablet');assert.equal(await manager.savePendingSettings(),false);assert.equal(manager.hasUnsavedSettings,true);
+    const preset=firstOf(settings,'computer'),draft=model.clonePreset(preset);draft.plugins.a.enabled=false;await manager.devices.savePresetById(preset.id,draft);
+    assert.equal(await manager.savePendingSettings(),false);assert.equal(firstOf(settings,'computer').plugins.a.enabled,false);
+    await manager.devices.setEnabled(false);assert.equal(await manager.savePendingSettings(),false);assert.equal(settings.DEVICE_MANAGEMENT.enabled,false);
 });
 
 test('startup application persists newly discovered Ribbon icons in the bound preset', async () => {
@@ -682,7 +680,7 @@ test('a refreshed platform id migrates the existing device record instead of dup
     const { manager, settings } = await fixture();
     const beforeId = manager.devices.id;
     const presetId = manager.devices.boundPresetId;
-    globalThis.Capacitor = { Plugins: { Device: { getId: async () => ({ identifier: 'android-stable-id' }) } } };
+    window.Capacitor = { Plugins: { Device: { getId: async () => ({ identifier: 'android-stable-id' }) } } };
     try {
         const restarted = new DeviceManager(manager);
         await restarted.initialize();
@@ -692,7 +690,7 @@ test('a refreshed platform id migrates the existing device record instead of dup
         assert.equal(restarted.boundPresetId, presetId);
         assert.equal(restarted.type, 'computer');
     } finally {
-        delete globalThis.Capacitor;
+        delete window.Capacitor;
     }
 });
 
@@ -983,7 +981,7 @@ test('a stale or default snapshot cannot replace a preset configured remotely', 
     const previousWindow = globalThis.window;
     globalThis.window = { addEventListener() {}, removeEventListener() {}, crypto: webcrypto, setTimeout: callback => setTimeout(callback, 0), clearTimeout };
     try {
-        await manager.refreshSettingsQuietly();
+        manager.onExternalSettingsChange();
         await manager.settingsSaveQueue;
         const protectedPreset = manager.settings.DEVICE_MANAGEMENT.presets.computer[0];
         assert.equal(protectedPreset.configured, true);
@@ -1017,13 +1015,15 @@ test('a newer timestamp cannot silently resolve concurrent presets; an explicit 
     const previousWindow = globalThis.window;
     globalThis.window = { addEventListener() {}, removeEventListener() {}, crypto: webcrypto, setTimeout: callback => setTimeout(callback, 0), clearTimeout };
     try {
-        await manager.refreshSettingsQuietly();
+        manager.onExternalSettingsChange();
         await manager.settingsSaveQueue;
-        assert.equal(manager.configProtection.protection.paused, true);
+        assert.equal(manager.configProtection.protection.paused, false);
+        assert.equal(await manager.savePendingSettings(), false);
         assert.equal(manager.settings.DEVICE_MANAGEMENT.presets.computer[0].updatedAt, 200);
         const editor = {}; manager.beginSettingsEditing(editor);
         await manager.configProtection.choose(remote, manager.configProtection.protection.pendingFiles);
         manager.endSettingsEditing(editor); await manager.settingsSaveQueue;
+        assert.equal(await manager.savePendingSettings(), true);
         const mergedPreset = manager.settings.DEVICE_MANAGEMENT.presets.computer[0];
         assert.equal(mergedPreset.updatedAt, 300);
         assert.equal(mergedPreset.plugins.a, undefined);
@@ -1073,3 +1073,125 @@ test('device file changes are merged from adapter events without polling', async
         devices.dispose();
     }
 });
+
+test('explicit Save rebuilds a foreign projection without capturing its obsolete preview', async () => {
+    const { manager, settings } = await fixture();
+    settings.DEVICE_MANAGEMENT.enabled = true;
+    firstOf(settings, 'phone').plugins.a = { enabled: false, delay: '' };
+    await manager.devices.selectScope('plugins', keyOf(settings, 'phone'));
+    assert.equal(settings.Plugins.find(plugin => plugin.id === 'a').enabled, false);
+    // 模拟明确保存后采用的新配置；The committed live state and selected preset have both changed.
+    settings.Plugins.find(plugin => plugin.id === 'a').enabled = false;
+    firstOf(settings, 'phone').plugins.a = { enabled: true, delay: 'selected' };
+    manager.devices.reconcileAfterExplicitSave();
+    assert.equal(manager.devices.isProjectingForeign('plugins'), true);
+    assert.equal(settings.Plugins.find(plugin => plugin.id === 'a').enabled, true);
+    assert.equal(manager.devices.persistedSettings().Plugins.find(plugin => plugin.id === 'a').enabled, false);
+    assert.equal(firstOf(settings, 'phone').plugins.a.delay, 'selected');
+    await manager.devices.closeProjection();
+    assert.equal(settings.Plugins.find(plugin => plugin.id === 'a').enabled, false);
+    assert.equal(firstOf(settings, 'phone').plugins.a.enabled, true);
+});
+
+test('current-session operations do not stage settings or configure a persistent preset', async () => {
+    const { manager, settings } = await fixture();
+    settings.DEVICE_MANAGEMENT.enabled = true;
+    manager.app.customCss = { theme: 'Original', enabledSnippets: new Set(), async loadTheme() {}, async loadSnippets() {} };
+    const presets = JSON.stringify(settings.DEVICE_MANAGEMENT.presets);
+    let staged = 0;
+    manager.saveSettings = async () => { staged++; };
+    manager.overview.setMode('plugins', 'session');
+    manager.overview.setMode('themes', 'session');
+    await manager.overview.setPluginState('a', { enabled: false, delay: 'temporary' });
+    await manager.overview.writeAppearance({ theme: 'Temporary', snippets: { temporary: true } });
+    assert.equal(staged, 0);
+    assert.equal(JSON.stringify(settings.DEVICE_MANAGEMENT.presets), presets);
+    assert.equal(manager.devices.persistedSettings().Plugins.find(plugin => plugin.id === 'a').enabled, true);
+    assert.equal(manager.overview.persistentAppearance(manager.devices.readLiveAppearance(), manager.devices.boundPresetId).theme, 'Original');
+});
+
+test('saved selections rebase permanent values without saving unrelated session overrides', async () => {
+    const { manager } = await fixture();
+    manager.app.customCss = { theme: 'Original', enabledSnippets: new Set(['base']), async loadTheme() {}, async loadSnippets() {} };
+    manager.overview.setMode('plugins', 'session');
+    manager.overview.setMode('themes', 'session');
+    await manager.overview.setPluginState('a', { enabled: false });
+    await manager.overview.writeAppearance({ theme: 'Temporary', snippets: { temporary: true } });
+    const scope = manager.devices.boundPresetId;
+    manager.overview.reconcileSavedState(scope, { a: { enabled: true, delay: 'saved delay' } }, { theme: 'Selected', snippets: { base: false } });
+    assert.deepEqual(manager.overview.effectivePlugins({}, scope).a, { enabled: false, delay: 'saved delay' });
+    assert.deepEqual(manager.overview.persistentPlugins({}, scope).a, { enabled: true, delay: 'saved delay' });
+    assert.deepEqual(manager.overview.persistentAppearance(manager.devices.readLiveAppearance(), scope), { theme: 'Selected', snippets: { base: false } });
+    assert.deepEqual(manager.overview.effectiveAppearance({ theme: '', snippets: {} }, scope), { theme: 'Temporary', snippets: { base: false, temporary: true } });
+});
+
+test('current-session changes leave the explicit Save control clean while permanent changes mark it dirty', async () => {
+    const adapter = memoryAdapter(), { manager, settings } = await fixture({ adapter });
+    settings.DEVICE_MANAGEMENT.enabled = true;
+    const path = '.obsidian/plugins/self/data.json';
+    adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
+    await manager.loadSettings();
+    manager.app.customCss = { theme: 'Original', enabledSnippets: new Set(), async loadTheme() {}, async loadSnippets() {} };
+    manager.beginSettingsEditing({});
+    const shared = adapter.files[path];
+    assert.equal(manager.hasUnsavedSettings, false);
+    manager.overview.setMode('plugins', 'session');
+    manager.overview.setMode('themes', 'session');
+    await manager.overview.setPluginState('a', { enabled: false });
+    await manager.overview.writeAppearance({ theme: 'Temporary' });
+    assert.equal(manager.hasUnsavedSettings, false);
+    assert.equal(Object.keys(adapter.files).some(path => path.endsWith('/draft.json')), false);
+    assert.equal(adapter.files[path], shared);
+    manager.overview.setMode('plugins', 'persistent');
+    assert.equal(manager.hasUnsavedSettings, false);
+    await manager.overview.setPluginState('a', { enabled: false });
+    assert.equal(manager.hasUnsavedSettings, true);
+    assert.equal(adapter.files[path], shared);
+});
+
+for (const phase of ['marker-written', 'publication-returned']) {
+    test(`new edits after ${phase} preserve the committed conflict choice in the next draft`, async () => {
+        const adapter = memoryAdapter(), { manager } = await fixture({ adapter });
+        const path = '.obsidian/plugins/self/data.json';
+        adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
+        await manager.loadSettings();
+        manager.beginSettingsEditing({});
+        manager.settings.RECENT_INSTALL_DAYS = 14;
+        await manager.saveSettings();
+        const remote = JSON.parse(adapter.files[path]);
+        remote.LANGUAGE = 'fr';
+        adapter.files[path] = JSON.stringify(remote);
+        assert.equal(await manager.savePendingSettings(), false);
+        const selected = structuredClone(manager.devices.persistedSettings());
+        selected.LANGUAGE = 'fr';
+        await manager.configProtection.choose(selected, manager.configProtection.protection.pendingFiles);
+        let newer, injected = false;
+        const edit = () => {
+            if (injected) return;
+            injected = true;
+            manager.settings.RECENT_INSTALL_DAYS = 21;
+            newer = manager.saveSettings({ captureDevice: false });
+        };
+        if (phase === 'marker-written') {
+            const write = adapter.write.bind(adapter);
+            adapter.write = async (target, text) => { await write(target, text); if (target === path) edit(); };
+        } else {
+            const publish = manager.configProtection.publish.bind(manager.configProtection);
+            manager.configProtection.publish = async (...args) => { const result = await publish(...args); edit(); return result; };
+        }
+        assert.equal(await manager.savePendingSettings(), true);
+        await newer;
+        await manager.settingsSaveQueue;
+        assert.equal(JSON.parse(adapter.files[path]).LANGUAGE, 'fr');
+        assert.equal(JSON.parse(adapter.files[path]).RECENT_INSTALL_DAYS, 14);
+        assert.equal(manager.settings.LANGUAGE, 'fr');
+        assert.equal(manager.settings.RECENT_INSTALL_DAYS, 21);
+        assert.equal(manager.hasUnsavedSettings, true);
+        const draftPath = Object.keys(adapter.files).find(path => path.endsWith('/draft.json'));
+        assert.equal(JSON.parse(adapter.files[draftPath]).value.LANGUAGE, 'fr');
+        assert.equal(JSON.parse(adapter.files[draftPath]).value.RECENT_INSTALL_DAYS, 21);
+        assert.equal(await manager.savePendingSettings(), true);
+        assert.equal(JSON.parse(adapter.files[path]).LANGUAGE, 'fr');
+        assert.equal(JSON.parse(adapter.files[path]).RECENT_INSTALL_DAYS, 21);
+    });
+}

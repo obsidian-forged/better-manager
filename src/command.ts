@@ -10,9 +10,6 @@ import {
 } from "obsidian";
 import Manager from "./main";
 import { describeHeapDelta, readHeapMB, RECLAIM_NOTICE_THRESHOLD_MB, RECLAIM_SETTLE_MS } from "./memory-reclaim";
-// 类型引用编译期擦除；真正 new ManagerModal 时走下方动态 import，
-// 让主面板代码推迟到用户真正打开时才求值（V8 懒解析函数体）
-import type { ManagerModal } from "./modal/manager-modal";
 // Conflict diagnostics are initialized only when explicitly opened.
 import { BPM_IGNORE_TAG, ManagerPlugin } from "./data/types";
 import { managerOpen } from "./utils";
@@ -446,8 +443,8 @@ class ManagerCommandService {
         commandIds.forEach((id) => {
             try {
                 commandManager?.removeCommand?.(id);
-            } catch {
-                // ignore unsupported internal command manager variants
+            } catch (error) {
+                if (this.manager.settings.DEBUG) console.error('[BPM] Removing an internal command failed', error);
             }
             if (commandManager?.commands) delete commandManager.commands[id];
         });
@@ -625,12 +622,14 @@ class ManagerCommandService {
         this.manager.applyRibbonSettings();
         try {
             if (pluginIds.length === 0) {
-                void this.manager.managerModal?.reloadShowData();
+                void this.manager.managerModal?.reloadShowData().catch(error => {
+                    if (this.manager.settings.DEBUG) console.error('[BPM] Refreshing plugin commands failed', error);
+                });
                 return;
             }
             pluginIds.forEach((pluginId) => this.manager.managerModal?.refreshPluginCard(pluginId, { allowReload: true }));
-        } catch {
-            // UI may not be open
+        } catch (error) {
+            if (this.manager.settings.DEBUG) console.error('[BPM] Refreshing plugin commands failed', error);
         }
     }
 
@@ -640,7 +639,7 @@ class ManagerCommandService {
         try {
             await task();
         } catch (error) {
-            console.error("[BPM] command failed", key, error);
+            if (this.manager.settings.DEBUG) console.error("[BPM] command failed", key, error);
             new Notice(this.t("command_notice_failed"));
         } finally {
             this.running.delete(key);

@@ -2,13 +2,15 @@ import { UpdateService } from './updates/update-service';
 import type { UpdateStatus } from './updates/types';
 import { PluginHistory } from './rollback/plugin-history';
 import type { ReleaseHighlightsModal } from './modal/release-highlights-modal';
-import { SyncUpdateGuard } from './ui/sync-update-guard';
 import { settingsFingerprint } from './settings/session-store';
 import { ProtectedConfigSession } from './settings/protected-session';
+import { applySettingsEdit, copySettingsRecord, queueSettingsSave, reconcileSettingsRecord, settingsSaveMessage } from './settings/save-request';
 import { detectSyncPlugins } from './settings/sync-detector';
 import { SyncWarningModal } from './settings/sync-warning';
 import { PluginIcons } from './icons/plugin-icons';
 import { pluginStorage } from './storage/plugin-storage';
+import { LocalStateStore } from './storage/local-state';
+import { applyTagStyle } from './ui/tag-style';
 import { BackgroundTaskCenter, BackgroundTaskHandle } from './tasks/task-center';
 import { DeviceManager } from './devices/device-manager';
 import { preserveNewerPresets } from './devices/device-presets';
@@ -30,7 +32,7 @@ import { Notice, Platform, requestUrl } from 'obsidian';
 import { BetaSource, ManagerPlugin, BPM_IGNORE_TAG, EONDR_PLUGIN_TAG_ID } from './data/types';
 import { runMigrations } from './migrations';
 import { migrateLegacyRibbonSettings } from './ribbon-migration';
-import { enrichStatisticsVersions, fetchReleaseVersions, installPluginFromGithub, installThemeFromGithub, ReleaseVersion, sanitizeRepo } from './github-install';
+import { enrichStatisticsVersions, fetchReleaseVersions, installThemeFromGithub, ReleaseVersion, sanitizeRepo } from './github-install';
 import { performSelfCheck } from './self-check';
 import { SystemRibbonManager } from './manager/system-ribbon-manager';
 import { RibbonGroups, RIBBON_GROUP_ITEM_PREFIX } from './manager/ribbon-groups';
@@ -39,6 +41,7 @@ import { markSourceInstalledRelease, sourceHasUpdate as sourceHasConfiguredUpdat
 import { LeftRibbonLike, ObsidianAppWithInternals, ObsidianPluginRegistry, RibbonNativeItem, WindowWithMoment, WorkspaceWithRibbon } from './obsidian-internals';
 import type { RibbonModal } from './modal/ribbon-modal';
 import { githubProxyEnabled, resolveGithubUrl } from './github-url';
+import { assertHttpSuccess, errorMessage, errorObject } from './network/http-error';
 
 interface PluginUpdateCheckOptions {
     updateCheckMode?: PluginUpdateCheckMode;
@@ -105,17 +108,26 @@ type SecretStorageLike = {
 };
 
 type CommunityPluginStatsEntry = Record<string, number | string | undefined>;
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+    value !== null && typeof value === 'object' && !Array.isArray(value);
+const supportsSecretStorage = (value: unknown): value is SecretStorageLike => isRecord(value)
+    && typeof value.getSecret === 'function' && typeof value.setSecret === 'function'
+    && (value.deleteSecret === undefined || typeof value.deleteSecret === 'function')
+    && (value.removeSecret === undefined || typeof value.removeSecret === 'function');
 
 export default class Manager extends Plugin {
     public readonly pluginIcons = new PluginIcons(this);
     public readonly updates = new UpdateService(this);
     public readonly history = new PluginHistory(this);
     /** 设置页任务入口读取的在线下载/检查进度 / Progress shown by the settings task entry. */
-    public readonly tasks = new BackgroundTaskCenter();
+    public readonly tasks = new BackgroundTaskCenter(error => this.reportError('Task center listener failed', error));
     /** Serialize settings writes and remember the last successful payload. */
     private settingsSaveQueue: Promise<void> = Promise.resolve();
     private persistedSettingsJson = '';
-    private readonly syncUpdateGuard = new SyncUpdateGuard();
+    private settingsSaveRunning = false;
+    private settingsEditEpoch = 0;
+    private pendingSettingsRequests = 0;
+    private pendingSettingsSnapshot?: Record<string, unknown>;
     private settingsTab?: ManagerSettingTab;
     public configProtection?: ProtectedConfigSession;
     private syncWarningModal?: SyncWarningModal;
@@ -138,12 +150,6 @@ export default class Manager extends Plugin {
     private officialStatsCache: { at: number; entries: Record<string, CommunityPluginStatsEntry> } | null = null;
     private updateProgressNotice: Notice | null = null;
     private updateProgressTask: BackgroundTaskHandle | null = null;
-    private pendingExternalDeviceApply = false;
-    private externalDeviceApplyRunning = false;
-    /** 最近一次外部设置快照时间；自动保存遇到同步回声时让路，避免写回死循环。 */
-    private lastExternalSettingsAt = 0;
-    private automaticSaveTimer: number | undefined;
-    private suppressAutomaticSaves = false;
 
 
     // 拖拽隐藏功能相关状态
@@ -153,6 +159,7 @@ export default class Manager extends Plugin {
 
     /** 卸载后禁止一切延迟回调再动 ribbon（避免在已卸载的插件上复活） */
     private isUnloaded = false;
+    private initialization: Promise<void> | null = null;
     /** Background startup work must never execute inside onload, even on a hot reload. */
     private startupTimers = new Set<number>();
     /** 延迟启动倒计时提示（默认关闭） / Optional delayed-start countdown notice. */
@@ -175,6 +182,8 @@ export default class Manager extends Plugin {
     private delaySleepResolve: (() => void) | null = null;
     /** 帧让出的兜底超时句柄 */
     private delayYieldTimer: number | null = null;
+    /** 帧与计时器使用同一窗口，并在任一路径结束时取消 / Cancel the frame with its owning window. */
+    private delayYieldFrame: number | null = null;
     /** 帧让出的放行回调，用途同 delaySleepResolve */
     private delayYieldResolve: (() => void) | null = null;
     /** 最近一次延时启动的结果汇总，供排查 */
@@ -182,13 +191,25 @@ export default class Manager extends Plugin {
 
     public readonly overview = new OverviewState(this);
 
-    public async onload() {
+    public onload(): void {
+        if (this.isUnloaded || this.initialization) return;
+        this.initialization = this.initialize().catch(error => {
+            if (this.isUnloaded) return;
+            this.reportError('Initialization failed', error);
+            // 失败时释放已登记的组件与事件；A partial initialization must not leave runtime hooks behind.
+            this.unload();
+            new Notice(this.settings?.LANGUAGE?.startsWith('zh')
+                ? 'Better Manager 初始化失败，请查看调试日志。'
+                : 'Better Manager could not start. Enable debug logging for details.', 10_000);
+        });
+    }
+
+    private async initialize(): Promise<void> {
         this.appPlugins = (this.app as ObsidianAppWithInternals).plugins;
         this.appWorkspace = this.app.workspace;
-        this.detectReloadLoop();
 
-        console.log(`%c ${this.manifest.name} %c v${this.manifest.version} `, `padding: 2px; border-radius: 2px 0 0 2px; color: #fff; background: #5B5B5B;`, `padding: 2px; border-radius: 0 2px 2px 0; color: #fff; background: #409EFF;`);
         await this.loadSettings();
+        if (this.isUnloaded) { this.configProtection?.destroy(); return; }
         if (!featureEnabled(this.settings, 'plugins')) this.settings.DELAY = false;
         let settingsDirty = false;
         const markSettingsDirty = () => {
@@ -196,6 +217,7 @@ export default class Manager extends Plugin {
         };
 
         settingsDirty = await runMigrations(this, { save: false });
+        if (this.isUnloaded) return;
         // 旧版 Ribbon 结构一次性转换（保留显隐/顺序），随后由统一的脏标记落盘。
         if (migrateLegacyRibbonSettings(this.settings)) markSettingsDirty();
         // 首次安装或未设置语言时，自动跟随 Obsidian 语言
@@ -209,7 +231,7 @@ export default class Manager extends Plugin {
         // 物化当前语言表：en / zh_cn 已常驻，其余语言在这里懒加载完成，
         // 后续 t() 才能直接命中；不 await 会让切换到 ru/ja/... 的用户先看到英文
         await this.translator.ensureLanguage(this.settings.LANGUAGE);
-        this.notifyAutomaticSaveSuppressed();
+        if (this.isUnloaded) return;
         let builtinTagsChanged = false;
         const tagCountBeforeBpmEnsure = this.settings.TAGS.length;
         ensureBpmTagExists(this);
@@ -239,13 +261,14 @@ export default class Manager extends Plugin {
         this.repoResolver = new RepoResolver(this);
         // 用户数据与缓存目录随插件启动建好；Create data/ and cache/ up front.
         void pluginStorage(this).ensureAreas().catch(error => {
-            if (this.settings.DEBUG) console.error("[BPM] ensure storage folders failed", error);
+            this.reportError("ensure storage folders failed", error);
         });
 
         // 先投影本机预设，再构造延迟队列；Select the device preset before queuing plugins.
         this.synchronizePlugins(Object.values(this.appPlugins.manifests), { save: false });
         this.devices = new DeviceManager(this);
         await this.devices.initialize();
+        if (this.isUnloaded) { this.devices.dispose(); return; }
         markSettingsDirty();
 
         // 一次性清理旧版本留下的 inline 覆盖（旧机制在元素上写 display/order，
@@ -254,7 +277,7 @@ export default class Manager extends Plugin {
 
         // 初始化侧边栏图标
         const ribbonEl = this.addRibbonIcon('folder-cog', this.translator.t('通用_管理器_文本'), () => {
-            void this.openManagerModal();
+            void this.openManagerModal().catch(error => this.reportError('Opening the manager failed', error, true));
         });
         // 悬停备注 Tooltip：悬停图标速览插件备注，右键可自定义
         this.noteTip = new NoteTipFeature(this, ribbonEl);
@@ -271,6 +294,7 @@ export default class Manager extends Plugin {
         if (settingsDirty) {
             // 迁移/登记只落共享设置，不触碰设备预设；Startup migrations must not capture device state.
             await this.saveSettings({ captureDevice: false, automatic: true });
+            if (this.isUnloaded) return;
         }
 
         this.agreement = new Agreement(this);
@@ -286,10 +310,10 @@ export default class Manager extends Plugin {
         });
 
         this.registerObsidianProtocolHandler("BPM-plugin-install", (params: ObsidianProtocolData) => {
-            void this.agreement.parsePluginInstall(params);
+            void this.agreement.parsePluginInstall(params).catch(error => this.reportError('Installing a plugin from a protocol link failed', error, true));
         });
         this.registerObsidianProtocolHandler("BPM-plugin-github", (params: ObsidianProtocolData) => {
-            void this.agreement.parsePluginGithub(params);
+            void this.agreement.parsePluginGithub(params).catch(error => this.reportError('Opening a plugin repository failed', error, true));
         });
 
         this.app.workspace.onLayoutReady(() => {
@@ -309,7 +333,7 @@ export default class Manager extends Plugin {
                     } else if (this.settings.DELAY) await this.drainDelayQueue();
                 } catch (error) {
                     this.delayWaitNotice?.stop();
-                    throw error;
+                    throw errorObject(error);
                 }
             });
             this.startRibbonRuntimeFeatures();
@@ -335,14 +359,20 @@ export default class Manager extends Plugin {
             this.startupTimers.delete(handle);
             if (this.isUnloaded) return;
             // Promise.resolve().then also catches synchronous exceptions in the task.
-            void Promise.resolve().then(task).catch(error => {
-                console.error(`[BPM] startup task failed: ${name}`, error);
+            void Promise.resolve().then(() => { if (!this.isUnloaded) return task(); }).catch(error => {
+                this.reportError(`Startup task failed: ${name}`, error, true);
             });
         }, delay);
         this.startupTimers.add(handle);
     }
 
-    public onunload() {
+    /** 必要诊断统一受开关控制 / Keep diagnostic output behind the debug setting. */
+    private reportError(context: string, error: unknown, notify = false): void {
+        if (this.settings?.DEBUG) console.error(`[BPM] ${context}`, error);
+        if (notify && !this.isUnloaded) new Notice(errorMessage(error), 10_000);
+    }
+
+    public onunload(): void {
         // 卸载后一切延迟回调必须停手，否则会在已卸载的插件上继续操作 ribbon
         this.isUnloaded = true;
         this.configProtection?.destroy();
@@ -357,11 +387,9 @@ export default class Manager extends Plugin {
         this.delayWaitNotice?.stop();
         this.devices?.dispose();
         // 卸载前恢复本机预设视图，避免其他预设的投影值留在内存。
-        void this.devices?.flushProjection().catch(() => { /* 卸载阶段无法提示 */ });
+        void this.devices?.flushProjection().catch(error => this.reportError('Restoring the device projection during unload failed', error));
         this.startupTimers.forEach(handle => window.clearTimeout(handle));
         this.startupTimers.clear();
-        if (this.automaticSaveTimer !== undefined) window.clearTimeout(this.automaticSaveTimer);
-        this.automaticSaveTimer = undefined;
         // 打断延时启动队列：清掉休眠/让出句柄，让排空循环立即退出
         this.cancelDelayQueue();
         this.stopRibbonRuntimeFeatures();
@@ -378,27 +406,29 @@ export default class Manager extends Plugin {
     private setupDragToHideObserver() {
         if (!this.isRibbonManagerEnabled() || this.dragObserverCleanup) return;
 
+        const doc = activeDocument;
         const handlePointerDown = (e: PointerEvent) => {
             if (!this.isRibbonManagerEnabled()) return;
-            const target = e.target as HTMLElement;
-            // 检查是否是 Ribbon Icon
-            if (target && target.closest && target.closest('.side-dock-ribbon-action')) {
+            const target = e.target as Node | null;
+            const item = target?.instanceOf(doc.defaultView?.HTMLElement ?? HTMLElement)
+                ? target.closest<HTMLElement>('.side-dock-ribbon-action') : null;
+            if (item) {
                 this.isRibbonDragging = true;
-                this.draggedRibbonItem = target.closest('.side-dock-ribbon-action') as HTMLElement;
+                this.draggedRibbonItem = item;
             }
         };
 
         const handlePointerUp = (e: PointerEvent) => {
-            void this.handleRibbonPointerUp(e);
+            void this.handleRibbonPointerUp(e).catch(error => this.reportError('Hiding a dragged Ribbon item failed', error));
         };
 
         // 使用 capture 捕获事件，确保不被 Obsidian 内部拦截
-        activeDocument.addEventListener('pointerdown', handlePointerDown, true);
-        activeDocument.addEventListener('pointerup', handlePointerUp, true);
+        doc.addEventListener('pointerdown', handlePointerDown, true);
+        doc.addEventListener('pointerup', handlePointerUp, true);
 
         this.dragObserverCleanup = () => {
-            activeDocument.removeEventListener('pointerdown', handlePointerDown, true);
-            activeDocument.removeEventListener('pointerup', handlePointerUp, true);
+            doc.removeEventListener('pointerdown', handlePointerDown, true);
+            doc.removeEventListener('pointerup', handlePointerUp, true);
         };
     }
 
@@ -414,11 +444,7 @@ export default class Manager extends Plugin {
                 const originalDisplay = element.getAttribute("data-bpm-original-display");
                 const originalOrder = element.getAttribute("data-bpm-original-order");
 
-                if (originalDisplay !== null) element.style.display = originalDisplay;
-                else element.style.removeProperty("display");
-
-                if (originalOrder !== null) element.style.order = originalOrder;
-                else element.style.removeProperty("order");
+                element.setCssStyles({ display: originalDisplay ?? '', order: originalOrder ?? '' });
 
                 element.removeAttribute("data-bpm-ribbon-managed");
                 element.removeAttribute("data-bpm-menu-managed");
@@ -453,7 +479,7 @@ export default class Manager extends Plugin {
             const ribbon = this.getLeftRibbon();
             if (!ribbon || !Array.isArray(ribbon.items) || typeof ribbon.onChange !== "function") {
                 // 原生接口缺失（Obsidian 大版本变更）时降级为只读，绝不猜测 DOM
-                console.error("[BPM] leftRibbon native API unavailable; ribbon settings not applied.");
+                this.reportError('Ribbon settings were not applied', new Error('The native leftRibbon API is unavailable'));
                 if (options.notify) new Notice(this.translator.t("Ribbon_原生接口不可用"));
                 return;
             }
@@ -480,15 +506,13 @@ export default class Manager extends Plugin {
                     saved.push(setting);
                     resolution.setting = setting;
                     settingsDirty = true;
-                    if (this.settings.DEBUG) {
-                        console.log("[BPM] Ribbon item registered as new", setting.bpmUniqueId, resolution.item.id);
-                    }
                 } else if (resolution.identityDrifted) {
                     this.syncRibbonSettingIdentity(resolution.setting, resolution.item);
                     settingsDirty = true;
                 }
             });
-            if (settingsDirty) void this.saveSettings({ captureDevice: false, automatic: true });
+            if (settingsDirty) void this.saveSettings({ captureDevice: false, automatic: true })
+                .catch(error => this.reportError('Retaining newly discovered Ribbon settings failed', error, true));
 
             // 2. 写原生状态：BPM 权威，覆盖原生显隐与顺序
             let ribbonChanged = false;
@@ -536,7 +560,8 @@ export default class Manager extends Plugin {
                 );
             }
         } catch (error) {
-            console.error("[BPM] applyRibbonSettings failed:", error);
+            this.reportError('Applying Ribbon settings failed', error);
+            if (options.notify) new Notice(errorMessage(error));
         }
     }
 
@@ -566,12 +591,13 @@ export default class Manager extends Plugin {
         if (!ribbon || typeof ribbon.addRibbonItemButton !== "function") return;
         if (this.ribbonAddItemOriginal) return;
 
-        const original = ribbon.addRibbonItemButton.bind(ribbon) as LeftRibbonLike["addRibbonItemButton"];
+        const original = ribbon.addRibbonItemButton;
+        const invoke = original.bind(ribbon);
         this.ribbonAddItemOriginal = original;
         ribbon.addRibbonItemButton = (...args: Parameters<NonNullable<LeftRibbonLike["addRibbonItemButton"]>>) => {
-            const result = original?.(...args);
+            const result = invoke(...args);
             this.scheduleRibbonApplyAfterItemAdded();
-            return result as HTMLElement;
+            return result;
         };
     }
 
@@ -600,14 +626,12 @@ export default class Manager extends Plugin {
      * 也留出插件在 addRibbonIcon 之后继续改标题/图标的余量。
      * 用户显式动作（命令面板、面板按钮、拖拽隐藏）仍走同步的 applyRibbonSettings()。
      *
-     * @param reason 触发来源，只用于调试日志
      */
-    private scheduleRibbonApply(reason: string): void {
+    private scheduleRibbonApply(_reason: string): void {
         if (this.isUnloaded) return;
         if (this.ribbonItemApplyTimer !== null) window.clearTimeout(this.ribbonItemApplyTimer);
         this.ribbonItemApplyTimer = window.setTimeout(() => {
             this.ribbonItemApplyTimer = null;
-            if (this.settings.DEBUG) console.log("[BPM] debounced ribbon apply fired", reason);
             this.applyRibbonSettings();
         }, RIBBON_APPLY_DEBOUNCE_MS);
     }
@@ -655,16 +679,14 @@ export default class Manager extends Plugin {
 
             const desired = ribbon.serialize();
             const raw = await adapter.read(configPath);
-            const parsed = JSON.parse(raw) as Record<string, unknown>;
-            if (JSON.stringify(parsed["left-ribbon"]) === JSON.stringify(desired)) return;
+            const parsed: unknown = JSON.parse(raw);
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Invalid Ribbon workspace configuration');
+            if (JSON.stringify(Reflect.get(parsed, "left-ribbon")) === JSON.stringify(desired)) return;
 
-            parsed["left-ribbon"] = desired;
+            Reflect.set(parsed, "left-ribbon", desired);
             await adapter.write(configPath, JSON.stringify(parsed, null, 2));
-            if (this.settings.DEBUG) {
-                console.log("[BPM] Ribbon state written to", configPath);
-            }
         } catch (error) {
-            console.error("[BPM] persist ribbon config failed:", error);
+            this.reportError('Persisting Ribbon configuration failed', error);
         }
     }
 
@@ -697,7 +719,7 @@ export default class Manager extends Plugin {
     /** 配置项的排序键：非法 order 视为末尾（与旧机制 order=9999 的语义一致） */
     private ribbonOrderOf(setting?: RibbonItem): number {
         const order = setting?.order;
-        return setting && Number.isFinite(order) ? (order as number) : Number.MAX_SAFE_INTEGER;
+        return typeof order === 'number' && Number.isFinite(order) ? order : Number.MAX_SAFE_INTEGER;
     }
 
     /** 下一个可用的顺序号（新项排在末尾） */
@@ -785,8 +807,7 @@ export default class Manager extends Plugin {
      * ribbonIdMap 的写入分支：沿用既有约定（按 Obsidian 语言判断）
      */
     private usesChineseRibbonIdMap(): boolean {
-        const currentLang = (this.app.vault as { getConfig?: (key: string) => string }).getConfig?.("language") || "en";
-        return currentLang.startsWith("zh");
+        return this.getAppLanguage().startsWith('zh');
     }
 
     private async handleRibbonPointerUp(e: PointerEvent) {
@@ -844,10 +865,10 @@ export default class Manager extends Plugin {
         const targetItem = items.find(i => i.name === label); // name 通常就是 label
         if (!targetItem) return;
 
-        console.log(`[BPM] Drag-to-hide triggered for: ${label} (${targetItem.bpmUniqueId})`);
         targetItem.visible = false;
 
         await this.saveSettings();
+        if (this.isUnloaded) return;
         this.applyRibbonSettings();
 
         // 如果 BPM 设置面板打开着，尝试刷新它
@@ -908,18 +929,18 @@ export default class Manager extends Plugin {
             this.clearLegacyRibbonOverrides();
             if (options.refreshViews !== false) {
                 try { this.ribbonModal?.close?.(); }
-                catch (error) { if (this.settings.DEBUG) console.error('[BPM] Closing Ribbon view failed', error); }
+                catch (error) { this.reportError("Closing Ribbon view failed", error); }
                 this.ribbonModal = null;
             }
         }
 
         if (options.refreshViews === false || !this.managerModal?.modalEl.isConnected) return;
         try { await this.managerModal.refreshRibbonFeatureAvailability(); }
-        catch (error) { if (this.settings.DEBUG) console.error('[BPM] Refreshing Ribbon view failed', error); }
+        catch (error) { this.reportError("Refreshing Ribbon view failed", error); }
     }
 
     public async loadSettings() {
-        const storage = this.app as unknown as { loadLocalStorage(key: string): unknown; saveLocalStorage(key: string, value: unknown): void };
+        const storage = new LocalStateStore(this);
         const stored = storage.loadLocalStorage('bpm-settings-cache-owner');
         const owner = typeof stored === 'string' && /^[a-z0-9-]{8,80}$/.test(stored) ? stored
             : window.crypto?.randomUUID?.() ?? `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -927,6 +948,7 @@ export default class Manager extends Plugin {
         this.configProtection = new ProtectedConfigSession(this, owner, value => this.normalizeSettings(value),
             () => { if (this.translator && !this.isUnloaded) this.refreshConfigConflict(); });
         this.settings = this.normalizeSettings(await this.configProtection.load()) as unknown as ManagerSettings;
+        this.pendingSettingsSnapshot = undefined;
         this.persistedSettingsJson = JSON.stringify(this.settings);
     }
 
@@ -937,31 +959,17 @@ export default class Manager extends Plugin {
         return settings;
     }
 
-    /** 保持设置对象引用，外部更新只替换数据，不驱动视图/外观重建；Preserve references without redrawing. */
+    /** Preserve nested objects captured by controls when applying an explicitly saved selection. */
     private adoptSettings(value: object): void {
         const next = this.normalizeSettings(value) as unknown as ManagerSettings;
         // 同步快照不能覆盖刚配置好的本机预设；Never let a stale snapshot replace a newer local preset.
         if (!this.configProtection) preserveNewerPresets(next.DEVICE_MANAGEMENT, this.settings.DEVICE_MANAGEMENT);
         const devices = this.settings.DEVICE_MANAGEMENT?.devices;
         if (next.DEVICE_MANAGEMENT) next.DEVICE_MANAGEMENT = { ...next.DEVICE_MANAGEMENT, devices: devices ?? [] };
-        const target = this.settings as unknown as Record<string, unknown>;
-        const incoming = next as unknown as Record<string, unknown>;
-        for (const key of Object.keys(target)) if (!(key in incoming)) delete target[key];
-        Object.assign(this.settings, next);
+        reconcileSettingsRecord(this.settings as unknown as Record<string, unknown>, next as unknown as Record<string, unknown>);
         const persisted = this.devices?.persistedSettings() ?? this.settings;
         this.persistedSettingsJson = JSON.stringify(persisted);
         // 接受合并结果为基线，但不写盘；外部同步回声不能触发下一次写入。
-    }
-
-    /** 外部合并后，用磁盘快照决定下次保存是否真的需要写盘。 */
-    private markExternalPersistence(incoming: Record<string, unknown>): void {
-        const live = this.devices?.persistedSettings() ?? this.settings;
-        const disk = this.normalizeSettings(incoming) as unknown as ManagerSettings;
-        const management = disk.DEVICE_MANAGEMENT;
-        const normalizedDisk = management ? { ...disk, DEVICE_MANAGEMENT: { ...management, devices: [] } } : disk;
-        this.persistedSettingsJson = settingsFingerprint(live) === settingsFingerprint(normalizedDisk)
-            ? JSON.stringify(live)
-            : '';
     }
 
     private queueSettingsOperation<T>(operation: () => Promise<T>): Promise<T> {
@@ -973,6 +981,16 @@ export default class Manager extends Plugin {
     public refreshConfigConflict(): void {
         this.managerModal?.refreshConfigConflict?.();
         this.settingsTab?.refreshConfigConflict();
+        this.refreshSettingsSaveState();
+    }
+
+    public get hasUnsavedSettings(): boolean {
+        return Boolean(this.pendingSettingsRequests || this.pendingSettingsSnapshot || this.configProtection?.hasPendingChanges);
+    }
+    public get isSavingSettings(): boolean { return this.settingsSaveRunning; }
+    public refreshSettingsSaveState(): void {
+        this.managerModal?.refreshSettingsSaveState?.();
+        this.settingsTab?.refreshSettingsSaveState?.();
     }
 
     private async showSyncWarning(): Promise<void> {
@@ -984,6 +1002,13 @@ export default class Manager extends Plugin {
         const detected = detectSyncPlugins(this.appPlugins.enabledPlugins, official);
         if (!detected.length || this.isUnloaded) return;
         this.syncWarningModal = new SyncWarningModal(this, detected);
+        this.syncWarningModal.open();
+    }
+
+    public showPrivateCacheWarning(): void {
+        if (this.isUnloaded) return;
+        this.syncWarningModal?.close();
+        this.syncWarningModal = new SyncWarningModal(this, [], 'private-cache');
         this.syncWarningModal.open();
     }
 
@@ -999,156 +1024,106 @@ export default class Manager extends Plugin {
         if (this.settingsEditors.size || this.isUnloaded) return;
         void this.queueSettingsOperation(async () => {
             if (this.settingsEditors.size || this.isUnloaded) return;
-            const beforeBound = this.devices?.boundRuntimeFingerprint() ?? '';
-            const merged = await this.configProtection?.finish(this.devices?.persistedSettings() ?? this.settings,
-                () => this.settingsEditors.size === 0 && !this.isUnloaded);
-            if (merged) this.adoptSettings(merged);
-            if (beforeBound !== (this.devices?.boundRuntimeFingerprint() ?? '') && this.devices?.data.enabled) {
-                this.pendingExternalDeviceApply = true;
-            }
-        }).then(() => this.flushExternalDeviceConfiguration()).catch(error => {
-            if (this.settings.DEBUG) console.error('[BPM] Restoring shared settings failed', error);
-            new Notice(this.translator.t('同步_缓存恢复失败'), 10_000);
-        });
-    }
-
-    /** External data changes never rebuild or close an open BPM editor. */
-    public onExternalSettingsChange(): void {
-        void this.refreshSettingsQuietly();
-    }
-
-    private flushExternalDeviceConfiguration(): void {
-        if (!this.pendingExternalDeviceApply || this.externalDeviceApplyRunning || this.settingsEditors.size || this.isUnloaded) return;
-        this.pendingExternalDeviceApply = false;
-        if (!this.devices?.data.enabled) return;
-        this.devices.reconcileAfterExternal();
-        this.externalDeviceApplyRunning = true;
-        void this.devices.apply({ refreshViews: false, persist: false }).then(() => {
-            this.externalDeviceApplyRunning = false;
-            this.flushExternalDeviceConfiguration();
+            // Closing a view is not permission to publish. Keep its draft and its choices.
+            this.configProtection?.end();
+            this.refreshSettingsSaveState();
         }).catch(error => {
-            this.externalDeviceApplyRunning = false;
-            this.pendingExternalDeviceApply = true;
-            this.devices.report(error);
+            this.reportError("Retaining the settings draft failed", error);
+            new Notice(settingsSaveMessage(this.settings.LANGUAGE, 'failed'), 10_000);
         });
     }
 
-    private async refreshSettingsQuietly(): Promise<void> {
-        // Wait for local saves before classifying a disk event as external.
-        await new Promise<void>(resolve => window.setTimeout(resolve, 400));
-        if (this.isUnloaded) return;
-        try {
-            await this.queueSettingsOperation(async () => {
-                if (this.isUnloaded) return;
-                const path = `${this.app.vault.configDir}/plugins/${this.manifest.id}/data.json`;
-                const incoming = this.normalizeSettings(JSON.parse(await this.app.vault.adapter.read(path)) as unknown);
-                const visible = this.settingsEditors.size > 0;
-                const changed = this.configProtection?.hasExternalChange(incoming)
-                    ?? settingsFingerprint(incoming) !== settingsFingerprint(this.settings);
-                if (changed) this.lastExternalSettingsAt = Date.now();
-                if (this.syncUpdateGuard.observe(changed)) {
-                    new Notice(this.translator.t('同步_外部更新提醒'), 10_000);
-                }
-                // Protect local edits on the first external change, not after a frequency threshold.
-                if (changed && visible) await this.configProtection?.activateCache(this.devices?.persistedSettings() ?? this.settings);
-                const beforeBound = this.devices?.boundRuntimeFingerprint() ?? '';
-                const result = await this.configProtection?.external(incoming, this.devices?.persistedSettings() ?? this.settings);
-                if (result?.apply) {
-                    this.adoptSettings(result.apply);
-                    this.markExternalPersistence(incoming);
-                    const recordsChanged = await this.devices?.mergeDeviceRecords();
-                    if (!visible) this.devices?.reconcileAfterExternal();
-                    if (recordsChanged && !visible) this.managerModal?.refreshDevicePanelIfOpen();
-                    const afterBound = this.devices?.boundRuntimeFingerprint() ?? '';
-                    if (beforeBound !== afterBound && this.devices?.data.enabled) this.pendingExternalDeviceApply = true;
-                } else if (!this.configProtection) {
-                    this.adoptSettings(incoming);
-                }
-                if (this.settings.DEBUG) console.log('[BPM] External settings merged without rebuilding open views');
-            });
-            // Runtime application can save settings, so start it outside the settings I/O queue.
-            this.flushExternalDeviceConfiguration();
-        } catch (error) {
-            if (this.settings?.DEBUG) console.error('[BPM] external settings refresh failed', error);
-            new Notice(this.translator.t('同步_缓存更新失败'), 10_000);
-        }
+    /** Shared file events are deliberately inert. The Save action checks the latest disk state. */
+    public onExternalSettingsChange(): void {
+        // In particular, do not read, adopt, pause, reapply styles or repair an old version here.
     }
 
     public async saveSettings(options: { captureDevice?: boolean; automatic?: boolean } = {}) {
-        // 外部同步刚写入时，自动保存先让路，避免“同步写入 → BPM 写回 → ACK”死循环。
-        if (options.automatic && !this.configProtection) {
-            if (this.suppressAutomaticSaves) return;
-            if (Date.now() - this.lastExternalSettingsAt < 2000) {
-                this.scheduleAutomaticSave();
-                return;
-            }
-        }
-        const save = async () => {
-            if (options.captureDevice !== false) this.devices?.capture();
+        if (!options.automatic) this.settingsEditEpoch++;
+        if (options.captureDevice !== false) this.devices?.capture();
+        this.pendingSettingsRequests++;
+        this.refreshSettingsSaveState();
+        // Freeze before joining the queue; automatic work must never capture a later manual edit.
+        try { await queueSettingsSave(this.devices?.persistedSettings() ?? this.settings, options.automatic === true,
+            task => this.queueSettingsOperation(task), async request => {
             // 其他设备同步过来的设备记录只存在于磁盘，先并回内存再整份写回。
             const recordsChanged = await this.devices?.mergeDeviceRecords();
             if (recordsChanged) this.managerModal?.refreshDevicePanelIfOpen();
             // 投影其他设备时，data.json 只写本机真实值；外域值留在 DEVICE_MANAGEMENT。
-            const settings = this.devices?.persistedSettings() ?? this.settings;
-            const serialized = JSON.stringify(settings);
-            if (serialized === this.persistedSettingsJson) return;
-            if (this.configProtection) await this.configProtection.save(settings, options.automatic);
-            else await this.saveData(settings);
-            this.persistedSettingsJson = serialized;
-        };
-        await this.queueSettingsOperation(save);
+            if (request.serialized === this.persistedSettingsJson && request.automatic) return;
+            if (this.configProtection) await this.configProtection.save(request.value, request.automatic);
+            else this.pendingSettingsSnapshot = request.value;
+            this.persistedSettingsJson = request.serialized;
+        }); } finally {
+            this.pendingSettingsRequests--;
+            this.refreshSettingsSaveState();
+        }
     }
 
-    /** 外部同步静默 2 秒后再补一次自动保存；期间持续收到回波则继续等待。 */
-    private scheduleAutomaticSave(): void {
-        if (this.automaticSaveTimer !== undefined || this.isUnloaded) return;
-        this.automaticSaveTimer = window.setTimeout(() => {
-            this.automaticSaveTimer = undefined;
-            if (this.isUnloaded) return;
-            if (Date.now() - this.lastExternalSettingsAt < 2000) {
-                this.scheduleAutomaticSave();
-                return;
+    public get automaticSavesSuppressed(): boolean { return false; }
+
+    /** The only shared settings publication entry point. It is safe to call from a DOM handler. */
+    public async savePendingSettings(): Promise<boolean> {
+        if (this.settingsSaveRunning || this.isUnloaded) return false;
+        this.settingsSaveRunning = true;
+        this.refreshSettingsSaveState();
+        try {
+            // User mutations already captured their edited scope. Re-capturing runtime state
+            // here would add unrelated appearance/Ribbon changes or cancel a reviewed choice.
+            const staging = this.saveSettings({ captureDevice: false });
+            const value = copySettingsRecord(this.devices?.persistedSettings() ?? this.settings);
+            const epoch = this.settingsEditEpoch, protection = this.configProtection;
+            const protectionEpoch = protection?.mutationEpoch;
+            const current = () => !this.isUnloaded && this.settingsEditEpoch === epoch
+                && protection?.mutationEpoch === protectionEpoch && !protection?.hasPendingUserAction;
+            await staging;
+            const result = await this.queueSettingsOperation(async () => {
+                if (!current()) return { status: 'cancelled' as const };
+                if (protection) return protection.publish(value, current);
+                await this.saveData(value);
+                if (current()) this.pendingSettingsSnapshot = undefined;
+                return { status: current() ? 'saved' as const : 'saved-pending' as const, value };
+            });
+            if (result.status === 'saved-pending' || (result.status === 'saved' || result.status === 'noop') && !current()) {
+                // A committed choice and a newer edit can both be valid. Apply only the newer
+                // UI delta to the committed result, never stage the old pre-choice UI wholesale.
+                if (result.value) {
+                    const latest = copySettingsRecord(this.devices?.persistedSettings() ?? this.settings);
+                    const pending = applySettingsEdit(value, latest, result.value);
+                    if (settingsFingerprint(latest) !== settingsFingerprint(pending)) {
+                        this.adoptSettings(pending);
+                        this.devices?.reconcileAfterExplicitSave();
+                    }
+                }
+                await this.saveSettings({ captureDevice: false });
+                new Notice(settingsSaveMessage(this.settings.LANGUAGE, 'savedPending'), 7000);
+                return true;
             }
-            void this.saveSettings({ captureDevice: false, automatic: true });
-        }, 2000) as unknown as number;
-    }
-
-    /** 30 秒内反复重载说明被同步插件热重载；本会话停止自动保存，避免写回循环。 */
-    private detectReloadLoop(): void {
-        try {
-            const key = 'better-plugins-manager-load-times';
-            const now = Date.now();
-            const raw = window.localStorage.getItem(key);
-            const parsed: unknown = raw ? JSON.parse(raw) : [];
-            const recent = Array.isArray(parsed)
-                ? parsed.filter((value): value is number => typeof value === 'number'
-                    && Number.isFinite(value) && now - value >= 0 && now - value < 30_000)
-                : [];
-            recent.push(now);
-            window.localStorage.setItem(key, JSON.stringify(recent.slice(-8)));
-            this.suppressAutomaticSaves = recent.length >= 2;
-        } catch {
-            this.suppressAutomaticSaves = false;
+            if (result.status === 'saved' || result.status === 'noop') {
+                if (current() && result.value) {
+                    const before = this.devices?.boundRuntimeFingerprint() ?? '';
+                    if (settingsFingerprint(value) !== settingsFingerprint(result.value)) {
+                        this.adoptSettings(result.value);
+                        this.devices?.reconcileAfterExplicitSave();
+                    }
+                    this.persistedSettingsJson = JSON.stringify(this.devices?.persistedSettings() ?? this.settings);
+                    if (before !== (this.devices?.boundRuntimeFingerprint() ?? '') && this.devices?.data.enabled) {
+                        await this.devices.apply({ refreshViews: false, persist: false });
+                    }
+                }
+                new Notice(settingsSaveMessage(this.settings.LANGUAGE, result.status === 'noop' ? 'unchanged' : 'saved'), 5000);
+                return true;
+            }
+            new Notice(settingsSaveMessage(this.settings.LANGUAGE, result.status), 10_000);
+            return false;
+        } catch (error) {
+            this.reportError("Saving settings failed", error);
+            new Notice(settingsSaveMessage(this.settings.LANGUAGE, 'failed'), 10_000);
+            return false;
+        } finally {
+            this.settingsSaveRunning = false;
+            this.refreshConfigConflict();
         }
-    }
-
-    /** 供管理器在“更多”按钮上显示同步保护标记。 */
-    public get automaticSavesSuppressed(): boolean {
-        return this.suppressAutomaticSaves;
-    }
-
-    /** 停止自动保存时提示一次，避免用户以为设置丢失。 */
-    private notifyAutomaticSaveSuppressed(): void {
-        if (!this.suppressAutomaticSaves) return;
-        try {
-            const key = 'better-plugins-manager-loop-notice';
-            const last = Number(window.localStorage.getItem(key) || 0);
-            if (Number.isFinite(last) && Date.now() - last < 5 * 60 * 1000) return;
-            window.localStorage.setItem(key, String(Date.now()));
-        } catch {
-            // localStorage 不可用时仍然提示，避免静默失败。
-        }
-        new Notice(this.translator.t("同步_循环保护_说明"), 10_000);
     }
 
     /** 打开管理器：命令、功能区图标共用，已打开时先关闭旧实例避免多个弹窗叠加。 */
@@ -1161,7 +1136,7 @@ export default class Manager extends Plugin {
             this.releaseHighlightsModal = new ReleaseHighlightsModal(this.app, this, () => { void this.dismissReleaseHighlights(); });
             this.releaseHighlightsModal.open();
         } catch (error) {
-            if (this.settings.DEBUG) console.error('[BPM] Release highlights failed', error);
+            this.reportError("Release highlights failed", error);
             if (!this.isUnloaded) new Notice(this.translator.t('更新介绍_错误'));
         }
     }
@@ -1173,13 +1148,14 @@ export default class Manager extends Plugin {
         try { await this.saveSettings(); }
         catch (error) {
             this.settings.RELEASE_HIGHLIGHTS_PENDING = '1.2.0';
-            if (this.settings.DEBUG) console.error('[BPM] Saving release highlights state failed', error);
+            this.reportError("Saving release highlights state failed", error);
             new Notice(this.translator.t('更新介绍_保存失败'));
         }
     }
 
     public async openManagerModal(): Promise<void> {
         const { ManagerModal } = await import('./modal/manager-modal.js');
+        if (this.isUnloaded) return;
         this.managerModal?.close();
         this.managerModal = new ManagerModal(this.app, this);
         this.managerModal.open();
@@ -1211,7 +1187,7 @@ export default class Manager extends Plugin {
                 }
             } catch (error) {
                 failures.push(plugin.name);
-                if (this.settings.DEBUG) console.error('[BPM] Device preset plugin failed', plugin.id, error);
+                this.reportError(`Device preset plugin failed: ${plugin.id}`, error);
             }
         }
         if (this.isUnloaded) return;
@@ -1226,9 +1202,8 @@ export default class Manager extends Plugin {
     }
 
     private getSecretStorage(): SecretStorageLike | null {
-        const storage = (this.app as unknown as { secretStorage?: SecretStorageLike }).secretStorage;
-        if (!storage || typeof storage.getSecret !== "function" || typeof storage.setSecret !== "function") return null;
-        return storage;
+        const storage: unknown = Reflect.get(this.app, 'secretStorage');
+        return supportsSecretStorage(storage) ? storage : null;
     }
 
     public supportsSecretStorage(): boolean {
@@ -1251,7 +1226,7 @@ export default class Manager extends Plugin {
                 this.settings.GITHUB_TOKEN = "";
                 await this.saveSettings({ automatic: true });
             } catch (error) {
-                if (this.settings.DEBUG) console.error("[BPM] migrate GitHub token to secret storage failed", error);
+                this.reportError("migrate GitHub token to secret storage failed", error);
             }
         }
         return legacy;
@@ -1282,7 +1257,7 @@ export default class Manager extends Plugin {
             storage?.removeSecret?.(GITHUB_TOKEN_SECRET_ID);
             storage?.setSecret?.(GITHUB_TOKEN_SECRET_ID, "");
         } catch (error) {
-            if (this.settings.DEBUG) console.error("[BPM] clear GitHub token secret failed", error);
+            this.reportError("clear GitHub token secret failed", error);
         }
         this.settings.GITHUB_TOKEN = "";
         await this.saveSettings();
@@ -1367,25 +1342,29 @@ export default class Manager extends Plugin {
         if (!featureEnabled(this.settings, 'plugins') || !toolEnabled(this.settings, 'updates') || !this.settings.STARTUP_CHECK_UPDATES) return;
         try {
             const status = await this.checkUpdates();
+            if (this.isUnloaded) return;
             const count = Object.entries(status).filter(([id, item]) => item.hasUpdate && !this.updates.muted(id)).length;
             if (count) new Notice(this.translator.t('通知_可更新数量', { count }), 5000);
-        } catch (error) { if (this.settings.DEBUG) console.error('[BPM] Startup updates failed', error); }
+        } catch (error) { this.reportError("Startup updates failed", error); }
     }
 
     public async openPluginHistory(pluginId?: string): Promise<void> {
         if (!this.history.available) return;
         const { HistoryModal } = await import('./rollback/history-modal.js');
+        if (this.isUnloaded) return;
         new HistoryModal(this.app, this, pluginId).open();
     }
 
     public async openUpdateRules(pluginId?: string): Promise<void> {
         const { UpdateRulesModal } = await import('./updates/update-rules-modal.js');
+        if (this.isUnloaded) return;
         new UpdateRulesModal(this.app, this, pluginId).open();
     }
 
     public async openBatchUpdates(): Promise<void> {
         if (!featureEnabled(this.settings, 'plugins') || !toolEnabled(this.settings, 'updates')) return;
         const { BatchUpdateModal } = await import('./updates/batch-update-modal.js');
+        if (this.isUnloaded) return;
         new BatchUpdateModal(this.app, this).open();
     }
 
@@ -1407,8 +1386,9 @@ export default class Manager extends Plugin {
         try {
             const stat = await this.app.vault.adapter.stat(folder);
             source.installedAt = stat ? (stat.ctime || stat.mtime || undefined) : undefined;
-        } catch {
+        } catch (error) {
             source.installedAt = undefined;
+            this.reportError('Reading a source installation timestamp failed', error);
         }
     }
 
@@ -1428,7 +1408,7 @@ export default class Manager extends Plugin {
             await this.refreshBetaSourceInstalledAt(source);
         } catch (error) {
             source.error = error instanceof Error ? error.message : 'Unknown error';
-            if (this.settings.DEBUG) console.error('[BPM] Theme source check failed', error);
+            this.reportError("Theme source check failed", error);
         }
     }
 
@@ -1439,9 +1419,11 @@ export default class Manager extends Plugin {
         if (sources.length === 0) return;
 
         for (const source of sources) {
+            if (this.isUnloaded) return;
             await this.checkBetaSource(source);
         }
 
+        if (this.isUnloaded) return;
         await this.saveSettings({ captureDevice: false, automatic: true });
         const count = sources.filter(source => this.sourceHasUpdate(source) && (source.type !== 'plugin' || !this.updates.muted(source.id))).length;
         if (count > 0) {
@@ -1452,6 +1434,7 @@ export default class Manager extends Plugin {
     private async startupMaintainBetaSources() {
         if (!featureEnabled(this.settings, 'install')) return;
         await this.startupCheckBetaSources();
+        if (this.isUnloaded) return;
         await this.startupUpdateBetaSources();
     }
 
@@ -1459,25 +1442,29 @@ export default class Manager extends Plugin {
         if (!this.settings.SOURCE_AUTO_UPDATE) return;
         const sources = (this.settings.BETA_SOURCES || []).filter(source => source.enabled && source.autoUpdate);
         for (const source of sources) {
+            if (this.isUnloaded) return;
             try {
                 if (source.type === 'plugin') {
                     const id = this.getBetaSourcePluginId(source);
                     if (!this.updates.tracksInstallation(source)) { source.updatePolicyReason = 'source-unavailable'; continue; }
                     const status = await this.updates.check(id, { force: true });
+                    if (this.isUnloaded) return;
                     if (status.hasUpdate && status.target && await this.updates.install(id, status, this.updates.muted(id), status.localVersion)) {
                         markSourceInstalledRelease(source, status.target.version, status.target.publishedAt, this.appPlugins.manifests[id]?.version);
                     }
                 } else {
                     await this.checkBetaSource(source);
+                    if (this.isUnloaded) return;
                     const tag = source.latestReleaseTag || source.latestVersion;
                     if (tag && sourceHasConfiguredUpdate(source) && await installThemeFromGithub(this, source.repo, tag)) markSourceInstalledRelease(source, tag, source.latestReleasePublishedAt, tag);
                 }
                 await this.refreshBetaSourceInstalledAt(source);
             } catch (error) {
                 source.error = error instanceof Error ? error.message : 'Unknown error';
-                if (this.settings.DEBUG) console.error('[BPM] Source auto update failed', error);
+                this.reportError("Source auto update failed", error);
             }
         }
+        if (this.isUnloaded) return;
         if (sources.length) await this.saveSettings({ captureDevice: false, automatic: true });
     }
 
@@ -1579,7 +1566,7 @@ export default class Manager extends Plugin {
                 delay: "",
                 note: "",
             });
-            if (shouldSave) void this.saveSettings({ automatic: true });
+            if (shouldSave) void this.saveSettings({ automatic: true }).catch(error => this.reportError('Retaining a plugin record failed', error, true));
             return true;
         }
         if (!existing.name) {
@@ -1598,16 +1585,16 @@ export default class Manager extends Plugin {
             existing.delay = "";
             changed = true;
         }
-        if (changed && shouldSave) void this.saveSettings({ automatic: true });
+        if (changed && shouldSave) void this.saveSettings({ automatic: true }).catch(error => this.reportError('Retaining plugin records failed', error, true));
         return changed;
     }
 
     private reloadIfCurrentModal() {
-        try { void this.managerModal?.reloadShowData(); } catch { /* ignore */ }
+        void this.managerModal?.reloadShowData().catch(error => this.reportError('Refreshing the manager view failed', error));
         try {
             // 直接刷新 UI，不需要重新从文件加载，因为内存状态这一刻是最新的
             this.ribbonModal?.display();
-        } catch { /* ignore */ }
+        } catch (error) { this.reportError('Refreshing the Ribbon view failed', error); }
     }
 
     /**
@@ -1636,9 +1623,6 @@ export default class Manager extends Plugin {
 
             // 删除重复 ID 项（保留第一次出现的）
             if (item.id && seenIds.has(item.id)) {
-                if (this.settings.DEBUG) {
-                    console.warn(`[BPM] Duplicate ribbon item removed from memory: ${item.id}`);
-                }
                 ribbon.items.splice(i, 1);
                 cleaned = true;
                 continue;
@@ -1649,7 +1633,6 @@ export default class Manager extends Plugin {
             }
         }
 
-        if (cleaned && this.settings.DEBUG) console.log("[BPM] Cleaned undefined/duplicate items from leftRibbon.");
         return cleaned;
     }
 
@@ -1837,15 +1820,6 @@ export default class Manager extends Plugin {
                 const result = await this.startPluginQueued(item.id);
                 this.lastDelayStartReport.push(result);
 
-                if (this.settings.DEBUG) {
-                    console.log(
-                        `[BPM] delayed start ${result.ok ? "ok" : "FAILED"}`,
-                        item.id,
-                        `remaining=${this.delayQueue.length}`,
-                        result.error ? `error=${result.error}` : `loaded=${result.loaded}`
-                    );
-                }
-
                 if (this.isUnloaded) return;
                 // 插件的 onload 里才注册 ribbon 图标，等它落定再补一次登记；
                 // 走防抖器，避免几十个插件连打 ribbon 重绘与 workspace.json 落盘
@@ -1878,9 +1852,9 @@ export default class Manager extends Plugin {
             const ok = Boolean(instance) && loaded !== false;
             return { id, ok, started: Boolean(started), loaded: loaded ?? null, error: "" };
         } catch (error) {
-            const message = (error as Error)?.message || String(error);
+            const message = errorMessage(error);
             // 严禁静默吞异常：单个插件失败必须留痕，且不能拖垮整条队列
-            console.error(`[BPM] delayed start failed: ${id}`, error);
+            this.reportError(`Delayed plugin start failed: ${id}`, error);
             return { id, ok: false, started: false, loaded: null, error: message };
         }
     }
@@ -1918,13 +1892,17 @@ export default class Manager extends Plugin {
                     window.clearTimeout(this.delayYieldTimer);
                     this.delayYieldTimer = null;
                 }
+                if (this.delayYieldFrame !== null) {
+                    window.cancelAnimationFrame(this.delayYieldFrame);
+                    this.delayYieldFrame = null;
+                }
                 this.delayYieldResolve = null;
                 resolve();
             };
             this.delayYieldResolve = finish;
             this.delayYieldTimer = window.setTimeout(finish, DELAY_YIELD_TIMEOUT_MS);
-            if (typeof requestAnimationFrame === "function") {
-                requestAnimationFrame(() => finish());
+            if (typeof window.requestAnimationFrame === "function") {
+                this.delayYieldFrame = window.requestAnimationFrame(finish);
             } else {
                 finish();
             }
@@ -1948,25 +1926,21 @@ export default class Manager extends Plugin {
             window.clearTimeout(this.delayYieldTimer);
             this.delayYieldTimer = null;
         }
+        if (this.delayYieldFrame !== null) {
+            window.cancelAnimationFrame(this.delayYieldFrame);
+            this.delayYieldFrame = null;
+        }
         this.delayQueue = [];
         sleep?.();
         yieldNext?.();
     }
 
-    /** 排空后的收尾：失败必须可见（错误始终输出；过程日志受 DEBUG 开关控制） */
+    /** 失败集中提示；诊断细节仅在调试模式输出 / Summarize failures without noisy progress logs. */
     private reportDelayStartSummary(): void {
-        const failed = this.lastDelayStartReport.filter(r => !r.ok);
-        if (failed.length > 0) {
-            console.error(
-                `[BPM] delayed start: ${failed.length} plugin(s) did not start`,
-                failed.map(r => ({ id: r.id, error: r.error, loaded: r.loaded }))
-            );
-        }
-        if (this.settings.DEBUG) {
-            console.log(
-                `[BPM] delayed start finished: ${this.lastDelayStartReport.length} scheduled, ${failed.length} failed`
-            );
-        }
+        const failed = this.lastDelayStartReport.filter(result => !result.ok);
+        if (!failed.length || this.isUnloaded) return;
+        this.reportError('Some delayed plugins did not start', failed.map(result => ({ id: result.id, error: result.error, loaded: result.loaded })));
+        new Notice(this.translator.t('设备_插件失败', { names: failed.map(result => result.id).join(', ') }), 10_000);
     }
 
     // 同步插件到配置文件
@@ -2013,40 +1987,21 @@ export default class Manager extends Plugin {
             HIDES: this.settings.HIDES,
         });
         const changed = previousStateJson !== nextStateJson;
-        if (changed && shouldSave) void this.saveSettings({ automatic: true });
+        if (changed && shouldSave) void this.saveSettings({ automatic: true }).catch(error => this.reportError('Retaining plugin records failed', error, true));
         return changed;
     }
 
     // 工具函数
     public createTag(text: string, color: string, type: string) {
-        const style = this.generateTagStyle(color, type);
-        const tag = createEl('span', {
+        const tag = createSpan({
             text: text,
             cls: 'manager-tag',
-            attr: { 'style': style }
         })
+        this.applyTagStyle(tag, color, type);
         return tag;
     }
-    public generateTagStyle(color: string, type: string) {
-        let style;
-        const [r, g, b] = this.hexToRgbArray(color);
-        switch (type) {
-            case 'a':
-                style = `color: #fff; background-color: ${color}; border-color: ${color};`;
-                break;
-            case 'b':
-                style = `color: ${color}; background-color: transparent; border-color: ${color};`;
-                break;
-            case 'c':
-                style = `color: ${color}; background-color: rgba(${r}, ${g}, ${b}, 0.3); border-color: ${color};`;
-                break;
-            case 'd':
-                style = `color: ${color}; background-color: ${this.adjustColorBrightness(color, 50)}; border-color: ${this.adjustColorBrightness(color, 50)};`;
-                break;
-            default:
-                style = `background-color: transparent;border-style: dashed;`;
-        }
-        return style;
+    public applyTagStyle(element: HTMLElement, color: string, type: string): void {
+        applyTagStyle(element, color, type);
     }
     public hexToRgbArray(hex: string) {
         const rgb = parseInt(hex.slice(1), 16);
@@ -2055,24 +2010,17 @@ export default class Manager extends Plugin {
         const b = (rgb & 0x0000FF);
         return [r, g, b];
     }
-    public adjustColorBrightness(hex: string, amount: number) {
-        const rgb = parseInt(hex.slice(1), 16);
-        const r = Math.min(255, Math.max(0, ((rgb >> 16) & 0xFF) + amount));
-        const g = Math.min(255, Math.max(0, ((rgb >> 8) & 0xFF) + amount));
-        const b = Math.min(255, Math.max(0, (rgb & 0xFF) + amount));
-        return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase()}`;
-    }
 
     // 获取 Obsidian 当前语言（兼容旧版类型定义）
     public getAppLanguage(): string {
-        // 优先使用 app.i18n.locale / language
+        // 保留最低版本可用的语言状态 / These sources remain available on the minimum supported version.
         const appWithInternals = this.app as ObsidianAppWithInternals;
         const langCandidates: (string | undefined)[] = [
             appWithInternals.i18n?.locale,
             appWithInternals.i18n?.lang,
             appWithInternals.i18n?.language,
             (window as WindowWithMoment).moment?.locale?.(),
-            navigator.language,
+            window.navigator.language,
         ];
         const picked = langCandidates.find((l) => typeof l === "string" && l.length > 0) || "en";
         const lower = picked.toLowerCase().replace('_', '-');
@@ -2145,16 +2093,23 @@ export default class Manager extends Plugin {
         if (this.officialStatsCache && Date.now() - this.officialStatsCache.at < 5 * 60 * 1000) return this.officialStatsCache.entries;
         const url = "https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/community-plugin-stats.json";
         try {
-            const res = await requestUrl({ url: resolveGithubUrl(this, url) });
-            const json = res.json as Record<string, CommunityPluginStatsEntry>;
+            const res = await requestUrl({ url: resolveGithubUrl(this, url), throw: false });
+            assertHttpSuccess(res);
+            const json: unknown = res.json;
+            if (!isRecord(json)) throw new Error('Invalid community plugin statistics');
             const entries: Record<string, CommunityPluginStatsEntry> = {};
-            Object.entries(json || {}).forEach(([id, entry]) => {
-                if (entry && typeof entry === "object" && !Array.isArray(entry)) entries[id] = entry;
-            });
+            for (const [id, candidate] of Object.entries(json)) {
+                if (!isRecord(candidate)) continue;
+                const entry: CommunityPluginStatsEntry = {};
+                for (const [version, count] of Object.entries(candidate)) {
+                    if (typeof count === 'string' || typeof count === 'number' && Number.isFinite(count)) entry[version] = count;
+                }
+                entries[id] = entry;
+            }
             this.officialStatsCache = { at: Date.now(), entries };
             return entries;
         } catch (e) {
-            console.error("获取官方插件 stats 失败", e);
+            this.reportError('Fetching community plugin statistics failed', e);
             return {};
         }
     }
@@ -2162,16 +2117,6 @@ export default class Manager extends Plugin {
     public async fetchOfficialReleaseVersions(id: string, repo: string): Promise<ReleaseVersion[]> {
         const entries = await this.fetchOfficialStatsEntries();
         return entries[id] ? enrichStatisticsVersions(this, repo, this.releaseVersionsFromStats(entries[id])) : [];
-    }
-
-    /** 官方插件默认走官方统计；延迟模式需要真实发布日期，改走 API/Atom。 */
-    private useOfficialStats(updateDelayDays: number): boolean {
-        return this.settings.PLUGIN_UPDATE_OFFICIAL_SOURCE !== "github" && updateDelayDays <= 0;
-    }
-
-    /** 非官方插件默认优先 Atom/raw，避免消耗 GitHub API 额度。 */
-    private useUnofficialFallback(): boolean {
-        return this.settings.PLUGIN_UPDATE_UNOFFICIAL_SOURCE !== "github";
     }
 
     private releaseVersionsFromStats(entry: CommunityPluginStatsEntry): ReleaseVersion[] {
@@ -2199,56 +2144,6 @@ export default class Manager extends Plugin {
         return latest;
     }
 
-    private async fetchGithubManifestVersion(repo: string): Promise<string | null> {
-        const token = await this.getGithubToken();
-        const headers: Record<string, string> = {
-            "User-Agent": "better-plugins-manager"
-        };
-        if (token) headers["Authorization"] = `Bearer ${token}`;
-
-        // 1) 尝试最新 release 的 manifest.json
-        try {
-            const releaseUrl = `https://api.github.com/repos/${repo}/releases/latest`;
-            const release = await requestUrl({ url: resolveGithubUrl(this, releaseUrl), headers });
-            const assets = (release.json?.assets || []) as { name: string; browser_download_url: string }[];
-            const manifestAsset = assets.find(a => a.name === "manifest.json");
-            if (manifestAsset?.browser_download_url) {
-                const manifestRes = await requestUrl({ url: resolveGithubUrl(this, manifestAsset.browser_download_url), headers });
-                const manifest = manifestRes.json as { version?: string };
-                if (manifest?.version) return manifest.version;
-            }
-        } catch {
-            // ignore and fallback
-        }
-
-        // 2) 尝试默认分支 (HEAD) raw manifest
-        const candidates = [
-            `https://raw.githubusercontent.com/${repo}/HEAD/manifest.json`,
-            `https://raw.githubusercontent.com/${repo}/main/manifest.json`,
-            `https://raw.githubusercontent.com/${repo}/master/manifest.json`,
-        ];
-        for (const url of candidates) {
-            try {
-                const res = await requestUrl({ url: resolveGithubUrl(this, url), headers });
-                const manifest = res.json as { version?: string };
-                if (manifest?.version) return manifest.version;
-            } catch {
-                // try next
-            }
-        }
-        return null;
-    }
-
-    private async fetchGithubVersions(repoInput: string, throwOnError = false, includeManifest = false, preferFallback = false): Promise<ReleaseVersion[]> {
-        try {
-            return await fetchReleaseVersions(this, repoInput, { includeManifest, preferFallback });
-        } catch (e) {
-            console.error("[BPM] fetchGithubVersions error", repoInput, e);
-            if (throwOnError) throw e;
-            return [];
-        }
-    }
-
     public async downloadUpdate(pluginId: string, version?: string): Promise<boolean> {
         try {
             const status = await this.updates.check(pluginId);
@@ -2261,11 +2156,11 @@ export default class Manager extends Plugin {
             if (ok) {
                 this.managerModal?.refreshPluginCard(pluginId, { allowReload: true });
                 void this.updates.check(pluginId).then(() => this.managerModal?.refreshPluginCard(pluginId, { allowReload: false }))
-                    .catch(error => { if (this.settings.DEBUG) console.error('[BPM] Post-install check failed', error); });
+                    .catch(error => { this.reportError("Post-install check failed", error); });
             }
             return ok;
         } catch (error) {
-            if (this.settings.DEBUG) console.error('[BPM] Plugin update failed', error);
+            this.reportError("Plugin update failed", error);
             new Notice(error instanceof Error ? error.message : this.translator.t('安装_错误_通用'));
             return false;
         }

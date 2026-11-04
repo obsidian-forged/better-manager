@@ -1,6 +1,9 @@
 import Manager from "main";
 import zh_cn from './locale/zh_cn';
 import en from "./locale/en";
+import { Notice } from 'obsidian';
+import { errorMessage } from '../network/http-error';
+import { toText } from '../shared/text';
 
 /**
  * 翻译表类型：与简体中文 key 集一致（缺失的 key 由回退链兜底）
@@ -47,8 +50,8 @@ export class Translator {
 	 * 回退链需要的 en / zh_cn 常驻；其余按需加入。
 	 */
 	private loaded: Record<string, LocaleTable> = {
-		'en': en as LocaleTable,
-		'zh-cn': zh_cn as LocaleTable,
+		'en': en,
+		'zh-cn': zh_cn,
 	};
 
 	constructor(manager: Manager) {
@@ -73,7 +76,8 @@ export class Translator {
 			this.loaded[language] = await loader();
 		} catch (error) {
 			// 不吞异常：语言表缺失时必须留痕，否则 UI 会静默回退成英文
-			console.error(`[BPM] failed to load locale "${language}":`, error);
+			if (this.manager.settings.DEBUG) console.error(`[BPM] failed to load locale "${language}":`, error);
+			new Notice(`${this.t('通用_失败_文本')}: ${errorMessage(error)}`);
 		}
 	}
 
@@ -89,9 +93,8 @@ export class Translator {
 		const fallback = zh_cn as Record<keyof typeof zh_cn, string>;
 		const key = str as keyof typeof zh_cn;
 		let text = locale[key] || base[key] || fallback[key] || String(str);
-		if (!vars) return text;
-		Object.entries(vars).forEach(([name, value]) => {
-			text = text.replace(new RegExp(`\\{${name}\\}`, 'g'), String(value ?? ''));
+		Object.entries({ configDir: this.manager.app?.vault?.configDir ?? '', ...vars }).forEach(([name, value]) => {
+			text = text.split(`{${name}}`).join(toText(value));
 		});
 		return text;
 	}

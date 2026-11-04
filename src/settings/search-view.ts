@@ -6,7 +6,7 @@ export interface SettingsSearchPage {
     label: string;
     render(container: HTMLElement): void;
 }
-interface SettingsSearchItem extends SearchableSetting { page: number; ordinal: number; }
+export interface SettingsSearchItem extends SearchableSetting { page: number; ordinal: number; }
 
 /** 索引原生设置的名称与说明，结果跳回原控件，避免复制控件状态；Navigate to the original controls. */
 export class SettingsSearch {
@@ -26,20 +26,28 @@ export class SettingsSearch {
         return Array.from(container.querySelectorAll<HTMLElement>('.setting-item:not(.setting-item-heading), .manager-personalize'));
     }
 
-    open(topbar: HTMLElement): void {
-        const t = (key: string) => this.tab.manager.translator.t(key);
-        this.pages.forEach((page, pageIndex) => {
-            const scratch = topbar.ownerDocument.createElement('div');
+    /** 自有搜索与原生声明式搜索使用同一份设置名和说明；Share real control metadata with native settings search. */
+    static index(pages: SettingsSearchPage[], doc: Document, personalizeLabel: string): SettingsSearchItem[] {
+        const items: SettingsSearchItem[] = [];
+        pages.forEach((page, pageIndex) => {
+            const scratch = (doc.defaultView ?? window).createDiv();
             page.render(scratch);
             SettingsSearch.rows(scratch).forEach((row, ordinal) => {
                 const personalize = row.hasClass('manager-personalize');
-                const name = personalize ? t('功能开关_个性化') : row.querySelector('.setting-item-name')?.textContent?.trim() ?? '';
+                const name = personalize ? personalizeLabel : row.querySelector('.setting-item-name')?.textContent?.trim() ?? '';
                 const description = personalize
                     ? Array.from(row.querySelectorAll('button')).map(button => button.textContent?.trim() || button.getAttribute('aria-label') || '').join(' ')
                     : row.querySelector('.setting-item-description')?.textContent?.trim() ?? '';
-                if (name || description) this.items.push({ name, description, page: pageIndex, ordinal });
+                if (name || description) items.push({ name, description, page: pageIndex, ordinal });
             });
         });
+        return items;
+    }
+
+    open(topbar: HTMLElement): void {
+        const t = (key: string) => this.tab.manager.translator.t(key);
+        this.items.length = 0;
+        this.items.push(...SettingsSearch.index(this.pages, topbar.ownerDocument, t('功能开关_个性化')));
         this.doc = topbar.ownerDocument;
         this.win = this.doc.defaultView;
         this.topbar = topbar;

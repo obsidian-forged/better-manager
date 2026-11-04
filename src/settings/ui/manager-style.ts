@@ -1,7 +1,7 @@
 import BaseSetting from "../base-setting";
 import { DropdownComponent, Setting, ToggleComponent } from "obsidian";
 // import Commands from "src/command";
-import { PluginOverviewLayout, ToolbarLabelMode } from "../data";
+import { PluginOverviewLayout } from "../data";
 // import { GROUP_STYLE, ITEM_STYLE, TAG_STYLE } from "src/data/data";
 
 export default class ManagerBasis extends BaseSetting {
@@ -74,7 +74,7 @@ export default class ManagerBasis extends BaseSetting {
             void this.saveAndRefreshManager();
         });
         toolbarLabelDropdown.onChange((value) => {
-            this.settings.TOOLBAR_LABEL_MODE = (value === 'always' || value === 'hidden' ? value : 'active') as ToolbarLabelMode;
+            this.settings.TOOLBAR_LABEL_MODE = (value === 'always' || value === 'hidden' ? value : 'active');
             syncHoverRow(this.settings.TOOLBAR_LABEL_MODE);
             void this.saveAndRefreshManager();
         });

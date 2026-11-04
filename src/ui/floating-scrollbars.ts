@@ -49,7 +49,7 @@ export class FloatingScrollbars {
             // 标签显隐或翻译引起的宽度变化也要更新；Observe content widths as well as the viewport.
             desired.add(viewport);
             Array.from(viewport.children).forEach(child => {
-                if (child instanceof this.view.HTMLElement && !child.hasClass('bpm-scroll-strip__track')) desired.add(child);
+                if (child.instanceOf(this.view.HTMLElement) && !child.hasClass('bpm-scroll-strip__track')) desired.add(child);
             });
         });
         this.observed.forEach(element => {

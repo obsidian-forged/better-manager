@@ -8,7 +8,7 @@ new Function('module', 'exports', built.outputFiles[0].text)(module, module.expo
 const { BackgroundTaskCenter } = module.exports;
 
 test('running tasks report clamped progress and settle once', () => {
-    const center = new BackgroundTaskCenter();
+    const center = new BackgroundTaskCenter(assert.ifError);
     const task = center.start({ title: 'Downloading', progress: 0.2 });
     assert.equal(center.runningCount(), 1);
     assert.deepEqual(center.snapshots().map(({ title, progress, status }) => ({ title, progress, status })),
@@ -32,7 +32,7 @@ test('running tasks report clamped progress and settle once', () => {
 });
 
 test('only settled tasks can be dismissed', () => {
-    const center = new BackgroundTaskCenter();
+    const center = new BackgroundTaskCenter(assert.ifError);
     const running = center.start({ title: 'Running' });
     assert.equal(center.dismiss(running.id), false);
     assert.equal(center.snapshots().length, 1);
@@ -45,7 +45,7 @@ test('only settled tasks can be dismissed', () => {
 });
 
 test('subscribers are notified on start, progress, settle and dismiss only once unsubscribed', () => {
-    const center = new BackgroundTaskCenter();
+    const center = new BackgroundTaskCenter(assert.ifError);
     let calls = 0;
     const unsubscribe = center.subscribe(() => { calls++; });
     const task = center.start({ title: 'Task' });
@@ -60,24 +60,19 @@ test('subscribers are notified on start, progress, settle and dismiss only once 
 });
 
 test('a throwing subscriber does not break other subscribers', () => {
-    const center = new BackgroundTaskCenter();
-    const original = console.error;
     const errors = [];
-    console.error = (...args) => { errors.push(args); };
-    try {
-        let informed = 0;
-        center.subscribe(() => { throw new Error('boom'); });
-        center.subscribe(() => { informed++; });
-        center.start({ title: 'Task' });
-        assert.equal(informed, 1);
-        assert.equal(errors.length, 1);
-    } finally {
-        console.error = original;
-    }
+    const center = new BackgroundTaskCenter(error => errors.push(error));
+    let informed = 0;
+    const failure = new Error('boom');
+    center.subscribe(() => { throw failure; });
+    center.subscribe(() => { informed++; });
+    center.start({ title: 'Task' });
+    assert.equal(informed, 1);
+    assert.deepEqual(errors, [failure]);
 });
 
 test('settled tasks are trimmed before running tasks when the list grows', () => {
-    const center = new BackgroundTaskCenter();
+    const center = new BackgroundTaskCenter(assert.ifError);
     const running = center.start({ title: 'Running' });
     const finished = [];
     for (let index = 0; index < 45; index++) {

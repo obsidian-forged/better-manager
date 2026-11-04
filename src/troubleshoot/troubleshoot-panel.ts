@@ -154,7 +154,7 @@ export class TroubleshootPanel {
         progress.setAttribute("aria-valuemin", "0");
         progress.setAttribute("aria-valuemax", "100");
         progress.setAttribute("aria-valuenow", `${percent}`);
-        progress.createDiv("manager-troubleshoot__progress-bar").style.width = `${percent}%`;
+        progress.createDiv("manager-troubleshoot__progress-bar").setCssStyles({ width: `${percent}%` });
 
         const description = this.lastDescription || this.getCurrentTestDescription();
         if (description) {

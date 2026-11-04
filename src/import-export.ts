@@ -1,3 +1,4 @@
+import { toText } from './shared/text';
 import { normalizePath, PluginManifest } from "obsidian";
 import type Manager from "main";
 import {
@@ -252,11 +253,6 @@ export const DEFAULT_TRANSFER_IMPORT_OPTIONS: ManagerTransferImportOptions = {
 	applyActiveTheme: false,
 };
 
-interface ListedFiles {
-	files: string[];
-	folders: string[];
-}
-
 interface ThemeManifestJson {
 	name?: string;
 	version?: string;
@@ -390,7 +386,7 @@ const collectPackageFiles = async (manager: Manager, baseDir: string): Promise<M
 
 	const files: ManagerTransferPluginFile[] = [];
 	const walk = async (folder: string): Promise<void> => {
-		const listed = await adapter.list(folder) as ListedFiles;
+		const listed = await adapter.list(folder);
 		const listedFiles = [...(listed.files || [])].sort((a, b) => a.localeCompare(b));
 		for (const filePath of listedFiles) {
 			const relativePath = normalizePackageRelativePath(getRelativePackageFilePath(baseDir, filePath));
@@ -483,7 +479,7 @@ const writePluginFileBundle = async (manager: Manager, plugin: ManagerTransferPl
 	await ensureFolderExists(manager, pluginDir);
 
 	for (const file of files) {
-		if (file.encoding !== "base64") throw new Error(`Unsupported file encoding: ${file.encoding}`);
+		if (file.encoding !== "base64") throw new Error(`Unsupported file encoding: ${toText(file.encoding, "unknown")}`);
 		const relativePath = normalizePackageRelativePath(file.path);
 		if (!relativePath) throw new Error(`Unsafe plugin file path: ${file.path}`);
 		const targetPath = normalizePath(`${pluginDir}/${relativePath}`);
@@ -499,7 +495,7 @@ const writePluginConfigFile = async (
 ): Promise<void> => {
 	const pluginId = getSafePluginId(config.id);
 	if (!pluginId) throw new Error("Unsafe plugin id.");
-	if (config.encoding !== "base64") throw new Error(`Unsupported file encoding: ${config.encoding}`);
+	if (config.encoding !== "base64") throw new Error(`Unsupported file encoding: ${toText(config.encoding, "unknown")}`);
 	if (normalizePackageRelativePath(config.path).toLowerCase() !== "data.json") {
 		throw new Error(`Unsupported config file path: ${config.path}`);
 	}
@@ -540,7 +536,7 @@ const writeThemeFileBundle = async (manager: Manager, theme: ManagerTransferThem
 	await ensureFolderExists(manager, themeDir);
 
 	for (const file of files) {
-		if (file.encoding !== "base64") throw new Error(`Unsupported file encoding: ${file.encoding}`);
+		if (file.encoding !== "base64") throw new Error(`Unsupported file encoding: ${toText(file.encoding, "unknown")}`);
 		const relativePath = normalizePackageRelativePath(file.path);
 		if (!relativePath) throw new Error(`Unsafe theme file path: ${file.path}`);
 		const targetPath = normalizePath(`${themeDir}/${relativePath}`);
@@ -557,7 +553,7 @@ const getInstalledThemeNames = async (manager: Manager): Promise<Set<string>> =>
 	if (!(await adapter.exists(themesDir))) return names;
 
 	try {
-		const listed = await adapter.list(themesDir) as ListedFiles;
+		const listed = await adapter.list(themesDir);
 		for (const folder of listed.folders || []) {
 			const folderName = folder.split("/").pop() || folder;
 			names.add(folderName);
@@ -586,7 +582,7 @@ export const collectInstalledThemes = async (
 
 	if (await adapter.exists(themesDir)) {
 		try {
-			const listed = await adapter.list(themesDir) as ListedFiles;
+			const listed = await adapter.list(themesDir);
 			for (const folder of listed.folders || []) {
 				const folderName = folder.split("/").pop() || folder;
 				const manifest = await readJsonIfExists<ThemeManifestJson>(manager, normalizePath(`${folder}/manifest.json`));

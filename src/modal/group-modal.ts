@@ -1,3 +1,4 @@
+import { createActionHandler } from '../ui/action-handler';
 import { App, ExtraButtonComponent, Modal, Notice, setIcon, Setting } from 'obsidian';
 import { ManagerSettings } from '../settings/data';
 import Manager from 'main';
@@ -7,6 +8,10 @@ import Commands from 'src/command';
 import { getExtraButtonElement } from 'src/obsidian-internals';
 
 export class GroupModal extends Modal {
+    private readonly action = createActionHandler(error => {
+        if (this.manager.settings.DEBUG) console.error('[BPM] Modal action failed', error);
+        new Notice(`${this.manager.translator.t('安装_错误_通用')} ${error instanceof Error ? error.message : ''}`);
+    });
     settings: ManagerSettings;
     manager: Manager;
     managerModal: ManagerModal;
@@ -127,7 +132,7 @@ export class GroupModal extends Modal {
                     this.prepareIconButton(cb, t('通用_编辑项目_标签', { name: group.name || group.id }), 'manager-tag-editor__edit-button');
                     cb.onClick(() => {
                         this.selected = group.id;
-                        void this.reloadShowData();
+                        this.action(async () => { await this.reloadShowData(); })();
                     });
                 })
                 itemEl.addToggle(toggle => {
@@ -137,7 +142,7 @@ export class GroupModal extends Modal {
                         this.managerPlugin.group = this.managerPlugin.group === group.id ? '' : group.id;
                         await this.manager.savePluginAndExport(this.managerPlugin.id);
                         this.managerModal.refreshPluginCard(this.managerPlugin.id, { allowReload: true });
-                        void this.reloadShowData();
+                        this.action(async () => { await this.reloadShowData(); })();
                     });
                     toggle.toggleEl.addClass('manager-tag-editor__toggle');
                     toggle.toggleEl.setAttribute('aria-label', t(selected ? '通用_移除项目_标签' : '通用_选择项目_标签', { name: group.name || group.id }));
@@ -148,8 +153,8 @@ export class GroupModal extends Modal {
                     .setValue(group.color)
                     .onChange((value) => {
                         group.color = value;
-                        void this.manager.saveSettings();
-                        tag.setAttribute('style', this.manager.generateTagStyle(value, this.settings.GROUP_STYLE));
+                        this.action(async () => { await this.manager.saveSettings(); })();
+                        this.manager.applyTagStyle(tag, value, this.settings.GROUP_STYLE);
                     })
                 )
                 itemEl.addText(text => {
@@ -158,7 +163,7 @@ export class GroupModal extends Modal {
                     .onChange((value) => {
                         group.name = value;
                         tag.textContent = value || group.id;
-                        void this.manager.saveSettings();
+                        this.action(async () => { await this.manager.saveSettings(); })();
                     });
                     text.inputEl.addClass('manager-editor__item-input');
                     text.inputEl.addClass('manager-tag-editor__name-input');
@@ -171,8 +176,8 @@ export class GroupModal extends Modal {
                         const hasTestGroup = this.settings.Plugins.some(plugin => plugin.group === group.id);
                         if (!hasTestGroup) {
                             this.manager.settings.GROUPS = this.manager.settings.GROUPS.filter(t => t.id !== group.id);
-                            void this.manager.saveSettings();
-                            void this.reloadShowData();
+                            this.action(async () => { await this.manager.saveSettings(); })();
+                            this.action(async () => { await this.reloadShowData(); })();
                             Commands(this.app, this.manager);
                             new Notice(this.manager.translator.t('设置_分组设置_通知_三'));
                         } else {
@@ -185,7 +190,7 @@ export class GroupModal extends Modal {
                     this.prepareIconButton(cb, t('通用_完成编辑_文本'), 'manager-tag-editor__save-button');
                     cb.onClick(() => {
                         this.selected = '';
-                        void this.reloadShowData();
+                        this.action(async () => { await this.reloadShowData(); })();
                         this.managerModal.refreshVisiblePluginCards();
                     });
                 })
@@ -222,7 +227,7 @@ export class GroupModal extends Modal {
             const idField = createField(t('通用_ID_文本'));
             const idInput = idField.createEl('input');
             idInput.type = 'text';
-            idInput.placeholder = 'group-id';
+            idInput.placeholder = 'Group-id';
             idInput.spellcheck = false;
             idInput.addClass('manager-editor__item-input');
             idInput.addClass('manager-tag-editor__create-input');
@@ -240,7 +245,7 @@ export class GroupModal extends Modal {
                 const nextId = idInput.value.trim();
                 const nextName = nameInput.value.trim();
                 previewChip.textContent = nextName || nextId || t('通用_名称_文本');
-                previewChip.setAttribute('style', this.manager.generateTagStyle(color, this.settings.GROUP_STYLE));
+                this.manager.applyTagStyle(previewChip, color, this.settings.GROUP_STYLE);
                 previewId.setText(nextId || 'ID');
             };
             const submit = () => {
@@ -249,9 +254,9 @@ export class GroupModal extends Modal {
                 const containsId = this.manager.settings.GROUPS.some(tag => tag.id === nextId);
                 if (!containsId && nextId !== '') {
                     this.manager.settings.GROUPS.push({ id: nextId, name: nextName, color });
-                    void this.manager.saveSettings();
+                    this.action(async () => { await this.manager.saveSettings(); })();
                     this.add = false;
-                    void this.reloadShowData();
+                    this.action(async () => { await this.reloadShowData(); })();
                     Commands(this.app, this.manager);
                     new Notice(this.manager.translator.t('设置_分组设置_通知_一'));
                 } else {
@@ -280,7 +285,7 @@ export class GroupModal extends Modal {
             cancelButton.createSpan({ text: t('通用_取消_文本') });
             cancelButton.addEventListener('click', () => {
                 this.add = false;
-                void this.reloadShowData();
+                this.action(async () => { await this.reloadShowData(); })();
             });
             const submitButton = actions.createEl('button', { cls: 'manager-tag-editor__create-action manager-tag-editor__create-action--primary' });
             submitButton.type = 'button';
@@ -299,7 +304,7 @@ export class GroupModal extends Modal {
             this.prepareIconButton(addButton, t('设置_分组设置_新增分组'), 'manager-tag-editor__save-button');
             addButton.onClick(() => {
                 this.add = true;
-                void this.reloadShowData();
+                this.action(async () => { await this.reloadShowData(); })();
             });
         }
     }
@@ -314,7 +319,7 @@ export class GroupModal extends Modal {
     }
 
     onOpen() {
-        void (async () => {
+        this.action(async () => {
             await this.showHead();
             await this.showData();
         })();

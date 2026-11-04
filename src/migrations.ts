@@ -74,7 +74,7 @@ const parseFrontmatter = (content: string): ParsedFrontmatter => {
 	const raw = content.slice(3, end).trim();
 	let frontmatter: Record<string, unknown> | null = null;
 	try {
-		const parsed = parseYaml(raw);
+		const parsed: unknown = parseYaml(raw);
 		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
 			frontmatter = parsed as Record<string, unknown>;
 		}
@@ -239,9 +239,6 @@ export const runMigrations = async (manager: Manager, options: { save?: boolean 
 	let anyChange = false;
 
 	for (const migration of pendingMigrations) {
-		if (manager.settings.DEBUG) {
-			console.log("[BPM] Running migration", migration.version);
-		}
 
 		const previousMigrationVersion = manager.settings.MIGRATION_VERSION || "";
 		const settingsChanged = await migration.run(manager, { fromVersion: lastMigrationVersion });

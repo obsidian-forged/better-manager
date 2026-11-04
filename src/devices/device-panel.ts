@@ -48,7 +48,7 @@ export class DevicePanel {
         new Setting(settings).setName(this.t('设备_当前类型'))
             .setDesc(`${this.manager.devices.label(this.manager.devices.type)} · ${this.t('设备_识别类型', { type: this.manager.devices.label(detected) })}`)
             .addDropdown(dropdown => {
-                DEVICE_TYPES.forEach(type => dropdown.addOption(type, this.manager.devices.label(type)));
+                DEVICE_TYPES.forEach(type => { dropdown.addOption(type, this.manager.devices.label(type)); });
                 dropdown.setValue(this.manager.devices.type).onChange(value => {
                     if (isDeviceType(value)) void this.action(async () => {
                         await this.manager.devices.assign(this.manager.devices.id, value);
@@ -56,13 +56,13 @@ export class DevicePanel {
                     });
                 });
             })
-            .addExtraButton(button => button.setIcon('scan-search').setTooltip(this.t('设备_重新检测'))
+            .addExtraButton(button => { button.setIcon('scan-search').setTooltip(this.t('设备_重新检测'))
                 .onClick(() => {
                     void this.action(async () => {
                         await this.manager.devices.assign(this.manager.devices.id, detected);
                         this.selected = detected;
                     });
-                }));
+                }); });
 
         const tabs = page.createDiv('manager-repo-page__switcher');
         tabs.setAttribute('role', 'tablist');

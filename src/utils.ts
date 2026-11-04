@@ -1,5 +1,4 @@
 import { App, ButtonComponent, Modal, Notice, Platform, setIcon } from "obsidian";
-import { shell } from "electron";
 import Manager from "main";
 
 type ConfirmModalOptions = {
@@ -47,7 +46,7 @@ class ManagerConfirmModal extends Modal {
             .setButtonText(this.options.confirmText || t("通用_确认_文本"))
             .onClick(() => this.finish(true));
         if (this.options.tone === "default") confirm.setCta();
-        else confirm.setWarning();
+        else confirm.buttonEl.addClass('mod-warning');
         confirm.buttonEl.focus();
     }
 
@@ -77,12 +76,13 @@ export const managerOpen = (dir: string, manager: Manager) => {
         return;
     }
 
-    shell.openPath(dir)
+    // Electron 只在桌面操作时加载 / Mobile never evaluates the desktop dependency.
+    void import('electron').then(({ shell }) => shell.openPath(dir))
         .then((error) => {
             new Notice(manager.translator.t(error ? "通用_失败_文本" : "通用_成功_文本"));
         })
         .catch((error) => {
-            console.error("打开目录失败", error);
+            if (manager.settings.DEBUG) console.error("打开目录失败", error);
             new Notice(manager.translator.t("通用_失败_文本"));
         });
 };

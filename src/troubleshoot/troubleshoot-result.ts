@@ -6,6 +6,7 @@ import { App, ButtonComponent, Modal, Notice, Setting, TFile, setIcon, normalize
 import Manager from 'main';
 import { TroubleshootState, INITIAL_TROUBLESHOOT_STATE, cloneState } from './troubleshoot-state';
 import { TroubleshootAlgorithm } from './troubleshoot-algorithm';
+import { errorMessage } from '../network/http-error';
 
 export class TroubleshootResultModal extends Modal {
     private manager: Manager;
@@ -21,15 +22,15 @@ export class TroubleshootResultModal extends Modal {
         this.t = (k: string) => manager.translator.t(k);
     }
 
-    onOpen() {
-        void this.render();
+    onOpen(): void {
+        this.render();
     }
 
     onClose() {
         // 清理状态
     }
 
-    private async render() {
+    private render(): void {
         const { contentEl, titleEl } = this;
         contentEl.empty();
         titleEl.empty();
@@ -47,7 +48,8 @@ export class TroubleshootResultModal extends Modal {
         // 标题
         const titleSetting = new Setting(titleEl)
             .setClass('troubleshoot-title')
-            .setName(`✅ ${this.t('排查_完成_标题')}`);
+            .setName(this.t('排查_完成_标题'));
+        setIcon(titleSetting.nameEl.createSpan('plugin-icon'), 'check-circle');
 
         // 关闭按钮
         const closeBtn = titleSetting.controlEl.createEl('button', { cls: 'clickable-icon' });
@@ -60,7 +62,7 @@ export class TroubleshootResultModal extends Modal {
             if (isSinglePlugin) {
                 // 单插件问题
                 const resultContainer = contentEl.createDiv('troubleshoot-result-container');
-                resultContainer.createEl('h3', { text: `🎯 ${this.t('报告_发现问题插件')}` });
+                resultContainer.createEl('h3', { text: this.t('报告_发现问题插件') });
 
                 const conflictBox = resultContainer.createDiv('troubleshoot-conflict-box');
 
@@ -68,13 +70,13 @@ export class TroubleshootResultModal extends Modal {
                 const plugin1Version = this.getPluginVersion(this.state.result.plugin1);
 
                 const plugin1Div = conflictBox.createDiv('troubleshoot-plugin');
-                plugin1Div.createEl('span', { text: '🔌', cls: 'plugin-icon' });
-                plugin1Div.createEl('span', { text: plugin1Name, cls: 'plugin-name' });
-                plugin1Div.createEl('span', { text: `v${plugin1Version}`, cls: 'plugin-version' });
+                setIcon(plugin1Div.createSpan('plugin-icon'), 'plug');
+                plugin1Div.createSpan({ text: plugin1Name, cls: 'plugin-name' });
+                plugin1Div.createSpan({ text: `v${plugin1Version}`, cls: 'plugin-version' });
 
                 // 单插件问题的建议
                 const suggestionsDiv = contentEl.createDiv('troubleshoot-suggestions');
-                suggestionsDiv.createEl('h4', { text: `📋 ${this.t('排查_建议_标题')}` });
+                suggestionsDiv.createEl('h4', { text: this.t('排查_建议_标题') });
                 const suggestionList = suggestionsDiv.createEl('ul');
                 suggestionList.createEl('li', { text: this.t('报告_单插件建议1') });
                 suggestionList.createEl('li', { text: this.t('报告_单插件建议2') });
@@ -83,7 +85,7 @@ export class TroubleshootResultModal extends Modal {
             } else {
                 // 冲突对
                 const resultContainer = contentEl.createDiv('troubleshoot-result-container');
-                resultContainer.createEl('h3', { text: `🎯 ${this.t('排查_发现冲突_文本')}` });
+                resultContainer.createEl('h3', { text: this.t('排查_发现冲突_文本') });
 
                 const conflictBox = resultContainer.createDiv('troubleshoot-conflict-box');
 
@@ -93,20 +95,20 @@ export class TroubleshootResultModal extends Modal {
                 const plugin2Version = this.getPluginVersion(this.state.result.plugin2);
 
                 const plugin1Div = conflictBox.createDiv('troubleshoot-plugin');
-                plugin1Div.createEl('span', { text: '🔌', cls: 'plugin-icon' });
-                plugin1Div.createEl('span', { text: plugin1Name, cls: 'plugin-name' });
-                plugin1Div.createEl('span', { text: `v${plugin1Version}`, cls: 'plugin-version' });
+                setIcon(plugin1Div.createSpan('plugin-icon'), 'plug');
+                plugin1Div.createSpan({ text: plugin1Name, cls: 'plugin-name' });
+                plugin1Div.createSpan({ text: `v${plugin1Version}`, cls: 'plugin-version' });
 
-                conflictBox.createEl('span', { text: '⚡', cls: 'conflict-arrow' });
+                setIcon(conflictBox.createSpan('conflict-arrow'), 'zap');
 
                 const plugin2Div = conflictBox.createDiv('troubleshoot-plugin');
-                plugin2Div.createEl('span', { text: '🔌', cls: 'plugin-icon' });
-                plugin2Div.createEl('span', { text: plugin2Name, cls: 'plugin-name' });
-                plugin2Div.createEl('span', { text: `v${plugin2Version}`, cls: 'plugin-version' });
+                setIcon(plugin2Div.createSpan('plugin-icon'), 'plug');
+                plugin2Div.createSpan({ text: plugin2Name, cls: 'plugin-name' });
+                plugin2Div.createSpan({ text: `v${plugin2Version}`, cls: 'plugin-version' });
 
                 // 冲突对的建议
                 const suggestionsDiv = contentEl.createDiv('troubleshoot-suggestions');
-                suggestionsDiv.createEl('h4', { text: `📋 ${this.t('排查_建议_标题')}` });
+                suggestionsDiv.createEl('h4', { text: this.t('排查_建议_标题') });
                 const suggestionList = suggestionsDiv.createEl('ul');
                 suggestionList.createEl('li', { text: this.t('排查_建议1_文本') });
                 suggestionList.createEl('li', { text: this.t('排查_建议2_文本') });
@@ -127,15 +129,20 @@ export class TroubleshootResultModal extends Modal {
         const restoreBtn = new ButtonComponent(actionContainer);
         restoreBtn.setButtonText(this.t('排查_恢复原始_按钮'));
         restoreBtn.setCta();
-        restoreBtn.onClick(async () => {
-            await this.restoreAndClose();
+        restoreBtn.onClick(() => {
+            void this.restoreAndClose().catch(error => this.reportFailure(error));
         });
 
         const reportBtn = new ButtonComponent(actionContainer);
-        reportBtn.setButtonText(`📊 ${this.t('排查_生成报告_按钮')}`);
-        reportBtn.onClick(async () => {
-            await this.generateReport();
+        reportBtn.setButtonText(this.t('排查_生成报告_按钮')).setIcon('bar-chart-3');
+        reportBtn.onClick(() => {
+            void this.generateReport().catch(error => this.reportFailure(error));
         });
+    }
+
+    private reportFailure(error: unknown): void {
+        if (this.manager.settings.DEBUG) console.error('[BPM] Troubleshooting action failed', error);
+        new Notice(errorMessage(error));
     }
 
     private getPluginName(id: string): string {
@@ -188,7 +195,7 @@ ${this.t('报告_生成说明')} ${now.toLocaleString()}
 
 ---
 
-## 🎯 ${this.t('报告_发现问题插件')}
+## ${this.t('报告_发现问题插件')}
 
 | ${this.t('报告_插件')} |
 |--------|
@@ -197,7 +204,7 @@ ${this.t('报告_生成说明')} ${now.toLocaleString()}
 
 ---
 
-## 📊 ${this.t('报告_排查摘要')}
+## ${this.t('报告_排查摘要')}
 
 - **${this.t('报告_总步骤')}**: ${this.state.currentStep}
 - **${this.t('报告_结果类型')}**: ${this.t('报告_单插件问题')}
@@ -205,7 +212,7 @@ ${this.t('报告_生成说明')} ${now.toLocaleString()}
 
 ---
 
-## 📋 ${this.t('报告_建议操作')}
+## ${this.t('报告_建议操作')}
 
 1. ${this.t('报告_单插件建议1')}
 2. ${this.t('报告_单插件建议2')}
@@ -214,7 +221,7 @@ ${this.t('报告_生成说明')} ${now.toLocaleString()}
 
 ---
 
-## 📝 ${this.t('报告_备注')}
+## ${this.t('报告_备注')}
 
 ${this.t('报告_备注提示')}
 `;
@@ -228,7 +235,7 @@ ${this.t('报告_生成说明')} ${now.toLocaleString()}
 
 ---
 
-## 🎯 ${this.t('报告_发现冲突')}
+## ${this.t('报告_发现冲突')}
 
 | ${this.t('报告_插件1')} | ${this.t('报告_插件2')} |
 |----------|----------|
@@ -237,7 +244,7 @@ ${this.t('报告_生成说明')} ${now.toLocaleString()}
 
 ---
 
-## 📊 ${this.t('报告_排查摘要')}
+## ${this.t('报告_排查摘要')}
 
 - **${this.t('报告_总步骤')}**: ${this.state.currentStep}
 - **${this.t('报告_结果类型')}**: ${this.t('报告_冲突对')}
@@ -245,7 +252,7 @@ ${this.t('报告_生成说明')} ${now.toLocaleString()}
 
 ---
 
-## 📋 ${this.t('报告_建议操作')}
+## ${this.t('报告_建议操作')}
 
 1. ${this.t('报告_冲突建议1')}
 2. ${this.t('报告_冲突建议2')}
@@ -254,13 +261,13 @@ ${this.t('报告_生成说明')} ${now.toLocaleString()}
 
 ---
 
-## 📝 ${this.t('报告_备注')}
+## ${this.t('报告_备注')}
 
 ${this.t('报告_备注提示')}
 
 ---
 
-## 🔧 ${this.t('报告_技术详情')}
+## ${this.t('报告_技术详情')}
 
 ### ${this.t('报告_插件1')}: ${plugin1Name}
 - ID: \`${this.state.result.plugin1}\`
@@ -285,7 +292,7 @@ ${this.state.originalEnabledPlugins.map(id => `- ${this.getPluginName(id)} (\`${
                 await this.app.workspace.getLeaf().openFile(file);
             }
         } catch (e) {
-            console.error('[BPM] Failed to create report:', e);
+            if (this.manager.settings.DEBUG) console.error('[BPM] Failed to create report:', e);
             new Notice(this.t('排查_报告失败_通知'));
         }
     }

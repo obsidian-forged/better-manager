@@ -1,5 +1,6 @@
 import { FloatingScrollbars } from '../ui/floating-scrollbars';
-import { App, Modal, Platform, Setting, setIcon, getIconIds, FuzzySuggestModal, ButtonComponent, ExtraButtonComponent, TextComponent, ToggleComponent } from "obsidian";
+import { createActionHandler } from '../ui/action-handler';
+import { App, Modal, Notice, Platform, Setting, setIcon, getIconIds, FuzzySuggestModal, ButtonComponent, ExtraButtonComponent, TextComponent, ToggleComponent } from "obsidian";
 import Manager from "main";
 import { RibbonItem } from "../data/types";
 import { confirmWithModal } from "../utils";
@@ -24,9 +25,15 @@ class GroupIconPicker extends FuzzySuggestModal<string> {
 type RibbonStatusFilter = 'visible' | 'hidden' | 'disabled';
 
 export class RibbonModal extends Modal {
+    private readonly action = createActionHandler(error => {
+        if (this.manager.settings.DEBUG) console.error('[BPM] Ribbon action failed', error);
+        new Notice(`${this.manager.translator.t('安装_错误_通用')} ${error instanceof Error ? error.message : ''}`);
+    });
     private scrollbars?: FloatingScrollbars;
     manager: Manager;
     private renderRootEl?: HTMLElement;
+    private dragDocument?: Document;
+    private readonly frames = new Set<{ view: Window; id: number; run: () => void; flush: boolean }>();
     private renderToolbarInRoot = true;
     private groupSelects: ScopeSelect[] = [];
 
@@ -61,7 +68,7 @@ export class RibbonModal extends Modal {
     dragOffsetX = 0;
     dragOffsetY = 0;
     activePointerId: number | null = null;
-    private handleDragEndEvent = (e: PointerEvent) => { void this.handleDragEnd(e); };
+    private handleDragEndEvent = (e: PointerEvent) => { this.action(async () => { await this.handleDragEnd(e); })(); };
 
     constructor(app: App, manager: Manager) {
         super(app);
@@ -92,7 +99,7 @@ export class RibbonModal extends Modal {
         if (this.externalFilterBar && this.externalFilterHost?.isConnected) this.mountFilterBar(this.externalFilterHost);
     }
 
-    async onOpen() {
+    onOpen(): void {
         this.manager.beginSettingsEditing(this);
         this.scrollbars?.destroy();
         this.scrollbars = new FloatingScrollbars(this.modalEl);
@@ -108,13 +115,13 @@ export class RibbonModal extends Modal {
         this.titleEl.setText(this.manager.translator.t("Ribbon_标题"));
         // 弹窗同样支持按设备预设查看/编辑 Ribbon。
         this.manager.devices?.ensureProjection("ribbon");
-        await this.syncRibbonItems();
+        this.syncRibbonItems();
         this.display();
     }
 
     // 同步 Ribbon 项：登记尚未见过的新图标并把配置应用到原生状态
     // 面板打开时调用一次，保证列表列全（显隐与顺序由 Obsidian 原生状态承载）
-    async syncRibbonItems() {
+    syncRibbonItems(): void {
         if (!this.manager.isRibbonManagerEnabled()) return;
 
         this.manager.applyRibbonSettings();
@@ -156,7 +163,9 @@ export class RibbonModal extends Modal {
         try {
             if (icon) setIcon(iconEl, icon);
         } catch {
-            // Plugin-provided icons can be unavailable when this panel renders.
+            // 插件卸载后图标可能不可用，立即渲染替代图标；Render the fallback for unavailable plugin icons.
+            setIcon(iconEl, this.getRibbonFallbackIcon(item));
+            return;
         }
         if (!iconEl.querySelector("svg")) {
             iconEl.empty();
@@ -198,10 +207,10 @@ export class RibbonModal extends Modal {
         resetBtn.setIcon("rotate-ccw");
         resetBtn.setButtonText(t("通用_重置_文本"));
         resetBtn.setTooltip(t("Ribbon_重置_提示"));
-        resetBtn.onClick(async () => {
+        resetBtn.onClick(this.action(async () => {
             if (!(await confirmWithModal(this.app, this.manager, t("Ribbon_重置_确认")))) return;
             await this.resetRibbonLayout();
-        });
+        }));
     }
 
     /** 手机端：用两个按钮代替常驻的「边栏编排 / Ribbon 分组」区域，列表获得更多高度。 */
@@ -233,7 +242,24 @@ export class RibbonModal extends Modal {
         this.displayWithoutSearch();
         if (!scroller || top <= 0) return;
         scroller.scrollTop = top;
-        requestAnimationFrame(() => { if (scroller.isConnected) scroller.scrollTop = top; });
+        this.scheduleFrame(scroller, () => { if (scroller.isConnected) scroller.scrollTop = top; });
+    }
+
+    private scheduleFrame(element: HTMLElement, run: () => void, flush = false): void {
+        const view = element.ownerDocument.defaultView;
+        if (!view) { if (flush) run(); return; }
+        const pending = { view, id: 0, run, flush };
+        pending.id = view.requestAnimationFrame(() => { this.frames.delete(pending); run(); });
+        this.frames.add(pending);
+    }
+
+    private clearFrames(): void {
+        const frames = [...this.frames];
+        this.frames.clear();
+        for (const frame of frames) {
+            frame.view.cancelAnimationFrame(frame.id);
+            if (frame.flush) frame.run();
+        }
     }
 
     /** 把条目移动到指定 0 基序号，其余条目顺延并重新编号。 */
@@ -263,11 +289,11 @@ export class RibbonModal extends Modal {
             const actions = modal.contentEl.createDiv("ribbon-layout-window__actions");
             const resetBtn = new ButtonComponent(actions);
             resetBtn.setIcon("rotate-ccw").setButtonText(t("通用_重置_文本"));
-            resetBtn.onClick(async () => {
+            resetBtn.onClick(this.action(async () => {
                 if (!(await confirmWithModal(this.app, this.manager, t("Ribbon_重置_确认")))) return;
                 await this.resetRibbonLayout();
                 modal.close();
-            });
+            }));
         };
         modal.open();
     }
@@ -299,7 +325,7 @@ export class RibbonModal extends Modal {
     private commitRibbonGroups(): void {
         this.manager.syncRibbonGroupItems();
         this.manager.applyRibbonSettings();
-        void this.manager.saveSettings();
+        this.action(async () => { await this.manager.saveSettings(); })();
         this.refreshGroupsWindow();
     }
 
@@ -555,7 +581,7 @@ export class RibbonModal extends Modal {
                 const parsed = Number.parseInt(orderInput.value, 10);
                 const target = Number.isFinite(parsed) ? Math.min(total, Math.max(1, parsed)) : actualOrder + 1;
                 orderInput.value = `${target}`;
-                void this.moveItemToPosition(item, target - 1);
+                this.action(async () => { await this.moveItemToPosition(item, target - 1); })();
             };
             orderInput.addEventListener("focus", () => orderInput.select());
             orderInput.addEventListener("keydown", (event) => {
@@ -575,7 +601,7 @@ export class RibbonModal extends Modal {
 
             const textWrap = itemContent.createDiv({ cls: "ribbon-manager-item-text" });
             const titleLine = textWrap.createDiv({ cls: "ribbon-manager-item-title-line" });
-            titleLine.createEl("div", {
+            titleLine.createDiv({
                 text: item.name || this.manager.translator.t("Ribbon_未命名"),
                 cls: `setting-item-name${pluginDisabled ? " ribbon-manager-item-name--disabled" : ""}`
             });
@@ -617,10 +643,10 @@ export class RibbonModal extends Modal {
                     } else {
                         syncVisibilityRow();
                     }
-                    requestAnimationFrame(() => {
+                    this.scheduleFrame(itemEl, this.action(async () => {
                         this.manager.applyRibbonSettings();
-                        void this.manager.saveSettings();
-                    });
+                        await this.manager.saveSettings();
+                    }), true);
                 });
 
             if (!item.bpmUniqueId.startsWith(RIBBON_GROUP_ITEM_PREFIX)) {
@@ -665,9 +691,8 @@ export class RibbonModal extends Modal {
     }
 
     startDrag(itemEl: HTMLElement, displayIndex: number, draggedItem: RibbonItem, e: PointerEvent) {
-        if (e.target && (e.target as Element).setPointerCapture) {
-            (e.target as Element).setPointerCapture(e.pointerId);
-        }
+        const target = e.targetNode;
+        if (target?.instanceOf(itemEl.ownerDocument.defaultView?.Element ?? Element)) target.setPointerCapture(e.pointerId);
 
         this.draggedItemEl = itemEl;
         this.dragStartIndex = displayIndex;
@@ -682,7 +707,8 @@ export class RibbonModal extends Modal {
         // 创建幽灵元素
         this.ghostEl = itemEl.cloneNode(true) as HTMLElement;
         this.ghostEl.addClass("drag-ghost");
-        activeDocument.body.appendChild(this.ghostEl);
+        this.dragDocument = itemEl.ownerDocument;
+        this.dragDocument.body.appendChild(this.ghostEl);
         this.ghostEl.setCssStyles({
             width: `${rect.width}px`,
             height: `${rect.height}px`,
@@ -691,7 +717,7 @@ export class RibbonModal extends Modal {
         this.updateGhostPosition(e);
 
         // 创建占位符
-        this.placeholderEl = activeDocument.createElement("div");
+        this.placeholderEl = (itemEl.ownerDocument.defaultView ?? window).createDiv();
         this.placeholderEl.className = "drag-gap-placeholder";
         this.placeholderEl.setCssStyles({
             height: `${rect.height}px`,
@@ -701,9 +727,9 @@ export class RibbonModal extends Modal {
         itemEl.parentNode!.insertBefore(this.placeholderEl, itemEl);
         itemEl.addClass("dragging");
 
-        activeDocument.addEventListener("pointermove", this.handleDragMove, { passive: false });
-        activeDocument.addEventListener("pointerup", this.handleDragEndEvent, { once: true });
-        activeDocument.addEventListener("pointercancel", this.handleDragEndEvent, { once: true });
+        this.dragDocument.addEventListener("pointermove", this.handleDragMove, { passive: false });
+        this.dragDocument.addEventListener("pointerup", this.handleDragEndEvent, { once: true });
+        this.dragDocument.addEventListener("pointercancel", this.handleDragEndEvent, { once: true });
     }
 
     private handleDragMove = (e: PointerEvent) => {
@@ -773,7 +799,7 @@ export class RibbonModal extends Modal {
         }
 
         this.draggedItemEl.removeClass("dragging");
-        activeDocument.removeEventListener("pointermove", this.handleDragMove);
+        this.clearDragListeners();
 
         // 读取目标元素的 item-id 并更新实际的 order
         if (targetElement) {
@@ -864,7 +890,24 @@ export class RibbonModal extends Modal {
         this.displayWithoutSearch();
     }
 
-    onClose() {
+    private clearDragListeners(): void {
+        this.dragDocument?.removeEventListener("pointermove", this.handleDragMove);
+        this.dragDocument?.removeEventListener("pointerup", this.handleDragEndEvent);
+        this.dragDocument?.removeEventListener("pointercancel", this.handleDragEndEvent);
+        this.dragDocument = undefined;
+    }
+
+    onClose(): void {
+        this.clearFrames();
+        this.clearDragListeners();
+        this.ghostEl?.remove();
+        this.placeholderEl?.remove();
+        this.draggedItemEl?.removeClass('dragging');
+        this.ghostEl = null;
+        this.placeholderEl = null;
+        this.draggedItemEl = null;
+        this.draggedItem = null;
+        this.activePointerId = null;
         this.scrollbars?.destroy();
         this.scrollbars = undefined;
         this.closeGroupMenus();

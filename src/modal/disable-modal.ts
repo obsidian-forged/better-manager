@@ -1,7 +1,12 @@
-import { App, ExtraButtonComponent, Modal, Setting } from 'obsidian';
+import { createActionHandler } from '../ui/action-handler';
+import { Notice, App, ExtraButtonComponent, Modal, Setting } from 'obsidian';
 import Manager from 'main';
 
 export class DisableModal extends Modal {
+    private readonly action = createActionHandler(error => {
+        if (this.manager.settings.DEBUG) console.error('[BPM] Modal action failed', error);
+        new Notice(`${this.manager.translator.t('安装_错误_通用')} ${error instanceof Error ? error.message : ''}`);
+    });
     manager: Manager;
 
     private deleteCallback: () => void | Promise<void>;
@@ -40,7 +45,7 @@ export class DisableModal extends Modal {
             .setCta()
             .setButtonText(this.manager.translator.t('一键_启禁'))
             .onClick(() => {
-                void this.deleteCallback();
+                this.action(async () => { await this.deleteCallback(); })();
                 this.close();
             })
         );
@@ -53,7 +58,7 @@ export class DisableModal extends Modal {
     }
 
     onOpen() {
-        void (async () => {
+        this.action(async () => {
             await this.showHead();
             await this.showData();
         })();

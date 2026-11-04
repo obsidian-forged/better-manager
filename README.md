@@ -4,13 +4,13 @@
 
 Organize your plugin workflow with delayed startup, batch controls, groups, tags, device presets and a clear management interface.
 
-[1.2.12 release notes](docs/release-notes-1.2.12.md)
+[1.2.13 release notes](docs/release-notes-1.2.13.md)
 
 [简体中文](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_CN.md) · [日本語](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_JA.md) · [한국어](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_KO.md) · [Español](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_ES.md) · [Français](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_FR.md) · [Русский](https://github.com/obsidian-forged/better-manager/blob/main/docs/README_RU.md) · [Releases](https://github.com/obsidian-forged/better-manager/releases) · [Support](https://ifdian.net/a/eondr)
 
 ![Latest Release](https://img.shields.io/github/v/release/obsidian-forged/better-manager?style=flat-square&label=release) ![GitHub Downloads](https://img.shields.io/github/downloads/obsidian-forged/better-manager/total?style=flat-square&label=downloads) ![Last Commit](https://img.shields.io/github/last-commit/obsidian-forged/better-manager?style=flat-square&label=last%20commit) ![Issues](https://img.shields.io/github/issues/obsidian-forged/better-manager?style=flat-square&label=issues) ![Stars](https://img.shields.io/github/stars/obsidian-forged/better-manager?style=flat-square&label=stars) ![License](https://img.shields.io/github/license/obsidian-forged/better-manager?style=flat-square&label=license) ![Obsidian Plugin](https://img.shields.io/badge/Obsidian-plugin-7C3AED?style=flat-square&logo=obsidian&logoColor=white) ![Minimum Obsidian Version](https://img.shields.io/badge/Obsidian-%E2%89%A5%201.5.8-7C3AED?style=flat-square) ![TypeScript](https://img.shields.io/badge/TypeScript-ready-3178C6?style=flat-square&logo=typescript&logoColor=white) ![Platform](https://img.shields.io/badge/platform-desktop%20%7C%20mobile-4B5563?style=flat-square) ![i18n](https://img.shields.io/badge/i18n-7%20languages-0F766E?style=flat-square) ![GitHub Source Tracking](https://img.shields.io/badge/GitHub-source%20tracking-181717?style=flat-square&logo=github&logoColor=white) ![Sponsor on Afdian](https://img.shields.io/badge/Afdian-sponsor-946ce6?style=flat-square)
 
-![Screenshot](docs/img/1.2.0/index.png)
+![Screenshot](docs/img/1.2.12/index.png)
 
 ---
 
@@ -44,7 +44,7 @@ BPM separates plugin management, appearance, devices, installation, transfer and
 
 The main tab for day-to-day plugin management.
 
-![Download function panel](docs/img/1.2.0/PluginView.png)
+![Plugin overview](docs/img/1.2.12/PluginView.png)
 
 | Area | What it does |
 |------|--------------|
@@ -68,13 +68,15 @@ Manage themes, CSS snippets and appearance presets together. Choose a device pre
 
 ### 📱 Device management
 
+![Named device presets](docs/img/1.2.12/devicePresets.png)
+
 Open **Devices** in the manager (on mobile: choose **Devices** from the current-view menu). Enable **Manage by device type**, then check this device's type. Device types are fixed to **Computer**, **Tablet** and **Phone**; each type can hold several named presets and starts with one that inherits your current settings. Enabling this feature is optional.
 
 Each preset stores plugin enabled states, assigned delay groups, appearance, and Ribbon visibility/order. The **Devices** page manages this device's type, preset creation/duplication/renaming/deletion, and which preset this device uses; any preset can reuse another preset's settings. When a type has not been configured yet and exactly one configured preset exists in another type, it is adopted automatically; with several candidates nothing is chosen for you — use **Reuse another preset's settings** on the Devices page. The device list is informational. The manager itself and BPM-ignored plugins are excluded from device-specific plugin switching. Group/tag metadata and delay definitions stay global. Desktop-only plugins are never started by the device manager on mobile.
 
-The three scoped tabs — **Plugins**, **Appearance** and **Ribbon** — carry the same **Configure for device** selector, listing named presets grouped by device type. Editing the preset this device uses applies immediately; editing another preset only saves it, and the device using it applies the synced runtime changes when no BPM view is being edited. Plugin enable/delay, appearance (theme and CSS snippet states), and Ribbon visibility/order are stored per preset; install sources, import/export, troubleshoot, groups, tags and delay definitions stay global.
+The three scoped tabs — **Plugins**, **Appearance** and **Ribbon** — carry the same **Configure for device** selector, listing named presets grouped by device type. Editing the preset this device uses applies to the current session. In **Save permanently** mode, use **Save** in the top bar to persist preset changes; edits to other presets remain local drafts until saved. In **This session only** mode, plugin and appearance changes affect the current session without changing the saved preset or activating Save. Switching back to permanent mode does not save earlier session changes. Plugin enable/delay, appearance (theme and CSS snippet states), and Ribbon visibility/order are stored per preset; install sources, import/export, troubleshoot, groups, tags and delay definitions stay global.
 
-Device records are kept in one small file per device in the plugin's `data/devices/` directory, so every device sees the others after syncing; the preset this device uses stays local. Names default to the desktop hostname or the mobile model and can be edited. The local identity stays in Obsidian's device-local storage. The device type is detected from Obsidian's platform information and can be corrected manually or with **Detect again from platform**. When the platform identifier refreshes (sync system or software update), the old device record is migrated to the new identifier and the locally stored preset choice is kept; if that preset was deleted elsewhere, the device falls back to the default preset of its type and says so. There is no per-device configuration: mobile has no stable long-lived device identifier, so per-device forks cannot be reconciled after syncing. To tell two devices of the same type apart, create multiple named presets and pick one on each device. Reinstalling or clearing local data can create a new device record; just pick a preset again. Open BPM views retain their editing snapshot. Concurrent changes pause automatic writes and require a choice between the local and remote versions. Source chips beside conflicting items preview each version without changing plugin runtime state; confirmed choices are saved after the last BPM editor closes. Filesystem conflicts remain the responsibility of your sync provider.
+Device records are kept in one small file per device in the plugin's `data/devices/` directory, so every device sees the others after syncing; the preset this device uses stays local. Names default to the desktop hostname or the mobile model and can be edited. The local identity stays in Obsidian's device-local storage. The device type is detected from Obsidian's platform information and can be corrected manually or with **Detect again from platform**. When the platform identifier refreshes (sync system or software update), the old device record is migrated to the new identifier and the locally stored preset choice is kept; if that preset was deleted elsewhere, the device falls back to the default preset of its type and says so. There is no per-device configuration: mobile has no stable long-lived device identifier, so per-device forks cannot be reconciled after syncing. To tell two devices of the same type apart, create multiple named presets and pick one on each device. Reinstalling or clearing local data can create a new device record; just pick a preset again. Open BPM views retain their editing snapshot and local draft. Click **Save**, immediately to the left of **More** in the top bar, to check the latest shared configuration for conflicts. Source chips beside conflicting items preview local or remote values without changing plugin runtime state. Choose the versions you want, then click **Save**. Closing the window keeps the draft without publishing it. Filesystem conflicts remain the responsibility of your sync provider.
 
 #### Why a mobile device can appear more than once
 
@@ -92,7 +94,7 @@ Native Obsidian plugins can start before the manager applies a preset. Use the e
 
 The Install Hub handles GitHub-based installation and the sources BPM can track after installation.
 
-![Download function panel](docs/img/1.2.0/installHub.png)
+![GitHub installation sources](docs/img/1.2.12/installHub.png)
 
 | Area | What it does |
 |------|--------------|
@@ -108,7 +110,7 @@ The Install Hub handles GitHub-based installation and the sources BPM can track 
 
 The Transfer Pack tab moves plugin setups between vaults without turning the README into a manual checklist.
 
-![Transfer Pack](docs/img/1.2.0/transferPack.png)
+![Transfer Pack](docs/img/1.2.12/transferPack.png)
 
 | Area | What it does |
 |------|--------------|
@@ -125,7 +127,7 @@ The Transfer Pack tab moves plugin setups between vaults without turning the REA
 
 The Ribbon Order tab keeps Obsidian's left ribbon predictable, especially when delayed plugins register icons after startup.
 
-![Ribbon Sort Function Panel](docs/img/1.2.0/ribbonOrder.png)
+![Ribbon Sort Function Panel](docs/img/1.2.12/ribbonOrder.png)
 
 | Area | What it does |
 |------|--------------|
@@ -139,7 +141,7 @@ The Ribbon Order tab keeps Obsidian's left ribbon predictable, especially when d
 
 The Conflict Diagnosis tab guides plugin conflict testing step by step, keeping the tested state and result in one place.
 
-![Conflict Troubleshooter](docs/img/1.2.0/conflictScan.png)
+![Conflict Troubleshooter](docs/img/1.2.12/conflictScan.png)
 
 | Area | What it does |
 |------|--------------|
@@ -194,6 +196,7 @@ After enabling the plugin, open BPM in either way:
 - **Left-click** primary controls to toggle, edit, install, import, or run an action.
 - **Right-click** a plugin item to open its context menu.
 - **Hover** toolbar buttons to see tooltips; on touch devices, use long press where supported.
+- **Save persistent changes** with the button immediately to the left of **More** in the top bar. Closing BPM preserves the local draft without writing it to the shared configuration. Plugin and appearance adjustments in **Apply changes → This session only** do not create pending changes or require Save; switching to **Save permanently** does not save those earlier session adjustments.
 - **Toolbar labels** show the current page by default; hover reveals the other labels. Change this behavior in **Settings → Style**.
 
 ---
@@ -208,8 +211,10 @@ BPM is a local Obsidian plugin manager, but some features intentionally use exte
 - **Vault file access**: BPM reads plugin/theme metadata, selected plugin configuration files, transfer packages, and legacy export folders for management, migration, backup, import/export, and troubleshooting features. It does not upload vault notes to a remote service.
 - **Device records**: When device management is used, BPM writes one small JSON file per device into the plugin's data directory (`.obsidian/plugins/better-plugins-manager/data/devices/<id>.json`) so devices can list each other after syncing. These files contain only a device id, display name, device type, and last-seen timestamp — no notes, plugin settings, or credentials. They are written with Obsidian's vault adapter, never outside the vault, and removed when the device is removed from the list.
 - **Icon fallback**: Plugin icons first use Obsidian's registered icons. If a named Lucide icon is unavailable locally, BPM downloads its SVG from the official `lucide-icons/lucide` GitHub repository. Before falling back to the default plug icon, BPM asks the Obsidian community directory which Lucide icon it assigns to the plugin and resolves that name the same way. SVGs and colour rules are stored in `data/icons.css` for reuse offline. Requests contain only the icon name, without vault content or credentials. Rebuildable repository and catalogue caches live in `cache/`. The native `data.json` settings file stays in place. Existing device and cache files are migrated automatically.
-- **Configuration protection**: Each startup preserves content-addressed copies of BPM settings, device records, icon rules and the related Obsidian configuration files in the plugin's `.bpm/<local-id>/` folder. Unchanged copies are reused. Edits remain local drafts until BPM editors close; unchanged shared files are not rewritten and configuration revisions advance only for manual changes. Concurrent versions are retained for explicit selection. Known older revisions are restored at most once per version pair; repeated replays pause automatic restoration. Local recovery anchors stay in Obsidian's device-local storage. Snapshots can contain credentials and sensitive settings. BPM does not upload them; exclude `.bpm/` in external sync tools because a hidden plugin subfolder is not automatically excluded by every provider. Obsidian's shared configuration files are backed up for manual recovery, not automatically rolled back. Legacy editing caches are migrated when valid.
-- **Base64 encoding/decoding**: BPM uses runtime `btoa`/`atob` only to pack and restore binary/text files inside local Transfer Pack JSON data. It is not used to hide API keys, URLs, remote code, or executable payloads.
+- **Configuration protection**: Each startup preserves content-addressed copies of BPM settings, device records, icon rules and the related Obsidian configuration files in the plugin's `.bpm/<local-id>/` folder. Unchanged copies are reused. Persistent configuration edits remain recoverable local drafts. Session-only plugin and appearance adjustments stay in the current session without entering the saved preset or activating Save. Only the top-bar **Save** action checks the latest shared configuration for conflicts and publishes the selected changes; unchanged shared files are not rewritten, and only changed content advances the configuration revision. Concurrent versions are retained for explicit selection. Closing a window does not publish its draft. External configuration changes do not interrupt the editor or trigger automatic restoration. Local recovery anchors stay in Obsidian's device-local storage. Snapshots can contain credentials and sensitive settings. BPM does not upload them; exclude `.bpm/` in external sync tools because a hidden plugin subfolder is not automatically excluded by every provider. If BPM detects external changes to `.bpm/`, it reminds you to add this recovery directory to your sync exclusions; BPM's own writes do not trigger the reminder. Obsidian's shared configuration files are backed up for manual recovery, not automatically rolled back. Legacy editing caches are migrated when valid.
+- **Base64 encoding/decoding**: BPM uses runtime `btoa`/`atob` to pack and restore local Transfer Pack files and decode repository documentation returned by GitHub's content API. Decoded content is treated as data, not executable code.
+
+![Recovery directory sync exclusions](docs/img/1.2.12/syncProtection.png)
 
 ---
 

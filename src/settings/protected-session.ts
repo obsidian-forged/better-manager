@@ -1,18 +1,19 @@
 import type Manager from '../main';
-import { ConfigFiles, IncompleteConfigBundle, isManagedConfigFile } from './config-files';
-import { ConfigConflictPaused, ConfigEditorReopened, ConfigProtection } from './config-protection';
+import { Notice } from 'obsidian';
+import { ConfigDiskChanged, ConfigFiles, IncompleteConfigBundle, isManagedConfigFile } from './config-files';
+import { ConfigEditorReopened, ConfigProtection, ConfigPublication } from './config-protection';
 import { ConfigRecord } from './config-revision';
 import { settingsFingerprint } from './session-store';
 import { ConfigConflictChoices, ConflictItem } from './conflict-choices';
 import { ConflictSide } from './conflict-model';
+import { PrivateCacheWatch } from './private-cache-watch';
+import { FileChangeAdapter, subscribeFileChanges } from '../storage/file-change-listener';
+import { protectionText } from './protection-text';
+import { LocalStateStore } from '../storage/local-state';
+import { applySettingsEdit, copySettingsRecord as configRecord } from './save-request';
+export { copySettingsRecord as configRecord } from './save-request';
 
 const record = (value: unknown): value is ConfigRecord => value !== null && typeof value === 'object' && !Array.isArray(value);
-export function configRecord(value: object): ConfigRecord {
-    const copy: unknown = JSON.parse(JSON.stringify(value));
-    if (!record(copy)) throw new Error('Invalid configuration object');
-    return copy;
-}
-type LocalStorageApp = { loadLocalStorage(key: string): unknown; saveLocalStorage(key: string, value: unknown): void; };
 
 /** Adapts the revision protocol to existing Manager saves and plugin-local file storage. */
 export class ProtectedConfigSession {
@@ -22,13 +23,21 @@ export class ProtectedConfigSession {
     private observed = '';
     private loaded = false;
     private closed = false;
-    private retry?: number;
     private pendingBundle = false;
     private initializing = true;
     private userOperations = 0;
-    private resolvedBaseline?: string;
+    private editEpoch = 0;
+    private resolvedBaseline?: ConfigRecord;
     private selections?: ConfigConflictChoices;
+    private readonly privateCache: PrivateCacheWatch;
+    private stopPrivateWatch?: () => void;
+    private privateWarningShown = false;
+    private privateErrorShown = false;
+    get privateCacheModified(): boolean { return this.privateCache.modified; }
     get usingCache(): boolean { return true; }
+    get mutationEpoch(): number { return this.editEpoch; }
+    get hasPendingUserAction(): boolean { return this.userOperations > 0; }
+    get hasPendingChanges(): boolean { return this.protection.hasPendingChanges; }
     get conflictChoices(): ConfigConflictChoices | undefined {
         const conflict = this.protection.conflict;
         if (!conflict) { this.selections = undefined; return; }
@@ -44,10 +53,13 @@ export class ProtectedConfigSession {
             const digest = await window.crypto.subtle.digest('SHA-256', bytes);
             return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
         };
-        const storage = manager.app as unknown as LocalStorageApp;
+        const storage = new LocalStateStore(manager);
         const key = `bpm-config-anchor-${owner}`;
+        const adapter = manager.app.vault.adapter;
+        this.privateCache = new PrivateCacheWatch(`${manager.app.vault.configDir}/plugins/${manager.manifest.id}/.bpm`, adapter, hash,
+            () => this.privateCacheChanged(), error => this.privateCacheFailed(error));
         this.files = new ConfigFiles(manager.app.vault.adapter, manager.app.vault.configDir, manager.manifest.id, owner, hash,
-            { read: () => storage.loadLocalStorage(key), write: value => storage.saveLocalStorage(key, value) });
+            { read: () => storage.loadLocalStorage(key), write: value => storage.saveLocalStorage(key, value) }, this.privateCache);
         this.protection = new ConfigProtection({
             readShared: () => this.files.readShared(this.initializing), readHead: () => this.files.readHead(),
             writeHead: value => this.files.writeHead(value), readDraft: () => this.files.readDraft(),
@@ -86,12 +98,31 @@ export class ProtectedConfigSession {
         this.initializing = false;
         this.observed = this.fingerprint(this.protection.current.value);
         this.loaded = true;
+        this.stopPrivateWatch = subscribeFileChanges(this.manager.app.vault.adapter as FileChangeAdapter,
+            path => this.privateCache.observe(path), error => this.privateCacheFailed(error));
+        if (this.privateCacheModified) this.privateCacheChanged();
         this.pendingBundle = this.files.hasPendingBundle;
-        if (this.pendingBundle) this.scheduleBundleRetry();
         return value;
     }
+    private privateCacheChanged(): void {
+        if (this.closed) return;
+        this.changed();
+        if (this.privateWarningShown) return;
+        this.privateWarningShown = true;
+        const path = `${this.files.root}/.bpm/`;
+        new Notice(`${protectionText(this.manager, 'privateCacheChanged')}\n${path}`, 12_000);
+    }
+    private privateCacheFailed(error: unknown): void {
+        if (this.manager.settings?.DEBUG) console.error('[BPM] Recovery folder observation failed', error);
+        if (this.closed || this.privateErrorShown) return;
+        this.privateErrorShown = true;
+        new Notice(protectionText(this.manager, 'privateCacheError'), 10_000);
+    }
     begin(): void { this.protection.begin(this.current()); }
+    end(): void { this.protection.end(); }
+    noteUserMutation(): void { this.editEpoch++; }
     beginUserAction(): () => void {
+        this.noteUserMutation();
         this.userOperations++;
         let ended = false;
         return () => { if (!ended) { ended = true; this.userOperations--; } };
@@ -101,51 +132,38 @@ export class ProtectedConfigSession {
     async save(value: object, automatic = false): Promise<void> {
         const copy = configRecord(value);
         await this.queue(async () => {
-            if (!automatic && this.resolvedBaseline && settingsFingerprint(copy) !== this.resolvedBaseline) {
-                this.resolvedBaseline = undefined;
-                await this.protection.cancelChoice(copy);
+            const selected = this.protection.confirmedSelection;
+            if (!automatic && this.resolvedBaseline && selected
+                && settingsFingerprint(copy) !== settingsFingerprint(this.resolvedBaseline)) {
+                this.protection.choose(applySettingsEdit(this.resolvedBaseline, copy, selected.value), selected.files);
+                this.resolvedBaseline = configRecord(copy);
             }
             await this.protection.stage(copy, automatic);
+            this.changed();
         });
     }
-    async external(_value: object, local: object): Promise<{ changed: boolean; apply?: ConfigRecord }> {
+    async publish(value: object, current: () => boolean): Promise<ConfigPublication | { status: 'incomplete' }> {
+        const copy = configRecord(value);
         return this.queue(async () => {
-            try {
-                const disk = await this.files.readShared();
-                this.pendingBundle = false;
-                const changed = this.fingerprint(disk.value) !== this.observed;
-                this.observed = this.fingerprint(disk.value);
-                const value = await this.protection.observe(disk, configRecord(local));
-                return { changed, apply: !this.protection.hasOpenEditor && !this.protection.paused
-                    && this.fingerprint(value) !== this.fingerprint(local) ? value : undefined };
-            } catch (error) {
-                if (!(error instanceof IncompleteConfigBundle)) throw error;
-                this.pendingBundle = true;
-                this.scheduleBundleRetry();
-                return { changed: true };
-            }
-        });
-    }
-    private scheduleBundleRetry(): void {
-        if (this.closed || this.retry !== undefined) return;
-        this.retry = window.setTimeout(() => {
-            this.retry = undefined;
-            if (!this.closed && this.pendingBundle) this.manager.onExternalSettingsChange();
-        }, 1500);
-    }
-    async finish(value: object, stillClosed: () => boolean): Promise<ConfigRecord | undefined> {
-        return this.queue(async () => {
-            if (this.pendingBundle) { this.scheduleBundleRetry(); return undefined; }
             const fileDigests = { ...this.protection.current.files,
                 ...await this.files.fileDigests(this.protection.pendingFiles) };
             try {
-                const merged = await this.protection.finish(configRecord(value), fileDigests, stillClosed);
+                let result: ConfigPublication;
+                try { result = await this.protection.publish(copy, fileDigests, current); }
+                catch (error) {
+                    // A foreign writer may win the final marker comparison. Refresh that exact
+                    // state once within this explicit action so the user can review the conflict.
+                    if (!(error instanceof ConfigDiskChanged)) throw error;
+                    result = await this.protection.publish(copy, fileDigests, current);
+                }
+                this.pendingBundle = false;
+                if (result.status === 'saved' || result.status === 'noop' || result.status === 'saved-pending') this.resolvedBaseline = undefined;
                 this.observed = this.fingerprint(this.protection.current.value);
-                return merged;
+                this.changed();
+                return result;
             } catch (error) {
-                if (error instanceof ConfigConflictPaused) { this.changed(); return undefined; }
-                if (error instanceof ConfigEditorReopened) return undefined;
-                if (error instanceof IncompleteConfigBundle) { this.pendingBundle = true; this.scheduleBundleRetry(); return undefined; }
+                if (error instanceof ConfigEditorReopened) return { status: 'cancelled' };
+                if (error instanceof IncompleteConfigBundle) { this.pendingBundle = true; this.changed(); return { status: 'incomplete' }; }
                 throw error;
             }
         });
@@ -153,12 +171,14 @@ export class ProtectedConfigSession {
     async stageFile(path: string, text: string | null): Promise<boolean> {
         if (!this.loaded || !isManagedConfigFile(path)) return false;
         const userEdited = this.userOperations > 0;
+        if (userEdited) this.noteUserMutation();
         await this.queue(async () => {
             const existing = this.protection.stagedFile(path);
             const baseline = existing ? existing.value : (await this.files.filesFor(this.protection.current))[path] ?? null;
             if (baseline === text) return;
             this.protection.stageFile(path, text, userEdited);
             await this.protection.persistFileDraft();
+            this.changed();
         });
         return true;
     }
@@ -170,8 +190,9 @@ export class ProtectedConfigSession {
         return Object.prototype.hasOwnProperty.call(files, path) ? { value: files[path] ?? undefined } : undefined;
     }
     async choose(value: ConfigRecord, files: Record<string, string | null>): Promise<void> {
+        this.noteUserMutation();
         await this.queue(async () => {
-            this.resolvedBaseline = settingsFingerprint(this.current());
+            this.resolvedBaseline = this.current();
             this.protection.choose(value, files);
             await this.protection.stage(value);
         });
@@ -185,6 +206,7 @@ export class ProtectedConfigSession {
         return selections;
     }
     private async editConflictSelection(edit: (selections: ConfigConflictChoices) => void): Promise<void> {
+        this.noteUserMutation();
         await this.queue(async () => {
             if (!this.protection.paused && this.protection.conflict) {
                 this.resolvedBaseline = undefined;
@@ -202,15 +224,20 @@ export class ProtectedConfigSession {
     }
     async selectConflictSection(id: string, side: ConflictSide): Promise<void> { await this.editConflictSelection(selections => selections.selectSection(id, side)); }
     async confirmConflictChoices(): Promise<void> {
+        this.noteUserMutation();
         const selections = await this.prepareConflictChoices();
         if (!selections) throw new Error('The configuration conflict is no longer available');
         await this.queue(async () => {
             if (this.protection.conflict?.id !== selections.id) throw new Error('The incoming configuration changed; review the new version');
             const result = selections.result();
-            this.resolvedBaseline = settingsFingerprint(this.current());
+            this.resolvedBaseline = this.current();
             this.protection.choose(result.value, result.files);
             await this.protection.stage(result.value);
         });
     }
-    destroy(): void { this.closed = true; if (this.retry !== undefined) window.clearTimeout(this.retry); }
+    destroy(): void {
+        this.closed = true;
+        this.stopPrivateWatch?.(); this.stopPrivateWatch = undefined;
+        this.privateCache.destroy();
+    }
 }

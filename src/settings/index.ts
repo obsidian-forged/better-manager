@@ -1,5 +1,7 @@
 import { FloatingScrollbars } from '../ui/floating-scrollbars';
+import { SettingsSaveButton } from '../ui/settings-save-button';
 import { App, ButtonComponent, PluginSettingTab, setIcon } from 'obsidian';
+import type { SettingDefinitionItem } from 'obsidian';
 import { SettingsSearch, SettingsSearchPage } from './search-view';
 import { ConfigConflictView } from './conflict-view';
 import Manager from "../main";
@@ -20,15 +22,52 @@ class ManagerSettingTab extends PluginSettingTab {
     private scrollbars?: FloatingScrollbars;
     private search?: SettingsSearch;
     private conflictView?: ConfigConflictView;
+    private settingsSaveButton?: SettingsSaveButton;
     private closeObserver?: MutationObserver;
+    private nativeContainer?: HTMLElement;
+    private readonly restoreFrames = new Map<number, Window>();
     public isVisible = false;
 
+    private get renderRoot(): HTMLElement { return this.nativeContainer ?? this.containerEl; }
+
+    /** 1.13+ 使用真实设置分页及搜索索引，旧版本仍调用 display；Keep the existing editor in native settings pages. */
+    getSettingDefinitions(): SettingDefinitionItem[] {
+        const pages = this.searchPages();
+        const indexed = SettingsSearch.index(pages, this.containerEl.ownerDocument, this.manager.translator.t('功能开关_个性化'));
+        return pages.map((page, index) => ({
+            type: 'page',
+            name: page.label,
+            items: [{
+                name: page.label,
+                desc: indexed.filter(item => item.page === index).map(item => `${item.name} ${item.description}`).join(' '),
+                aliases: indexed.filter(item => item.page === index).flatMap(item => [item.name, item.description]).filter(Boolean),
+                render: setting => {
+                    this.hide();
+                    const root = setting.settingEl;
+                    root.empty();
+                    root.removeClass('setting-item');
+                    this.nativeContainer = root;
+                    this.activeTabIndex = index;
+                    this.displayEditor();
+                    return () => {
+                        if (this.nativeContainer !== root) return;
+                        this.hide();
+                        this.nativeContainer = undefined;
+                    };
+                },
+            }],
+        }));
+    }
+
     hide(): void {
+        this.clearRestoreFrames();
         this.isVisible = false;
         this.scrollbars?.destroy(); this.scrollbars = undefined;
         this.search?.destroy(); this.search = undefined;
+        this.conflictView?.destroy(); this.conflictView = undefined;
+        this.settingsSaveButton?.destroy(); this.settingsSaveButton = undefined;
         // Switching native settings tabs hides this tab, but does not close its editor session.
-        const modal = this.containerEl.closest('.modal-container');
+        const modal = this.renderRoot.closest('.modal-container');
         this.closeObserver?.disconnect();
         if (!modal?.isConnected) this.manager.endSettingsEditing(this);
         else {
@@ -46,10 +85,16 @@ class ManagerSettingTab extends PluginSettingTab {
         super(app, manager);
         this.manager = manager;
         this.app = app;
-        manager.register(() => { this.closeObserver?.disconnect(); this.conflictView?.destroy(); });
+        manager.register(() => { this.clearRestoreFrames(); this.closeObserver?.disconnect(); this.conflictView?.destroy(); this.settingsSaveButton?.destroy(); });
     }
 
     display(): void {
+        if (this.nativeContainer) this.hide();
+        this.nativeContainer = undefined;
+        this.displayEditor();
+    }
+
+    private displayEditor(): void {
         this.closeObserver?.disconnect(); this.closeObserver = undefined;
         this.isVisible = true;
         this.manager.beginSettingsEditing(this);
@@ -57,17 +102,19 @@ class ManagerSettingTab extends PluginSettingTab {
     }
 
     refreshConfigConflict(): void {
-        this.containerEl.toggleClass('has-config-conflict', Boolean(this.manager.configProtection?.protection.paused));
+        this.renderRoot.toggleClass('has-config-conflict', Boolean(this.manager.configProtection?.protection.paused));
         void this.conflictView?.refresh().catch(error => {
             if (this.manager.settings.DEBUG) console.error('[BPM] Settings conflict view failed', error);
         });
     }
 
+    refreshSettingsSaveState(): void { this.settingsSaveButton?.refresh(); }
+
     /** 记住当前分页，重绘后回到同一页并恢复滚动位置，避免改一次配置就跳回顶部。 */
     private activeTabIndex = 0;
 
     private scrollContainer(): HTMLElement | null {
-        let el: HTMLElement | null = this.containerEl;
+        let el: HTMLElement | null = this.renderRoot;
         while (el) {
             const overflowY = getComputedStyle(el).overflowY;
             if (overflowY === 'auto' || overflowY === 'scroll') return el;
@@ -76,8 +123,24 @@ class ManagerSettingTab extends PluginSettingTab {
         return null;
     }
 
+    private restoreScroll(element: HTMLElement, top: number): void {
+        const view = element.ownerDocument.defaultView;
+        if (!view) return;
+        const frame = view.requestAnimationFrame(() => {
+            this.restoreFrames.delete(frame);
+            if (element.isConnected) element.scrollTop = top;
+        });
+        this.restoreFrames.set(frame, view);
+    }
+
+    private clearRestoreFrames(): void {
+        this.restoreFrames.forEach((view, frame) => view.cancelAnimationFrame(frame));
+        this.restoreFrames.clear();
+    }
+
     renderSettings(): void {
-        const { containerEl } = this;
+        this.clearRestoreFrames();
+        const containerEl = this.renderRoot;
         this.search?.destroy();
         this.search = undefined;
         const scroller = this.scrollContainer();
@@ -87,21 +150,23 @@ class ManagerSettingTab extends PluginSettingTab {
         const restore = () => {
             if (scroller && scrollTop > 0) {
                 scroller.scrollTop = scrollTop;
-                requestAnimationFrame(() => { if (scroller.isConnected) scroller.scrollTop = scrollTop; });
+                this.restoreScroll(scroller, scrollTop);
             }
             if (contentTop > 0) {
                 this.contentEl.scrollTop = contentTop;
                 const content = this.contentEl;
-                requestAnimationFrame(() => { if (content.isConnected) content.scrollTop = contentTop; });
+                this.restoreScroll(content, contentTop);
             }
         };
         this.scrollbars?.destroy();
+        this.settingsSaveButton?.destroy();
+        this.settingsSaveButton = undefined;
         containerEl.empty();
         containerEl.addClass('manager-setting__container');
         this.conflictView?.destroy();
         this.conflictView = new ConfigConflictView(this.manager, containerEl.createDiv());
         this.refreshConfigConflict();
-        const topbar = this.containerEl.createEl('div');
+        const topbar = containerEl.createDiv();
         topbar.addClass('manager-setting__topbar');
         const brand = topbar.createDiv('manager-setting__brand');
         setIcon(brand.createSpan('manager-setting__brand-icon'), 'settings');
@@ -118,17 +183,18 @@ class ManagerSettingTab extends PluginSettingTab {
                     target?.scrollIntoView({ block: 'center' });
                     const control = target?.querySelector<HTMLElement>('input, select, textarea, button');
                     control?.focus({ preventScroll: true });
-                } else this.containerEl.querySelector<HTMLButtonElement>('.manager-setting-search__trigger')?.focus();
+                } else this.renderRoot.querySelector<HTMLButtonElement>('.manager-setting-search__trigger')?.focus();
             });
             this.search.open(topbar);
         });
-        const tabsWrap = topbar.createEl('div');
+        const tabsWrap = topbar.createDiv();
         tabsWrap.addClass('manager-setting__tabs-wrap');
-        const tabsEl = tabsWrap.createEl('div');
+        const tabsEl = tabsWrap.createDiv();
         tabsEl.addClass('manager-setting__tabs');
         tabsEl.setAttribute('role', 'tablist');
         tabsEl.setAttribute('data-slot', 'tabs-list');
-        this.contentEl = this.containerEl.createEl('div');
+        this.settingsSaveButton = new SettingsSaveButton(this.manager, topbar);
+        this.contentEl = containerEl.createDiv();
         this.contentEl.addClass('manager-setting__content');
 
         const tabItems = [

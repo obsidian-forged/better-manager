@@ -19,6 +19,7 @@ export class ConfigConflictView {
         if (!conflict || !protection) { this.id = ''; this.host.empty(); return; }
         // Repeated external events preserve the choices, scroll position and focus.
         if (this.id === conflict.id) {
+            this.refreshPrivateWarning();
             this.syncChoices.forEach(sync => sync());
             this.confirm?.setDisabled(!protection.protection.paused);
             return;
@@ -39,6 +40,7 @@ export class ConfigConflictView {
         heading.setAttribute('title', this.t('paused'));
         const minimize = new ButtonComponent(heading).setIcon('chevron-up').setTooltip(this.t('collapse'));
         minimize.onClick(() => { this.minimized = true; this.host.hidden = true; });
+        this.refreshPrivateWarning();
         this.host.setAttribute('aria-label', this.t('title'));
         const content = this.host.createDiv('bpm-config-conflict__content');
         if (conflict.reason === 'stale-replayed') content.createEl('p', { text: this.t('stale'), cls: 'mod-warning' });
@@ -59,6 +61,16 @@ export class ConfigConflictView {
             });
         });
         content.scrollTop = 0;
+    }
+    private refreshPrivateWarning(): void {
+        const heading = this.host.querySelector<HTMLElement>('.bpm-config-conflict__heading');
+        if (!heading) return;
+        const existing = heading.querySelector('.bpm-private-cache-warning');
+        if (!this.manager.configProtection?.privateCacheModified) { existing?.remove(); return; }
+        if (existing) return;
+        const warning = new ButtonComponent(heading).setButtonText(this.t('privateCacheShort')).setIcon('folder')
+            .setTooltip(this.t('privateCacheChanged')).onClick(() => this.manager.showPrivateCacheWarning());
+        warning.buttonEl.addClass('bpm-config-conflict__choice', 'bpm-private-cache-warning', 'mod-warning');
     }
     private renderSection(content: HTMLElement, section: ConflictSection): void {
         const row = content.createDiv('bpm-config-conflict__section');

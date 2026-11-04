@@ -98,11 +98,10 @@ export class NoteTipFeature {
 
         // 定位到图标右侧；下边界超出视口时向上收
         const rect = this.ribbonEl.getBoundingClientRect();
-        tip.style.left = `${rect.right + 12}px`;
-        tip.style.top = `${rect.top - 4}px`;
+        tip.setCssStyles({ left: `${rect.right + 12}px`, top: `${rect.top - 4}px` });
         const tipRect = tip.getBoundingClientRect();
         const overflow = tipRect.bottom - activeWindow.innerHeight + 12;
-        if (overflow > 0) tip.style.top = `${rect.top - 4 - overflow}px`;
+        if (overflow > 0) tip.setCssStyles({ top: `${rect.top - 4 - overflow}px` });
 
         this.tooltip = tip;
     }
@@ -123,8 +122,7 @@ export class NoteTipFeature {
         const rect = this.ribbonEl.getBoundingClientRect();
 
         const panel = activeDocument.body.createDiv({ cls: PANEL_CLS });
-        panel.style.left = `${rect.right + 12}px`;
-        panel.style.top = `${rect.top - 4}px`;
+        panel.setCssStyles({ left: `${rect.right + 12}px`, top: `${rect.top - 4}px` });
 
         panel.createDiv({ cls: `${PANEL_CLS}-title`, text: t("备注Tooltip_设置标题") });
 
@@ -156,8 +154,8 @@ export class NoteTipFeature {
         for (const tag of this.manager.settings.TAGS) tagSel.createEl("option", { value: tag.id, text: tag.name });
         tagSel.value = cfg.tagId;
         const syncScopeSelects = () => {
-            groupSel.style.display = filterSel.value === "group" ? "" : "none";
-            tagSel.style.display = filterSel.value === "tag" ? "" : "none";
+            groupSel.setCssStyles({ display: filterSel.value === "group" ? "" : "none" });
+            tagSel.setCssStyles({ display: filterSel.value === "tag" ? "" : "none" });
         };
         filterSel.addEventListener("change", syncScopeSelects);
         syncScopeSelects();

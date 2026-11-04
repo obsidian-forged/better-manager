@@ -118,7 +118,7 @@ export default class ManagerTag extends BaseSetting {
                 .onChange((value) => {
                     tag.color = value;
                     void this.manager.saveSettings();
-                    tagEl.setAttribute('style', this.manager.generateTagStyle(value, this.settings.TAG_STYLE));
+                    this.manager.applyTagStyle(tagEl, value, this.settings.TAG_STYLE);
                 })
             );
             item.addText((cb) => {

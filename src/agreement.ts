@@ -1,7 +1,10 @@
 import { featureEnabled } from './features';
-import ShareMyPlugin from "main";
+import type ShareMyPlugin from "main";
 import { Notice, ObsidianProtocolData, debounce, requestUrl } from "obsidian";
 import { resolveGithubUrl } from "./github-url";
+import { parseInstallManifest } from './catalog/install-manifest';
+import { record } from './catalog/catalog';
+import { assertHttpSuccess, errorMessage } from './network/http-error';
 
 // 导出一个全局的 communityPlugins 变量，可在其他模块中使用
 export type CommunityPluginInfo = {
@@ -26,7 +29,12 @@ export default class Agreement {
     // 标记是否已经加载了社区插件列表
     loaded = false;
     // 防抖函数，用于定时刷新社区插件列表，每小时执行一次
-    debounceFetch = debounce(async () => { await this.fetchCommunityPlugins() }, 1000 * 60 * 60);
+    debounceFetch = debounce(() => {
+        void this.fetchCommunityPlugins().catch(error => {
+            if (this.plugin.settings.DEBUG) console.error('[BPM] Refreshing the community registry failed', error);
+            new Notice(errorMessage(error));
+        });
+    }, 1000 * 60 * 60);
 
     /**
      * 从远程获取社区插件列表，并将其转换为以插件 ID 为键的对象
@@ -34,13 +42,21 @@ export default class Agreement {
     async fetchCommunityPlugins() {
         // 从指定的 URL 获取社区插件列表的 JSON 数据
         const url = "https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/community-plugins.json";
-        const res = await requestUrl(resolveGithubUrl(this.plugin, url));
-        const pluginList = res.json;
-        // if (!pluginList.ok) { new Notice(`[插件管理器] 无法连接到Github(跳转主页及下载不可用)`); }
+        const res = await requestUrl({ url: resolveGithubUrl(this.plugin, url), throw: false });
+        assertHttpSuccess(res);
+        const pluginList: unknown = res.json;
+        if (!Array.isArray(pluginList)) throw new Error('Invalid community plugin registry');
         // 创建一个空对象，用于存储以插件 ID 为键的插件信息
         const keyedPluginList: Record<string, CommunityPluginInfo> = {};
         // 遍历插件列表，将每个插件的信息存储到 keyedPluginList 中
-        for (const item of pluginList) keyedPluginList[item.id] = item;
+        for (const candidate of pluginList) {
+            const item: unknown = candidate;
+            if (!record(item) || typeof item.id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(item.id)
+                || ['constructor', '__proto__', 'prototype'].includes(item.id)) continue;
+            const plugin: CommunityPluginInfo = { id: item.id };
+            for (const [key, value] of Object.entries(item)) if (typeof value === 'string') plugin[key] = value;
+            keyedPluginList[plugin.id] = plugin;
+        }
         // 将处理后的插件列表赋值给 communityPlugins 属性
         this.communityPlugins = keyedPluginList;
         // 标记社区插件列表已加载
@@ -54,6 +70,7 @@ export default class Agreement {
     constructor(SMPL: ShareMyPlugin) {
         // 保存 ShareMyPlugin 实例
         this.plugin = SMPL;
+        this.plugin.register(() => this.debounceFetch.cancel());
         // The protocol handlers fetch the registry on demand. Constructing a handler
         // must not start a network request during plugin initialization.
     }
@@ -85,20 +102,16 @@ export default class Agreement {
      * @param github - 插件的 GitHub 仓库地址，默认为空字符串
      */
     public async pluginInstall(id: string, version = "", enable = false, github = "") {
-        // 打印日志，记录开始安装插件的信息
-        // console.log(`[插件管理器] 开始安装插件 -- ${id} - ${version} - ${enable} - ${github}`);
         // 如果社区插件列表未加载，则先加载 否则，触发防抖函数，定时刷新社区插件列表
         if (!this.loaded) await this.fetchCommunityPlugins(); else this.debounceFetch();
 
         // 获取 Obsidian 应用的插件注册表
-        // @ts-ignore
-        const pluginRegistry = this.plugin.app.plugins;
+        const pluginRegistry = this.plugin.appPlugins;
 
         // 标记是否需要安装插件
         let installFlag = false;
         // 获取插件的仓库地址，如果提供了 github 参数，则使用该参数，否则从社区插件列表中获取
         const repo = github !== "" ? github : this.communityPlugins[id]?.repo;
-        console.log(repo)
         // 如果找不到插件的仓库地址，显示提示信息并返回
         if (!repo) {
             new Notice(this.plugin.translator.t("协议_未知插件ID_提示", { id }));
@@ -120,10 +133,13 @@ export default class Agreement {
         if (installFlag) {
             // 从 GitHub 仓库获取插件的 manifest.json 文件
             const manifestUrl = `https://raw.githubusercontent.com/${repo}/HEAD/manifest.json`;
-            const manifestRes = await requestUrl(resolveGithubUrl(this.plugin, manifestUrl));
-            const manifest = manifestRes.json;
+            const manifestRes = await requestUrl({ url: resolveGithubUrl(this.plugin, manifestUrl), throw: false });
+            assertHttpSuccess(manifestRes);
+            const payload: unknown = manifestRes.json;
+            const parsed = parseInstallManifest(payload, id);
+            const manifest = record(payload) ? { ...payload, ...parsed } : { ...parsed };
             // 如果版本为 "latest" 或空字符串，则使用 manifest 中的版本
-            if (version.toLowerCase() === "latest" || version === "") version = manifest.version;
+            if (version.toLowerCase() === "latest" || version === "") version = parsed.version;
             // 调用插件注册表的 installPlugin 方法安装插件
             await pluginRegistry.installPlugin(repo, version, manifest);
         }
@@ -152,11 +168,11 @@ export default class Agreement {
         const args = {
             id: params.id,
             version: params?.version ?? "",
-            enable: ["", "true", "1"].includes(params.enable.toLowerCase()),
+            enable: typeof params.enable === 'string' && ["", "true", "1"].includes(params.enable.toLowerCase()),
             github: params.github ?? "",
         };
         // 调用 installPlugin 方法安装插件
-        await this.pluginInstall(args.id, args.version, args.enable);
+        await this.pluginInstall(args.id, args.version, args.enable, args.github);
     }
 
     /**

@@ -4,7 +4,7 @@ import { build } from 'esbuild';
 
 const menuItems = [];
 const headerClasses = new Set();
-globalThis.activeDocument = { createDocumentFragment() { return { createSpan() {
+globalThis.window = { createFragment() { return { createSpan() {
     return { closest(selector) { assert.equal(selector, '.menu-item'); return { addClass(name) { headerClasses.add(name); } }; } };
 } }; } };
 class Menu {

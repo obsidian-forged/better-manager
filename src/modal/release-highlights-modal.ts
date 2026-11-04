@@ -33,7 +33,7 @@ export class ReleaseHighlightsModal extends Modal {
         this.contentEl.createEl('p', { cls: 'manager-release-highlights__intro', text: this.t('更新介绍_简介') });
         const controls = new Setting(this.contentEl).setName(this.t('更新介绍_页面'));
         this.selection = new DropdownComponent(controls.controlEl);
-        this.slides.forEach((slide, index) => this.selection?.addOption(`${index}`, this.t(slide.title)));
+        this.slides.forEach((slide, index) => { this.selection?.addOption(`${index}`, this.t(slide.title)); });
         this.selection.selectEl.setAttribute('aria-label', this.t('更新介绍_页面'));
         this.selection.onChange(value => { this.index = Number(value); this.renderSlide(); });
         const figure = this.contentEl.createEl('figure', { cls: 'manager-release-highlights__figure' });

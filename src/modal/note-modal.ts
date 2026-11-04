@@ -97,7 +97,7 @@ export class NoteModal extends Modal {
                 this.setSaveState("saved");
             }
         } catch (error) {
-            console.error("[BPM] failed to save plugin note", error);
+            if (this.manager.settings.DEBUG) console.error("[BPM] failed to save plugin note", error);
             this.setSaveState("error");
         } finally {
             this.isSaving = false;
@@ -115,7 +115,7 @@ export class NoteModal extends Modal {
         await this.persistNote();
     }
 
-    private async showHead() {
+    private showHead(): void {
         const modalEl = this.contentEl.parentElement;
         if (!modalEl) return;
         modalEl.addClass("manager-note__container");
@@ -139,7 +139,7 @@ export class NoteModal extends Modal {
 
     }
 
-    private async showData() {
+    private showData(): void {
         const page = this.contentEl.createDiv("manager-note__page");
         const summary = page.createDiv("manager-note__summary");
         const summaryMain = summary.createDiv("manager-note__summary-main");
@@ -189,23 +189,21 @@ export class NoteModal extends Modal {
         return chip.createSpan({ cls: "manager-note__stat-text", text });
     }
 
-    private async reloadShowData() {
+    private reloadShowData(): void {
         const modalElement: HTMLElement = this.contentEl;
         const scrollTop = modalElement.scrollTop;
         modalElement.empty();
-        await this.showData();
+        this.showData();
         modalElement.scrollTo(0, scrollTop);
     }
 
-    onOpen() {
-        void (async () => {
-            await this.showHead();
-            await this.showData();
-            this.textArea?.inputEl.focus();
-        })();
+    onOpen(): void {
+        this.showHead();
+        this.showData();
+        this.textArea?.inputEl.focus();
     }
 
-    onClose() {
+    onClose(): void {
         void this.flushPendingSave();
         if (this.saveTimer) window.clearTimeout(this.saveTimer);
         this.contentEl.empty();

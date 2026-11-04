@@ -108,5 +108,20 @@ export const INITIAL_TROUBLESHOOT_STATE: TroubleshootState = {
  * 深拷贝状态
  */
 export function cloneState(state: TroubleshootState): TroubleshootState {
-    return JSON.parse(JSON.stringify(state));
+    const algorithm = state.algorithmState;
+    return {
+        ...state,
+        originalEnabledPlugins: [...state.originalEnabledPlugins],
+        suspectPool: [...state.suspectPool],
+        clearedPlugins: [...state.clearedPlugins],
+        history: state.history.map(item => ({ ...item,
+            previousEnabledPlugins: [...item.previousEnabledPlugins], suspectPoolSnapshot: [...item.suspectPoolSnapshot] })),
+        result: state.result ? { ...state.result } : undefined,
+        algorithmState: algorithm ? { ...algorithm,
+            currentSet: [...algorithm.currentSet], fixedSet: [...algorithm.fixedSet], searchSet: [...algorithm.searchSet],
+            c1: algorithm.c1 ? [...algorithm.c1] : undefined, c2: algorithm.c2 ? [...algorithm.c2] : undefined,
+            searchHalf: algorithm.searchHalf ? [...algorithm.searchHalf] : undefined,
+            searchOtherHalf: algorithm.searchOtherHalf ? [...algorithm.searchOtherHalf] : undefined,
+            pairToVerify: algorithm.pairToVerify ? [...algorithm.pairToVerify] : undefined } : undefined,
+    };
 }

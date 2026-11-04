@@ -192,13 +192,6 @@ export class SystemRibbonManager {
                 adopted
             };
 
-            if (this.manager.settings?.DEBUG) {
-                if (adopted) {
-                    console.log("[BPM] Ribbon orphan adopted", ctx.item.id, "→", setting?.bpmUniqueId);
-                } else if (!setting) {
-                    console.log("[BPM] Ribbon item unmatched (will be registered)", ctx.item.id, "icon:", ctx.item.icon);
-                }
-            }
 
             return resolution;
         });

@@ -1,9 +1,12 @@
 import { FloatingScrollbars } from '../ui/floating-scrollbars';
+import { createActionHandler } from '../ui/action-handler';
 import { TaskCenterView } from '../ui/task-center-view';
 import { ConfigConflictView } from '../settings/conflict-view';
 import { protectionText } from '../settings/protection-text';
 import { SyncNoticeView } from '../ui/sync-notice-view';
+import { SettingsSaveButton } from '../ui/settings-save-button';
 import { ConfigConflictMarkers } from '../settings/conflict-markers';
+import { conflictFeaturePages, ConflictFeaturePage } from '../settings/conflict-features';
 import { isToolInPage, ToolScope } from '../ui/tool-visibility';
 import { featureEnabled, toolEnabled, FeatureId, ToolId } from '../features';
 import { DevicePanel } from '../devices/device-panel';
@@ -176,6 +179,10 @@ type AppearanceProfileDraft = Omit<AppearanceProfile, "createdAt" | "updatedAt">
 };
 
 class AppearanceProfileModal extends Modal {
+    private readonly action = createActionHandler(error => {
+        if (this.manager.settings.DEBUG) console.error('[BPM] Appearance action failed', error);
+        new Notice(`${this.manager.translator.t('安装_错误_通用')} ${error instanceof Error ? error.message : ''}`);
+    });
     private profile: AppearanceProfileDraft;
     private themes: ManagerTransferTheme[];
     private snippets: CssSnippetItem[];
@@ -232,7 +239,7 @@ class AppearanceProfileModal extends Modal {
             .setDesc(t("外观总览_方案_绑定主题说明"))
             .addDropdown((dropdown) => {
                 dropdown.addOption("", t("外观总览_方案_不绑定主题"));
-                this.themes.forEach((item) => dropdown.addOption(item.name, item.name));
+                this.themes.forEach((item) => { dropdown.addOption(item.name, item.name); });
                 dropdown.setValue(theme);
                 dropdown.onChange((value) => { theme = value; });
             });
@@ -290,7 +297,7 @@ class AppearanceProfileModal extends Modal {
         footer.addButton((button) => {
             button.setCta();
             button.setButtonText(t("通用_保存_文本"));
-            button.onClick(async () => {
+            button.onClick(this.action(async () => {
                 const normalizedName = name.trim();
                 if (!normalizedName) {
                     new Notice(t("外观总览_方案_名称不能为空"));
@@ -314,7 +321,7 @@ class AppearanceProfileModal extends Modal {
                     disableSnippets,
                 });
                 this.close();
-            });
+            }));
         });
     }
 }
@@ -325,6 +332,10 @@ class AppearanceProfileModal extends Modal {
 //          侧边栏 对话框 翻译
 // ==============================
 export class ManagerModal extends Modal {
+    private readonly action = createActionHandler(error => {
+        if (this.manager.settings.DEBUG) console.error('[BPM] Manager action failed', error);
+        new Notice(`${this.manager.translator.t('安装_错误_通用')} ${error instanceof Error ? error.message : ''}`);
+    });
     /** 桌面端统一收进“更多”菜单的次要操作。 */
     private static readonly DESKTOP_MORE_ACTION_IDS = new Set<MainPageActionId>([
         'checkUpdate', 'hide', 'openRepo', 'openDir', 'clearConfig', 'delete', 'hotkeys', 'note', 'copyId',
@@ -400,9 +411,17 @@ export class ManagerModal extends Modal {
     private modalPageEl?: HTMLElement;
     private conflictView?: ConfigConflictView;
     private syncNoticeView?: SyncNoticeView;
+    private settingsSaveButton?: SettingsSaveButton;
     private conflictMarkers?: ConfigConflictMarkers;
     private conflictObserver?: MutationObserver;
-    private conflictMarkerFrame?: number;
+    private conflictMarkerFrame?: { view: Window; id: number };
+    private readonly renderFrames = new Set<{ view: Window; id: number; finish: () => void }>();
+    private opened = false;
+    private shortcutDocument?: Document;
+    private hiddenDragDocument?: Document;
+    private readonly onShortcut = (event: KeyboardEvent): void => {
+        if (event.ctrlKey && event.key.toLowerCase() === 'f') this.searchEl.inputEl.focus();
+    };
     private pageToolsEl?: HTMLElement;
     private mobileScopeHost?: HTMLElement;
     private mobileOverviewHost?: HTMLElement;
@@ -424,7 +443,27 @@ export class ManagerModal extends Modal {
     }
 
     private nextRenderGeneration(): number {
+        this.clearRenderFrames();
         return ++this.renderGeneration;
+    }
+
+    private nextRenderFrame(): Promise<void> {
+        const view = this.pageEl.ownerDocument.defaultView;
+        if (!view) return Promise.resolve();
+        return new Promise(resolve => {
+            const pending = { view, id: 0, finish: resolve };
+            pending.id = view.requestAnimationFrame(() => { this.renderFrames.delete(pending); resolve(); });
+            this.renderFrames.add(pending);
+        });
+    }
+
+    private clearRenderFrames(): void {
+        const frames = [...this.renderFrames];
+        this.renderFrames.clear();
+        for (const frame of frames) {
+            frame.view.cancelAnimationFrame(frame.id);
+            frame.finish();
+        }
     }
 
     private clearScheduledSearchRender() {
@@ -446,7 +485,7 @@ export class ManagerModal extends Modal {
         this.clearScheduledSearchRender();
         this.searchRenderTimer = window.setTimeout(() => {
             this.searchRenderTimer = undefined;
-            void this.reloadShowData();
+            this.action(async () => { await this.reloadShowData(); })();
         }, 120);
     }
 
@@ -455,7 +494,7 @@ export class ManagerModal extends Modal {
         if (this.searchSaveTimer !== undefined) window.clearTimeout(this.searchSaveTimer);
         this.searchSaveTimer = window.setTimeout(() => {
             this.searchSaveTimer = undefined;
-            void this.manager.saveSettings();
+            this.action(async () => { await this.manager.saveSettings(); })();
         }, 350);
     }
 
@@ -814,7 +853,7 @@ export class ManagerModal extends Modal {
         this.settings.FILTER_TAG = tagValues[0] || "";
         this.settings.FILTER_DELAY_VALUES = delayValues;
         this.settings.FILTER_DELAY = delayValues[0] || "";
-        void this.manager.saveSettings();
+        this.action(async () => { await this.manager.saveSettings(); })();
     }
 
     private setStatusFilterValues(values: string[]) {
@@ -822,7 +861,7 @@ export class ManagerModal extends Modal {
         if (this.settings.PERSISTENCE) {
             this.settings.FILTER_STATUS_VALUES = next;
             this.settings.FILTER_STATUS = next[0] || "all";
-            void this.manager.saveSettings();
+            this.action(async () => { await this.manager.saveSettings(); })();
         } else {
             this.statusFilters = next;
             this.filter = next[0] || "all";
@@ -837,7 +876,7 @@ export class ManagerModal extends Modal {
         const next = this.normalizeFilterOperator(value);
         if (this.settings.PERSISTENCE) {
             this.settings.FILTER_STATUS_OPERATOR = next;
-            void this.manager.saveSettings();
+            this.action(async () => { await this.manager.saveSettings(); })();
         } else {
             this.statusOperator = next;
         }
@@ -853,7 +892,7 @@ export class ManagerModal extends Modal {
         this.syncPageChrome();
         // 移动端顶栏随页面重建：从设备页等非插件页点统计筛选时，需要补回搜索与过滤区。
         if (Platform.isMobile) this.showHeadMobile();
-        void this.reloadShowData();
+        this.action(async () => { await this.reloadShowData(); })();
     }
 
     private setGroupFilterValues(values: string[]) {
@@ -861,7 +900,7 @@ export class ManagerModal extends Modal {
         if (this.settings.PERSISTENCE) {
             this.settings.FILTER_GROUP_VALUES = next;
             this.settings.FILTER_GROUP = next[0] || "";
-            void this.manager.saveSettings();
+            this.action(async () => { await this.manager.saveSettings(); })();
         } else {
             this.groups = next;
             this.group = next[0] || "";
@@ -876,7 +915,7 @@ export class ManagerModal extends Modal {
         const next = this.normalizeFilterOperator(value);
         if (this.settings.PERSISTENCE) {
             this.settings.FILTER_GROUP_OPERATOR = next;
-            void this.manager.saveSettings();
+            this.action(async () => { await this.manager.saveSettings(); })();
         } else {
             this.groupOperator = next;
         }
@@ -887,7 +926,7 @@ export class ManagerModal extends Modal {
         if (this.settings.PERSISTENCE) {
             this.settings.FILTER_TAG_VALUES = next;
             this.settings.FILTER_TAG = next[0] || "";
-            void this.manager.saveSettings();
+            this.action(async () => { await this.manager.saveSettings(); })();
         } else {
             this.tags = next;
             this.tag = next[0] || "";
@@ -902,7 +941,7 @@ export class ManagerModal extends Modal {
         const next = this.normalizeFilterOperator(value);
         if (this.settings.PERSISTENCE) {
             this.settings.FILTER_TAG_OPERATOR = next;
-            void this.manager.saveSettings();
+            this.action(async () => { await this.manager.saveSettings(); })();
         } else {
             this.tagOperator = next;
         }
@@ -913,7 +952,7 @@ export class ManagerModal extends Modal {
         if (this.settings.PERSISTENCE) {
             this.settings.FILTER_DELAY_VALUES = next;
             this.settings.FILTER_DELAY = next[0] || "";
-            void this.manager.saveSettings();
+            this.action(async () => { await this.manager.saveSettings(); })();
         } else {
             this.delays = next;
             this.delay = next[0] || "";
@@ -928,7 +967,7 @@ export class ManagerModal extends Modal {
         const next = this.normalizeFilterOperator(value);
         if (this.settings.PERSISTENCE) {
             this.settings.FILTER_DELAY_OPERATOR = next;
-            void this.manager.saveSettings();
+            this.action(async () => { await this.manager.saveSettings(); })();
         } else {
             this.delayOperator = next;
         }
@@ -1205,7 +1244,7 @@ export class ManagerModal extends Modal {
                 updateButton();
                 onChange(currentValue);
                 refreshLayout();
-                void this.reloadShowData();
+                this.action(async () => { await this.reloadShowData(); })();
             });
             updateButton();
             return { setValue: (nextValue: FilterOperator) => {
@@ -1231,7 +1270,7 @@ export class ManagerModal extends Modal {
             const control = this.createMultiSelectFilter(container, options, getValues(), allValue, allLabel, ariaLabel, values => {
                 setValues(values);
                 refreshLayout();
-                void this.reloadShowData();
+                this.action(async () => { await this.reloadShowData(); })();
             });
             if (type === "status") this.statusMultiSelect = control;
             else if (type === "group") this.groupMultiSelect = control;
@@ -1270,7 +1309,7 @@ export class ManagerModal extends Modal {
         button.buttonEl.setAttribute("aria-label", label);
         this.bindLongPressTooltip(button.buttonEl, label);
         button.onClick(() => {
-            void this.runPluginUpdateCheck(button);
+            this.action(async () => { await this.runPluginUpdateCheck(button); })();
         });
     }
 
@@ -1288,7 +1327,7 @@ export class ManagerModal extends Modal {
             await this.manager.setPluginUpdateCheckOptions(config);
         } catch (error) {
             this.isCheckingPluginUpdates = false;
-            console.error("[BPM] save update check config failed", error);
+            if (this.settings.DEBUG) console.error("[BPM] save update check config failed", error);
             new Notice(this.manager.translator.t("通知_检查更新失败"));
             return;
         }
@@ -1296,7 +1335,7 @@ export class ManagerModal extends Modal {
         const label = this.manager.translator.t("管理器_检查更新_描述");
         const busyLabel = this.manager.translator.t("通知_检测更新中文案");
         const buttonEl = trigger instanceof ButtonComponent ? trigger.buttonEl : trigger;
-        const wasDisabled = buttonEl instanceof HTMLButtonElement ? buttonEl.disabled : false;
+        const wasDisabled = buttonEl?.disabled ?? false;
 
         buttonEl?.addClass("is-loading");
         buttonEl?.setAttribute("aria-busy", "true");
@@ -1305,7 +1344,7 @@ export class ManagerModal extends Modal {
             trigger.setDisabled(true);
             trigger.setIcon("loader");
             trigger.setTooltip(busyLabel);
-        } else if (buttonEl instanceof HTMLButtonElement) {
+        } else if (buttonEl) {
             buttonEl.disabled = true;
             buttonEl.setAttribute("title", busyLabel);
         }
@@ -1319,14 +1358,14 @@ export class ManagerModal extends Modal {
             const count = this.getPluginUpdateCount(status);
             new Notice(this.manager.translator.t("通知_检查更新完成").replace("{count}", `${count}`));
         } catch (error) {
-            console.error("检查更新时出错:", error);
+            if (this.settings.DEBUG) console.error("检查更新时出错:", error);
             new Notice(this.manager.translator.t("通知_检查更新失败"));
         } finally {
             if (trigger instanceof ButtonComponent) {
                 trigger.setIcon("rss");
                 trigger.setTooltip(label);
                 trigger.setDisabled(wasDisabled);
-            } else if (buttonEl instanceof HTMLButtonElement) {
+            } else if (buttonEl) {
                 buttonEl.disabled = wasDisabled;
                 buttonEl.setAttribute("title", label);
             }
@@ -1356,7 +1395,7 @@ export class ManagerModal extends Modal {
     }
 
     private openPluginUpdateModal(pluginId: string, updateInfo: PluginUpdateViewStatus) {
-        void this.openPluginVersionList(pluginId, updateInfo);
+        this.action(async () => { await this.openPluginVersionList(pluginId, updateInfo); })();
     }
 
     private addPluginDownloadButton(controlEl: HTMLElement, pluginId: string, updateInfo: PluginUpdateViewStatus, prepend = false) {
@@ -1456,7 +1495,8 @@ export class ManagerModal extends Modal {
         if (typeof getPlugin !== "function") return false;
         try {
             return Boolean(getPlugin.call(this.appPlugins, pluginId));
-        } catch {
+        } catch (error) {
+            if (this.settings.DEBUG) console.error('[BPM] hasLoadedPluginInstance fallback failed', error);
             return false;
         }
     }
@@ -1503,7 +1543,7 @@ export class ManagerModal extends Modal {
         const card = controller?.cardEl ?? this.findPluginCard(pluginId);
         if (!manifest || !managerPlugin || !card) {
             if (options.allowReload || (manifest && managerPlugin && this.pluginMatchesCurrentView(managerPlugin, manifest, this.isPluginEnabledForDisplay(pluginId, managerPlugin)))) {
-                void this.reloadShowData();
+                this.action(async () => { await this.reloadShowData(); })();
             }
             return;
         }
@@ -1647,7 +1687,7 @@ export class ManagerModal extends Modal {
         const noteView = card.querySelector<HTMLElement>(".manager-plugin-card__note-view");
         if (hasNote !== Boolean(noteView)) {
             // 笔记从无到有/从有到无会改变描述区的切换控件，直接重绘卡片列表。
-            void this.reloadShowData();
+            this.action(async () => { await this.reloadShowData(); })();
             return;
         }
         if (noteView && hasNote) noteView.setText(managerPlugin.note || "");
@@ -1681,7 +1721,7 @@ export class ManagerModal extends Modal {
     public refreshVisiblePluginCards() {
         const statusValues = this.getStatusFilterValues();
         if (statusValues.includes("has-update") || this.getStatusFilterOperator() === "not-contains") {
-            void this.reloadShowData();
+            this.action(async () => { await this.reloadShowData(); })();
             return;
         }
         const visiblePluginIds = Array.from(this.pageEl.querySelectorAll<HTMLElement>(".manager-plugin-card[data-plugin-id]"))
@@ -1733,7 +1773,7 @@ export class ManagerModal extends Modal {
                 .setTitle(t("菜单_检查更新_标题"))
                 .setIcon("rss")
                 .setDisabled(isSelf)
-                .onClick(async () => { await this.runSinglePluginUpdateCheck(plugin.id); }));
+                .onClick(this.action(async () => { await this.runSinglePluginUpdateCheck(plugin.id); })));
             menu.addItem((item) => item
                 .setTitle(t("菜单_隐藏插件_标题"))
                 .setIcon("eye-off")
@@ -1744,7 +1784,7 @@ export class ManagerModal extends Modal {
             menu.addItem((item) => item
                 .setTitle(t("管理器_打开仓库_标题"))
                 .setIcon("github")
-                .onClick(async () => { await this.openPluginRepo(plugin.id, knownRepo); }));
+                .onClick(this.action(async () => { await this.openPluginRepo(plugin.id, knownRepo); })));
             menu.addItem((item) => item
                 .setTitle(t("管理器_打开目录_描述"))
                 .setIcon("folder-open")
@@ -1753,17 +1793,17 @@ export class ManagerModal extends Modal {
                 .setTitle(t("管理器_清空配置_描述"))
                 .setIcon("file-cog")
                 .setDisabled(isSelf)
-                .onClick(async () => { await this.clearPluginConfig(plugin, isSelf); }));
+                .onClick(this.action(async () => { await this.clearPluginConfig(plugin, isSelf); })));
             menu.addItem((item) => item
                 .setTitle(t("管理器_删除插件_描述"))
                 .setIcon("trash")
                 .setDisabled(isSelf)
-                .onClick(async () => { await this.uninstallPluginWithConfirm(plugin, isSelf); }));
+                .onClick(this.action(async () => { await this.uninstallPluginWithConfirm(plugin, isSelf); })));
             menu.addSeparator();
             menu.addItem((item) => item
                 .setTitle(t("菜单_快捷键_标题"))
                 .setIcon("circle-plus")
-                .onClick(async () => { await this.openPluginHotkeys(plugin.id); }));
+                .onClick(this.action(async () => { await this.openPluginHotkeys(plugin.id); })));
             menu.addItem((item) => item
                 .setTitle(t("菜单_笔记_标题"))
                 .setIcon("notebook-pen")
@@ -1825,7 +1865,7 @@ export class ManagerModal extends Modal {
             await this.appPlugins.uninstallPlugin(plugin.id);
             await this.appPlugins.loadManifests();
             this.invalidatePluginCaches();
-            void this.reloadShowData();
+            this.action(async () => { await this.reloadShowData(); })();
             Commands(this.app, this.manager);
             this.manager.synchronizePlugins(Object.values(this.appPlugins.manifests).filter((pm: PluginManifest) => pm.id !== this.manager.manifest.id));
             new Notice(this.manager.translator.t("卸载_通知_一"));
@@ -1850,7 +1890,7 @@ export class ManagerModal extends Modal {
             await adapter.remove(configPath);
             new Notice(this.manager.translator.t("管理器_清空配置_成功"));
         } catch (error) {
-            console.error("[BPM] clear plugin config failed", plugin.id, error);
+            if (this.settings.DEBUG) console.error("[BPM] clear plugin config failed", plugin.id, error);
             new Notice(this.manager.translator.t("管理器_清空配置_失败"));
         }
     }
@@ -1871,7 +1911,7 @@ export class ManagerModal extends Modal {
         await this.manager.overview.setPluginState(plugin.id, { enabled: true });
         this.singleStartedPluginIds.delete(plugin.id);
         this.refreshPluginCard(plugin.id, { allowReload: true });
-        void this.reportRestartCost(plugin.id, heapBefore);
+        this.action(async () => { await this.reportRestartCost(plugin.id, heapBefore); })();
     }
 
     /**
@@ -1920,7 +1960,7 @@ export class ManagerModal extends Modal {
         } else {
             this.settings.HIDES = this.settings.HIDES.filter(id => id !== pluginId);
         }
-        void this.manager.saveSettings();
+        this.action(async () => { await this.manager.saveSettings(); })();
         this.refreshPluginCard(pluginId, { allowReload: true });
     }
 
@@ -1936,15 +1976,17 @@ export class ManagerModal extends Modal {
 
     private openSettingsTab(tabId: string) {
         // 打开插件设置只读展示本机配置，不属于外域预设的写入操作。 / Opening settings is read-only and stays available in a foreign preset.
-        void (async () => {
+        this.action(async () => {
             await this.appSetting.open();
             await this.appSetting.openTabById(tabId);
         })();
     }
 
     private copyPluginId(pluginId: string) {
-        void navigator.clipboard.writeText(pluginId);
-        new Notice(this.manager.translator.t("通知_ID已复制"));
+        this.action(async () => {
+            await navigator.clipboard.writeText(pluginId);
+            new Notice(this.manager.translator.t("通知_ID已复制"));
+        })();
     }
 
     private openCatalog(): void {
@@ -1997,7 +2039,7 @@ export class ManagerModal extends Modal {
                 new Notice(this.manager.translator.t("通知_检查更新失败"));
             }
         } catch (error) {
-            console.error("检查单个插件更新时出错:", error);
+            if (this.settings.DEBUG) console.error("检查单个插件更新时出错:", error);
             new Notice(this.manager.translator.t("通知_检查更新失败"));
         } finally {
             progress.hide();
@@ -2162,13 +2204,13 @@ export class ManagerModal extends Modal {
         menu.addItem((item) => item
             .setTitle(t("批量编辑_清除分组"))
             .setIcon("folder-x")
-            .onClick(() => { void this.applyBulkGroup(""); }));
+            .onClick(() => { this.action(async () => { await this.applyBulkGroup(""); })(); }));
         if (this.settings.GROUPS.length > 0) menu.addSeparator();
         for (const group of this.settings.GROUPS) {
             menu.addItem((item) => item
                 .setTitle(group.name || group.id)
                 .setIcon("folder-tree")
-                .onClick(() => { void this.applyBulkGroup(group.id); }));
+                .onClick(() => { this.action(async () => { await this.applyBulkGroup(group.id); })(); }));
         }
         menu.showAtMouseEvent(event);
     }
@@ -2181,7 +2223,7 @@ export class ManagerModal extends Modal {
             menu.addItem((item) => item
                 .setTitle(t("批量编辑_清除全部标签"))
                 .setIcon("tags")
-                .onClick(() => { void this.applyBulkClearTags(); }));
+                .onClick(() => { this.action(async () => { await this.applyBulkClearTags(); })(); }));
             if (tags.length > 0) menu.addSeparator();
         }
         for (const tag of tags) {
@@ -2189,8 +2231,8 @@ export class ManagerModal extends Modal {
                 .setTitle(tag.name || tag.id)
                 .setIcon(mode === "add" ? "tag" : "tag-x")
                 .onClick(() => {
-                    if (mode === "add") void this.applyBulkAddTag(tag.id);
-                    else void this.applyBulkRemoveTag(tag.id);
+                    if (mode === "add") this.action(async () => { await this.applyBulkAddTag(tag.id); })();
+                    else this.action(async () => { await this.applyBulkRemoveTag(tag.id); })();
                 }));
         }
         menu.showAtMouseEvent(event);
@@ -2202,13 +2244,13 @@ export class ManagerModal extends Modal {
         menu.addItem((item) => item
             .setTitle(t("通用_无延迟_文本"))
             .setIcon("timer-off")
-            .onClick(() => { void this.applyBulkDelay(""); }));
+            .onClick(() => { this.action(async () => { await this.applyBulkDelay(""); })(); }));
         if (this.settings.DELAYS.length > 0) menu.addSeparator();
         for (const delay of this.settings.DELAYS) {
             menu.addItem((item) => item
                 .setTitle(`${delay.name || delay.id} (${delay.time}s)`)
                 .setIcon("timer")
-                .onClick(() => { void this.applyBulkDelay(delay.id); }));
+                .onClick(() => { this.action(async () => { await this.applyBulkDelay(delay.id); })(); }));
         }
         menu.showAtMouseEvent(event);
     }
@@ -2245,8 +2287,8 @@ export class ManagerModal extends Modal {
 
         const actions = bar.createDiv("manager-bulk-bar__actions");
         this.createBulkActionButton(actions, "list-checks", t("批量编辑_全选当前列表"), () => this.selectDisplayedPlugins(), displayedCount === 0);
-        this.createBulkActionButton(actions, "power", t("通用_启用_文本"), () => { void this.applyBulkEnabled(true); }, disabled);
-        this.createBulkActionButton(actions, "power-off", t("通用_禁用_文本"), () => { void this.applyBulkEnabled(false); }, disabled);
+        this.createBulkActionButton(actions, "power", t("通用_启用_文本"), () => { this.action(async () => { await this.applyBulkEnabled(true); })(); }, disabled);
+        this.createBulkActionButton(actions, "power-off", t("通用_禁用_文本"), () => { this.action(async () => { await this.applyBulkEnabled(false); })(); }, disabled);
         this.createBulkActionButton(actions, "folder-tree", t("批量编辑_设置分组"), (event) => this.showBulkGroupMenu(event), disabled);
         this.createBulkActionButton(actions, "tag", t("批量编辑_添加标签"), (event) => this.showBulkTagMenu(event, "add"), disabled);
         this.createBulkActionButton(actions, "tag-x", t("批量编辑_移除标签"), (event) => this.showBulkTagMenu(event, "remove"), disabled);
@@ -2268,13 +2310,13 @@ export class ManagerModal extends Modal {
 
         const actions = bar.createDiv("manager-bulk-bar__actions");
         if (canEditLayout) {
-            this.createBulkActionButton(actions, "separator-horizontal", t("管理器_布局_添加分割线"), () => { void this.addPluginLayoutSeparator(); });
-            this.createBulkActionButton(actions, "rotate-ccw", t("管理器_布局_按名称重置"), async () => {
+            this.createBulkActionButton(actions, "separator-horizontal", t("管理器_布局_添加分割线"), () => { this.action(async () => { await this.addPluginLayoutSeparator(); })(); });
+            this.createBulkActionButton(actions, "rotate-ccw", t("管理器_布局_按名称重置"), this.action(async () => {
                 if (!(await confirmWithModal(this.app, this.manager, t("管理器_布局_重置确认")))) return;
                 await this.resetPluginLayout();
-            });
+            }));
         }
-        this.createBulkActionButton(actions, "x", t("通用_完成编辑_文本"), () => { void this.setEditorMode(false); });
+        this.createBulkActionButton(actions, "x", t("通用_完成编辑_文本"), () => { this.action(async () => { await this.setEditorMode(false); })(); });
     }
 
     private updateBulkBar() {
@@ -2456,7 +2498,7 @@ export class ManagerModal extends Modal {
     private hiddenDragOffsetX = 0;
     private hiddenDragOffsetY = 0;
     private hiddenActivePointerId: number | null = null;
-    private handleHiddenLayoutDragEndEvent = (event: PointerEvent) => { void this.handleHiddenLayoutDragEnd(event); };
+    private handleHiddenLayoutDragEndEvent = (event: PointerEvent) => { this.action(async () => { await this.handleHiddenLayoutDragEnd(event); })(); };
     private vaultTargetPath = "";
     private vaultLinkPlugins = true;
     private vaultLinkThemes = true;
@@ -2483,7 +2525,6 @@ export class ManagerModal extends Modal {
         // 			item.setTitle("增");
         // 			item.setIcon("hashtag");
         // 			item.onClick(async () => {
-        // 				console.log(file);
         // 			});
         // 		};
         // 		menu.addItem(addIconMenuItem);
@@ -2503,7 +2544,6 @@ export class ManagerModal extends Modal {
 
     async getActivePlugins() {
         const originPlugins = this.appPlugins.plugins || {};
-        console.log(await this.processPlugins(originPlugins));
         return await this.processPlugins(originPlugins);
     }
 
@@ -2520,10 +2560,7 @@ export class ManagerModal extends Modal {
                 plugin.manifest!.installLink = `obsidian://BPM-install?id=${plugin.manifest!.id}&enable=true`;
                 plugins[name] = plugin;
             } catch (e) {
-                console.error(name, e);
-                console.log(originPlugins[name]);
-                console.log(originPlugins[name].manifest);
-                console.log(typeof originPlugins[name].manifest);
+                if (this.settings.DEBUG) console.error('[BPM] Reading plugin metadata failed', name, e);
             }
         }
         return plugins;
@@ -2714,7 +2751,7 @@ export class ManagerModal extends Modal {
         this.overviewSortSelect?.close();
         this.overviewSortSelect = new ScopeSelect(parent, this.manager.translator.t('通用_排序_文本'), 'arrow-up-down',
             this.getPluginOverviewSort(), this.getPluginOverviewSortOptions().map(([value, label]) => ({ value, label })),
-            value => { void this.setPluginOverviewSort(value); });
+            value => { this.action(async () => { await this.setPluginOverviewSort(value); })(); });
         this.overviewSortSelect.field.addClass('manager-filter-field--sort');
     }
 
@@ -2736,7 +2773,7 @@ export class ManagerModal extends Modal {
     private renderGlobalTools(parent: HTMLElement): void {
         const t = (key: string) => this.manager.translator.t(key);
         this.syncNoticeView?.destroy();
-        this.syncNoticeView = new SyncNoticeView(this.manager, parent, () => { if (this.manager.configProtection?.protection.conflict) this.focusConfigConflict(); else this.openSyncNoticeDetail(); });
+        this.syncNoticeView = new SyncNoticeView(this.manager, parent, () => { if (this.manager.configProtection?.protection.paused) this.focusConfigConflict(); else this.openSyncNoticeDetail(); });
         this.taskCenterView?.destroy();
         this.taskCenterView = undefined;
         const createIconTool = (icon: string, label: string, onClick: (event: MouseEvent) => void) => {
@@ -2754,7 +2791,11 @@ export class ManagerModal extends Modal {
             });
             return el;
         };
-        createIconTool('settings', t('管理器_插件设置_描述'), () => this.openSettingsTab(this.manager.manifest.id));
+        const settings = createIconTool('settings', t('管理器_插件设置_描述'), () => this.openSettingsTab(this.manager.manifest.id));
+        settings.dataset.bpmFeaturePage = 'settings';
+        this.settingsSaveButton?.destroy();
+        this.settingsSaveButton = new SettingsSaveButton(this.manager, parent);
+        this.settingsSaveButton.buttonEl.addClass('manager-global-tool');
         const more = createIconTool('more-vertical', t('管理器_更多操作_描述'), (event) => {
             const menu = new Menu();
             menu.addItem(item => item.setTitle(t('任务_标题')).setIcon('cloud-download')
@@ -2797,12 +2838,12 @@ export class ManagerModal extends Modal {
         markTool(batchUpdateButton, 'plugin', 15);
         batchUpdateButton.setIcon('download').setTooltip(t('批量更新_标题'));
         batchUpdateButton.buttonEl.setAttribute('aria-label', t('批量更新_标题'));
-        batchUpdateButton.onClick(() => { void this.manager.openBatchUpdates(); });
+        batchUpdateButton.onClick(() => { this.action(async () => { await this.manager.openBatchUpdates(); })(); });
         const rulesButton = new ButtonComponent(actionBar.controlEl);
         markTool(rulesButton, 'plugin', 16);
         rulesButton.setIcon('list-filter').setTooltip(t('更新规则_标题'));
         rulesButton.buttonEl.setAttribute('aria-label', t('更新规则_标题'));
-        rulesButton.onClick(() => { void this.manager.openUpdateRules(); });
+        rulesButton.onClick(() => { this.action(async () => { await this.manager.openUpdateRules(); })(); });
         const bulkEditButton = new ButtonComponent(actionBar.controlEl);
         markTool(bulkEditButton, "plugin", 20);
         bulkEditButton.setIcon(this.bulkEditMode ? "square-check-big" : "list-plus");
@@ -2827,7 +2868,7 @@ export class ManagerModal extends Modal {
         reloadButton.setIcon("refresh-ccw");
         reloadButton.setTooltip(this.manager.translator.t("管理器_重载插件_描述"));
         this.bindLongPressTooltip(reloadButton.buttonEl, this.manager.translator.t("管理器_重载插件_描述"));
-        reloadButton.onClick(async () => {
+        reloadButton.onClick(this.action(async () => {
             if (this.reloadingManifests) return;
             this.reloadingManifests = true;
             reloadButton.setDisabled(true);
@@ -2845,14 +2886,14 @@ export class ManagerModal extends Modal {
                 );
                 await this.reloadShowData();
             } catch (e) {
-                console.error("[BPM] reload manifests failed", e);
+                if (this.settings.DEBUG) console.error("[BPM] reload manifests failed", e);
                 new Notice(this.manager.translator.t("管理器_重载插件_失败提示"), 4000);
             } finally {
                 notice.hide();
                 reloadButton.setDisabled(false);
                 this.reloadingManifests = false;
             }
-        });
+        }));
 
         // [操作行] 编辑模式
         const editorButton = new ButtonComponent(actionBar.controlEl);
@@ -2867,7 +2908,7 @@ export class ManagerModal extends Modal {
         this.editorButtonEl = editorButton.buttonEl;
         this.bindLongPressTooltip(editorButton.buttonEl, this.manager.translator.t("管理器_编辑模式_描述"));
         editorButton.onClick(() => {
-            void this.setEditorMode(!this.editorMode);
+            this.action(async () => { await this.setEditorMode(!this.editorMode); })();
         });
 
         if (this.isRibbonManagerEnabled()) {
@@ -2877,14 +2918,14 @@ export class ManagerModal extends Modal {
             ribbonResetButton.setTooltip(t("Ribbon_重置_提示"));
             ribbonResetButton.buttonEl.setAttribute("aria-label", t("Ribbon_重置_提示"));
             this.bindLongPressTooltip(ribbonResetButton.buttonEl, t("Ribbon_重置_提示"));
-            ribbonResetButton.onClick(async () => {
+            ribbonResetButton.onClick(this.action(async () => {
                 if (!(await confirmWithModal(this.app, this.manager, t("Ribbon_重置_确认")))) return;
                 if (!this.isRibbonManagerEnabled()) return;
                 if (!this.ribbonPage) this.ribbonPage = new RibbonModal(this.app, this.manager);
                 this.manager.ribbonModal = this.ribbonPage;
-                await this.ribbonPage.syncRibbonItems();
+                this.ribbonPage.syncRibbonItems();
                 await this.ribbonPage.resetRibbonLayout();
-            });
+            }));
         }
 
         const addSeparatorButton = new ButtonComponent(actionBar.controlEl);
@@ -2893,9 +2934,9 @@ export class ManagerModal extends Modal {
         addSeparatorButton.setTooltip(t("管理器_布局_添加分割线"));
         addSeparatorButton.buttonEl.setAttribute("aria-label", t("管理器_布局_添加分割线"));
         this.bindLongPressTooltip(addSeparatorButton.buttonEl, t("管理器_布局_添加分割线"));
-        addSeparatorButton.onClick(async () => {
+        addSeparatorButton.onClick(this.action(async () => {
             await this.addPluginLayoutSeparator();
-        });
+        }));
 
         const hiddenResetButton = new ButtonComponent(actionBar.controlEl);
         markTool(hiddenResetButton, "layout", 61);
@@ -2903,10 +2944,10 @@ export class ManagerModal extends Modal {
         hiddenResetButton.setTooltip(t("管理器_布局_按名称重置"));
         hiddenResetButton.buttonEl.setAttribute("aria-label", t("管理器_布局_按名称重置"));
         this.bindLongPressTooltip(hiddenResetButton.buttonEl, t("管理器_布局_按名称重置"));
-        hiddenResetButton.onClick(async () => {
+        hiddenResetButton.onClick(this.action(async () => {
             if (!(await confirmWithModal(this.app, this.manager, t("管理器_布局_重置确认")))) return;
             await this.resetPluginLayout();
-        });
+        }));
 
         const hiddenPluginsButton = new ButtonComponent(actionBar.controlEl);
         markTool(hiddenPluginsButton, 'plugin', 55);
@@ -2933,7 +2974,7 @@ export class ManagerModal extends Modal {
         marketButton.setTooltip(this.manager.translator.t("管理器_插件市场_描述"));
         this.bindLongPressTooltip(marketButton.buttonEl, this.manager.translator.t("管理器_插件市场_描述"));
         marketButton.onClick(() => {
-            void this.openPluginMarket();
+            this.action(async () => { await this.openPluginMarket(); })();
         });
 
         // [操作行] 外观市场
@@ -2943,7 +2984,7 @@ export class ManagerModal extends Modal {
         appearanceMarketButton.setTooltip(this.manager.translator.t("管理器_外观市场_描述"));
         this.bindLongPressTooltip(appearanceMarketButton.buttonEl, this.manager.translator.t("管理器_外观市场_描述"));
         appearanceMarketButton.onClick(() => {
-            void this.openAppearanceMarket();
+            this.action(async () => { await this.openAppearanceMarket(); })();
         });
 
         // [操作行] 保存当前外观为方案
@@ -2953,13 +2994,13 @@ export class ManagerModal extends Modal {
         saveAppearanceProfileButton.setIcon("plus");
         saveAppearanceProfileButton.setTooltip(this.manager.translator.t("外观总览_方案_保存当前"));
         this.bindLongPressTooltip(saveAppearanceProfileButton.buttonEl, this.manager.translator.t("外观总览_方案_保存当前"));
-        saveAppearanceProfileButton.onClick(async () => {
+        saveAppearanceProfileButton.onClick(this.action(async () => {
             const [themes, snippets] = await Promise.all([
                 collectInstalledThemes(this.manager, undefined, false, true),
                 this.collectCssSnippets(),
             ]);
             this.openAppearanceProfileModal(this.createCurrentAppearanceProfileDraft(snippets), themes, snippets);
-        });
+        }));
 
         // [测试行] 刷新插件
         if (this.developerMode) {
@@ -2967,11 +3008,11 @@ export class ManagerModal extends Modal {
             markTool(testButton, "plugin", 90);
             testButton.setIcon("refresh-ccw");
             testButton.setTooltip(t("开发_刷新插件_提示"));
-            testButton.onClick(async () => {
+            testButton.onClick(this.action(async () => {
                 this.close();
                 await this.appPlugins.disablePlugin(this.manager.manifest.id);
                 await this.appPlugins.enablePlugin(this.manager.manifest.id);
-            });
+            }));
             mobileOverflowActions.push({ button: testButton, label: t('开发_刷新插件_提示'), icon: 'refresh-ccw' });
         }
 
@@ -2981,9 +3022,9 @@ export class ManagerModal extends Modal {
             markTool(testButton, "plugin", 91);
             testButton.setIcon("test-tube");
             testButton.setTooltip(t("开发_测试插件_提示"));
-            testButton.onClick(async () => {
+            testButton.onClick(this.action(async () => {
                 // 获取当前页面所有的插件ID 然后将其转换为列表
-            });
+            }));
             mobileOverflowActions.push({ button: testButton, label: t('开发_测试插件_提示'), icon: 'test-tube' });
         }
 
@@ -3063,6 +3104,7 @@ export class ManagerModal extends Modal {
             type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false',
             'aria-label': `${this.manager.translator.t('管理器_切换功能')}: ${label}`,
         } });
+        button.dataset.label = label;
         const icon = button.createSpan('manager-mobile-page-switch__icon manager-plugin-card__icon');
         icon.setAttribute('aria-hidden', 'true');
         setIcon(icon, current?.icon ?? 'blocks');
@@ -3071,8 +3113,11 @@ export class ManagerModal extends Modal {
         button.disabled = items.length === 0;
         button.addEventListener('click', () => {
             const menu = new Menu();
+            const differences = this.getConflictFeaturePages();
             for (const item of items) {
-                menu.addItem(option => option.setTitle(item.label).setIcon(item.icon).setChecked(item.page === currentPage)
+                const title = differences.has(this.conflictFeaturePage(item.page))
+                    ? `${item.label} · ${protectionText(this.manager, 'differences')}` : item.label;
+                menu.addItem(option => option.setTitle(title).setIcon(item.icon).setChecked(item.page === currentPage)
                     .onClick(() => {
                         if (item.page === currentPage) return;
                         this.setDesktopPage(item.page);
@@ -3094,18 +3139,30 @@ export class ManagerModal extends Modal {
         const chevron = button.querySelector<HTMLElement>('.manager-mobile-page-switch__chevron');
         if (!label || !icon || !chevron) return;
         const fit = () => {
+            row.removeClass('is-controls-tight');
             const style = getComputedStyle(button);
             const number = (value: string) => Number.parseFloat(value) || 0;
-            const available = row.clientWidth - actions.getBoundingClientRect().width - number(getComputedStyle(row).columnGap);
-            const required = label.getBoundingClientRect().width + icon.getBoundingClientRect().width + chevron.getBoundingClientRect().width
-                + number(style.columnGap) * 2 + number(style.paddingLeft) + number(style.paddingRight)
+            const iconWidth = (host: HTMLElement) => {
+                const svg = host.querySelector('svg');
+                return svg ? number(getComputedStyle(svg).width) : host.getBoundingClientRect().width;
+            };
+            const warning = button.querySelector<HTMLElement>(':scope > .bpm-feature-difference');
+            const minimum = iconWidth(icon) + iconWidth(chevron) + (warning ? iconWidth(warning) : 0)
+                + number(style.columnGap) * (warning ? 2 : 1) + number(style.paddingLeft) + number(style.paddingRight)
                 + number(style.borderLeftWidth) + number(style.borderRightWidth);
+            const gap = number(getComputedStyle(row).columnGap);
+            const fullAvailable = row.clientWidth - actions.getBoundingClientRect().width - gap;
+            row.toggleClass('is-controls-tight', fullAvailable < minimum);
+            const available = row.clientWidth - actions.getBoundingClientRect().width - number(getComputedStyle(row).columnGap);
+            const required = label.getBoundingClientRect().width + minimum + number(style.columnGap);
+            button.toggleClass('is-icon-only', available < minimum);
             button.toggleClass('is-label-hidden', required > available + 0.5);
         };
         this.mobileHeaderObserver = new ResizeObserver(fit);
         this.mobileHeaderObserver.observe(row);
         this.mobileHeaderObserver.observe(actions);
         this.mobileHeaderObserver.observe(label);
+        this.mobileHeaderObserver.observe(button);
         fit();
     }
 
@@ -3196,7 +3253,7 @@ export class ManagerModal extends Modal {
                 chip.addEventListener("click", () => {
                     onRemove();
                     this.showHeadMobile();
-                    void this.reloadShowData();
+                    this.action(async () => { await this.reloadShowData(); })();
                 });
             };
 
@@ -3274,20 +3331,19 @@ export class ManagerModal extends Modal {
         const existingFooter = this.modalEl.querySelector(".bpm-mobile-footer");
         if (existingFooter) existingFooter.remove();
 
-        const footer = activeDocument.createElement("div");
+        const footer = (this.modalEl.ownerDocument.defaultView ?? window).createDiv();
         footer.addClass("bpm-mobile-footer");
 
         // 创建底部按钮的辅助函数
         const createFooterBtn = (icon: string, label: string, onClick: () => void) => {
-            const btn = activeDocument.createElement("button");
+            const btn = footer.createEl("button");
             btn.type = "button";
             btn.addClass("bpm-mobile-footer__btn");
             btn.setAttribute("aria-label", label);
             setIcon(btn, icon);
-            const labelEl = activeDocument.createElement("span");
+            const labelEl = btn.createSpan();
             labelEl.addClass("bpm-mobile-footer__btn-label");
             labelEl.setText(label);
-            btn.appendChild(labelEl);
             btn.addEventListener("click", onClick);
             this.bindLongPressTooltip(btn, label);
             return btn;
@@ -3301,7 +3357,7 @@ export class ManagerModal extends Modal {
 
         // 检查更新按钮
         const updateBtn = createFooterBtn("rss", t("管理器_检查更新_描述"), () => {
-            void this.runPluginUpdateCheck(updateBtn);
+            this.action(async () => { await this.runPluginUpdateCheck(updateBtn); })();
         });
         updateBtn.addClass("manager-update-trigger");
         footer.appendChild(updateBtn);
@@ -3316,25 +3372,25 @@ export class ManagerModal extends Modal {
         const moreBtn = createFooterBtn("more-horizontal", t("管理器_更多操作_描述"), () => { });
         moreBtn.addEventListener("click", (ev) => {
             const menu = new Menu();
-            menu.addItem((item) => item.setTitle(t("管理器_重载插件_描述")).setIcon("refresh-ccw").onClick(async () => {
+            menu.addItem((item) => item.setTitle(t("管理器_重载插件_描述")).setIcon("refresh-ccw").onClick(this.action(async () => {
                 await this.appPlugins.loadManifests();
                 this.invalidatePluginCaches();
                 await this.reloadShowData();
-            }));
-            menu.addItem((item) => item.setTitle(t("菜单_隐藏插件_标题")).setIcon("eye-off").onClick(async () => {
+            })));
+            menu.addItem((item) => item.setTitle(t("菜单_隐藏插件_标题")).setIcon("eye-off").onClick(this.action(async () => {
                 const all = Object.values(this.appPlugins.manifests);
                 const plugins: PluginManifest[] = all.filter((pm) => pm.id !== this.manager.manifest.id);
                 plugins.sort((item1, item2) => item1.name.localeCompare(item2.name));
                 new HideModal(this.app, this.manager, this, plugins).open();
-            }));
+            })));
             if (this.activePage === "plugins" && this.editorMode && this.shouldRenderPluginLayoutSeparators()) {
-                menu.addItem((item) => item.setTitle(t("管理器_布局_添加分割线")).setIcon("separator-horizontal").onClick(async () => {
+                menu.addItem((item) => item.setTitle(t("管理器_布局_添加分割线")).setIcon("separator-horizontal").onClick(this.action(async () => {
                     await this.addPluginLayoutSeparator();
-                }));
-                menu.addItem((item) => item.setTitle(t("管理器_布局_按名称重置")).setIcon("rotate-ccw").onClick(async () => {
+                })));
+                menu.addItem((item) => item.setTitle(t("管理器_布局_按名称重置")).setIcon("rotate-ccw").onClick(this.action(async () => {
                     if (!(await confirmWithModal(this.app, this.manager, t("管理器_布局_重置确认")))) return;
                     await this.resetPluginLayout();
-                }));
+                })));
             }
             menu.addSeparator();
             menu.addItem((item) => item.setTitle(t("管理器_GITHUB_描述")).setIcon("github").onClick(() => {
@@ -3401,7 +3457,7 @@ export class ManagerModal extends Modal {
             this.renderDeviceScope(this.deviceScopeHostInline, 'plugins', true);
         }
         this.renderOverviewHeading();
-        if (this.settings.DEBUG) console.log("[BPM] render showData manifests size:", Object.keys(this.appPlugins.manifests).length);
+
         const uniquePlugins = this.getUniquePluginManifests();
         const manifestById = new Map(uniquePlugins.map((plugin) => [plugin.id, plugin]));
         const pluginSettingsById = new Map(this.manager.settings.Plugins.map((plugin) => [plugin.id, plugin]));
@@ -3427,9 +3483,9 @@ export class ManagerModal extends Modal {
         const cfgDir = this.app.vault.configDir;
         const showSeparators = this.shouldRenderPluginLayoutSeparators();
         const canEditLayout = this.editorMode && showSeparators;
-        if (this.settings.DEBUG) console.log("[BPM] render showData uniquePlugins:", uniquePlugins.map(p => p.id).join(","));
 
-        if (this.settings.DEBUG) console.log("[BPM] render showData before loop, children:", this.pageEl.children.length);
+
+
         this.displayPlugins = [];
         const modeBarHost = (this.bulkEditMode || this.editorMode) ? this.pageEl.createDiv("manager-bulk-bar-host") : null;
         const bulkBarHost = this.bulkEditMode ? modeBarHost : null;
@@ -3443,7 +3499,7 @@ export class ManagerModal extends Modal {
             if (!this.isRenderCurrent(renderGeneration, page)) return;
             if (renderedInBatch >= this.renderBatchSize) {
                 renderedInBatch = 0;
-                await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+                await this.nextRenderFrame();
                 if (!this.isRenderCurrent(renderGeneration, page)) return;
             }
             if (layoutItem.type === "separator") {
@@ -3482,7 +3538,7 @@ export class ManagerModal extends Modal {
             } else {
                 pluginDir = normalizePath(`${basePath}/${cfgDir}/${rawDir}`);
             }
-            if (this.settings.DEBUG) console.log("[BPM] render item", plugin.id, "children before add:", this.pageEl.children.length);
+
 
             const itemEl = new Setting(this.pageEl);
             renderedInBatch++;
@@ -3520,8 +3576,8 @@ export class ManagerModal extends Modal {
                     this.toggleBulkPluginSelection(plugin.id, checkbox.checked);
                 });
                 itemEl.settingEl.addEventListener("click", (event) => {
-                    const target = event.target;
-                    if (target instanceof HTMLElement && target.closest(".manager-plugin-card__actions, .manager-plugin-card__bulk-select, .manager-tag, .clickable-icon, button, input, select, textarea, a")) return;
+                    const target = event.targetNode;
+                    if (target?.instanceOf(itemEl.settingEl.ownerDocument.defaultView?.HTMLElement ?? HTMLElement) && target.closest(".manager-plugin-card__actions, .manager-plugin-card__bulk-select, .manager-tag, .clickable-icon, button, input, select, textarea, a")) return;
                     this.toggleBulkPluginSelection(plugin.id, !this.bulkSelectedPluginIds.has(plugin.id));
                 });
             }
@@ -3538,7 +3594,7 @@ export class ManagerModal extends Modal {
                     if (hasContextMenuItems) menu.addSeparator();
                 };
                 if (!isSelf && toolEnabled(this.settings, 'updates')) {
-                    menu.addItem(item => item.setTitle(t('更新规则_标题')).setIcon('list-filter').onClick(() => { void this.manager.openUpdateRules(plugin.id); }));
+                    menu.addItem(item => item.setTitle(t('更新规则_标题')).setIcon('list-filter').onClick(() => { this.action(async () => { await this.manager.openUpdateRules(plugin.id); })(); }));
                     hasContextMenuItems = true;
                 }
                 // 第一组：插件信息类
@@ -3546,9 +3602,9 @@ export class ManagerModal extends Modal {
                     menu.addItem((item) =>
                         item.setTitle(this.manager.translator.t("菜单_检查更新_标题"))
                             .setIcon("rss")
-                            .onClick(async () => {
+                            .onClick(this.action(async () => {
                                 await this.runSinglePluginUpdateCheck(plugin.id);
-                            })
+                            }))
                     );
                     hasContextMenuItems = true;
                 }
@@ -3571,26 +3627,26 @@ export class ManagerModal extends Modal {
                     item.setTitle(this.manager.translator.t("菜单_单次启动_描述"))
                         .setIcon("repeat-1")
                         .setDisabled(isSelf || currentIsEnabled)
-                        .onClick(async () => {
+                        .onClick(this.action(async () => {
                             await this.singleStartPlugin(plugin);
-                        })
+                        }))
                 );
                 // [菜单] 重启插件
                 if (!this.settings.DELAY && this.isMainPageActionInMenu("restart")) menu.addItem((item) =>
                     item.setTitle(this.manager.translator.t("菜单_重启插件_描述"))
                         .setIcon("refresh-ccw")
                         .setDisabled(isSelf || !currentIsEnabled)
-                        .onClick(async () => {
+                        .onClick(this.action(async () => {
                             await this.restartPlugin(plugin);
-                        })
+                        }))
                 );
                 if (hasIgnoredEnableMenuItem) menu.addItem((item) =>
                     item.setTitle(this.manager.translator.t("菜单_启用BPM忽略插件_标题"))
                         .setIcon("shield-check")
                         .setDisabled(isSelf)
-                        .onClick(async () => {
+                        .onClick(this.action(async () => {
                             await this.enableBpmIgnoredPlugin(plugin, ManagerPlugin);
-                        })
+                        }))
                 );
                 // [菜单] 隐藏插件
                 if (this.actionInMore("hide")) menu.addItem((item) =>
@@ -3638,9 +3694,9 @@ export class ManagerModal extends Modal {
                     menu.addItem((item) =>
                         item.setTitle(this.manager.translator.t("管理器_打开仓库_标题"))
                             .setIcon("github")
-                            .onClick(async () => {
+                            .onClick(this.action(async () => {
                                 await this.openPluginRepo(plugin.id);
-                            })
+                            }))
                     );
                 }
                 if (this.actionInMore("clearConfig")) {
@@ -3648,9 +3704,9 @@ export class ManagerModal extends Modal {
                         item.setTitle(this.manager.translator.t("管理器_清空配置_描述"))
                             .setIcon("file-cog")
                             .setDisabled(isSelf)
-                            .onClick(async () => {
+                            .onClick(this.action(async () => {
                                 await this.clearPluginConfig(plugin, isSelf);
-                            })
+                            }))
                     );
                 }
                 if (this.actionInMore("delete")) {
@@ -3658,9 +3714,9 @@ export class ManagerModal extends Modal {
                         item.setTitle(this.manager.translator.t("管理器_删除插件_描述"))
                             .setIcon("trash")
                             .setDisabled(isSelf)
-                            .onClick(async () => {
+                            .onClick(this.action(async () => {
                                 await this.uninstallPluginWithConfirm(plugin, isSelf);
-                            })
+                            }))
                     );
                 }
                 if (hasOpenMenuItems) hasContextMenuItems = true;
@@ -3674,9 +3730,9 @@ export class ManagerModal extends Modal {
                 );
                 // [菜单] 快捷键
                 if (this.actionInMore("hotkeys")) menu.addItem((item) =>
-                    item.setTitle(this.manager.translator.t("菜单_快捷键_标题")).setIcon("circle-plus").onClick(async () => {
+                    item.setTitle(this.manager.translator.t("菜单_快捷键_标题")).setIcon("circle-plus").onClick(this.action(async () => {
                         await this.openPluginHotkeys(plugin.id);
-                    })
+                    }))
                 );
                 // [菜单] 复制ID
                 if (this.actionInMore("copyId")) menu.addItem((item) =>
@@ -3702,7 +3758,6 @@ export class ManagerModal extends Modal {
 
                 //             await this.appSetting.open();
                 //             await this.appSetting.openTabById("community-plugins");
-                //             console.log(this.appSetting);
                 //             setTimeout(async () => {
                 //                 const tab = await this.appSetting.activeTab;
                 //                 const button = tab.containerEl.querySelector('button.mod-cta');
@@ -3767,7 +3822,8 @@ export class ManagerModal extends Modal {
                                 const excludedButtons = Array.from(
                                     itemEl.controlEl.querySelectorAll("div")
                                 );
-                                if (event.target instanceof HTMLDivElement && excludedButtons.includes(event.target)) {
+                                const target = event.targetNode;
+                                if (target?.instanceOf(itemEl.settingEl.ownerDocument.defaultView?.HTMLDivElement ?? HTMLDivElement) && excludedButtons.includes(target)) {
                                     event.stopPropagation();
                                     return;
                                 }
@@ -3834,7 +3890,7 @@ export class ManagerModal extends Modal {
             if (this.editorMode) {
                 title.setAttribute("contenteditable", "true");
                 title.addEventListener("input", () => {
-                    void (async () => {
+                    this.action(async () => {
                     if (title.textContent) {
                         ManagerPlugin.name = title.textContent;
                         await this.manager.savePluginAndExport(plugin.id);
@@ -3861,7 +3917,7 @@ export class ManagerModal extends Modal {
             if (!this.editorMode) {
                 versionWrap.addClass("manager-item__versions--clickable");
                 versionWrap.addEventListener("click", () => {
-                    void this.openPluginVersionList(plugin.id, this.manager.updateStatus?.[plugin.id] as PluginUpdateViewStatus | undefined);
+                    this.action(async () => { await this.openPluginVersionList(plugin.id, this.manager.updateStatus?.[plugin.id]); })();
                 });
             }
             const updateInfo = currentUpdateInfo;
@@ -3880,7 +3936,7 @@ export class ManagerModal extends Modal {
             this.renderDesktopOnlyBadge(titleRow, plugin, versionWrap);
 
             if (this.manager.history.available && !this.editorMode && !isSelf) new ExtraButtonComponent(titleRow).setIcon('archive-restore')
-                .setTooltip(this.manager.translator.t('回退_标题')).onClick(() => { void this.manager.openPluginHistory(plugin.id); });
+                .setTooltip(this.manager.translator.t('回退_标题')).onClick(() => { this.action(async () => { await this.manager.openPluginHistory(plugin.id); })(); });
 
             // [默认] 笔记图标
             if (ManagerPlugin.note?.length > 0) {
@@ -3914,7 +3970,7 @@ export class ManagerModal extends Modal {
             if (this.editorMode) {
                 desc.setAttribute("contenteditable", "true");
                 desc.addEventListener("input", () => {
-                    void (async () => {
+                    this.action(async () => {
                     if (desc.textContent) {
                         ManagerPlugin.desc = desc.textContent;
                         await this.manager.savePluginAndExport(plugin.id);
@@ -4075,9 +4131,9 @@ export class ManagerModal extends Modal {
                             menu.addItem((item) => item
                                 .setTitle(this.manager.translator.t("菜单_检查更新_标题"))
                                 .setIcon("rss")
-                                .onClick(async () => {
+                                .onClick(this.action(async () => {
                                     await this.runSinglePluginUpdateCheck(plugin.id);
-                                }));
+                                })));
                             hasCurrentGroup = true;
                         }
                         const currentUpdateInfo = this.manager.updateStatus?.[plugin.id] as PluginUpdateViewStatus | undefined;
@@ -4099,9 +4155,9 @@ export class ManagerModal extends Modal {
                                 .setTitle(this.manager.translator.t("菜单_单次启动_描述"))
                                 .setIcon("repeat-1")
                                 .setDisabled(isSelf || currentIsEnabled)
-                                .onClick(async () => {
+                                .onClick(this.action(async () => {
                                     await this.singleStartPlugin(plugin);
-                                }));
+                                })));
                             hasCurrentGroup = true;
                         }
                         if (!this.settings.DELAY && this.isMainPageActionInMenu("restart")) {
@@ -4110,9 +4166,9 @@ export class ManagerModal extends Modal {
                                 .setTitle(this.manager.translator.t("菜单_重启插件_描述"))
                                 .setIcon("refresh-ccw")
                                 .setDisabled(isSelf || !currentIsEnabled)
-                                .onClick(async () => {
+                                .onClick(this.action(async () => {
                                     await this.restartPlugin(plugin);
-                                }));
+                                })));
                             hasCurrentGroup = true;
                         }
                         if (currentIsBpmIgnored && this.isMainPageActionInMenu("enableIgnored")) {
@@ -4121,9 +4177,9 @@ export class ManagerModal extends Modal {
                                 .setTitle(this.manager.translator.t("菜单_启用BPM忽略插件_标题"))
                                 .setIcon("shield-check")
                                 .setDisabled(isSelf)
-                                .onClick(async () => {
+                                .onClick(this.action(async () => {
                                     await this.enableBpmIgnoredPlugin(plugin, ManagerPlugin);
-                                }));
+                                })));
                             hasCurrentGroup = true;
                         }
                         if (this.actionInMore("hide")) {
@@ -4167,9 +4223,9 @@ export class ManagerModal extends Modal {
                             menu.addItem((item) => item
                                 .setTitle(this.manager.translator.t("管理器_打开仓库_标题"))
                                 .setIcon("github")
-                                .onClick(async () => {
+                                .onClick(this.action(async () => {
                                     await this.openPluginRepo(plugin.id);
-                                }));
+                                })));
                             hasCurrentGroup = true;
                         }
                         if (this.actionInMore("clearConfig")) {
@@ -4178,9 +4234,9 @@ export class ManagerModal extends Modal {
                                 .setTitle(this.manager.translator.t("管理器_清空配置_描述"))
                                 .setIcon("file-cog")
                                 .setDisabled(isSelf)
-                                .onClick(async () => {
+                                .onClick(this.action(async () => {
                                     await this.clearPluginConfig(plugin, isSelf);
-                                }));
+                                })));
                             hasCurrentGroup = true;
                         }
                         if (this.actionInMore("delete")) {
@@ -4189,9 +4245,9 @@ export class ManagerModal extends Modal {
                                 .setTitle(this.manager.translator.t("管理器_删除插件_描述"))
                                 .setIcon("trash")
                                 .setDisabled(isSelf)
-                                .onClick(async () => {
+                                .onClick(this.action(async () => {
                                     await this.uninstallPluginWithConfirm(plugin, isSelf);
-                                }));
+                                })));
                             hasCurrentGroup = true;
                         }
                         hasPreviousGroup = hasPreviousGroup || hasCurrentGroup;
@@ -4210,9 +4266,9 @@ export class ManagerModal extends Modal {
                             menu.addItem((item) => item
                                 .setTitle(this.manager.translator.t("菜单_快捷键_标题"))
                                 .setIcon("circle-plus")
-                                .onClick(async () => {
+                                .onClick(this.action(async () => {
                                     await this.openPluginHotkeys(plugin.id);
-                                }));
+                                })));
                             hasCurrentGroup = true;
                         }
                         if (this.actionInMore("copyId")) {
@@ -4232,9 +4288,9 @@ export class ManagerModal extends Modal {
                 if (checkUpdateButton) {
                     checkUpdateButton.setIcon("rss");
                     checkUpdateButton.setTooltip(this.manager.translator.t("菜单_检查更新_标题"));
-                    checkUpdateButton.onClick(async () => {
+                    checkUpdateButton.onClick(this.action(async () => {
                         await this.runSinglePluginUpdateCheck(plugin.id);
-                    });
+                    }));
                 }
 
                 if (!this.settings.DELAY) {
@@ -4243,9 +4299,9 @@ export class ManagerModal extends Modal {
                         singleStartButton.setIcon("repeat-1");
                         singleStartButton.setTooltip(this.manager.translator.t("菜单_单次启动_描述"));
                         singleStartButton.setDisabled(isSelf || isEnabled);
-                        singleStartButton.onClick(async () => {
+                        singleStartButton.onClick(this.action(async () => {
                             await this.singleStartPlugin(plugin);
-                        });
+                        }));
                     }
 
                     restartButton = this.createConfiguredItemAction(itemEl.controlEl, "restart");
@@ -4253,9 +4309,9 @@ export class ManagerModal extends Modal {
                         restartButton.setIcon("refresh-ccw");
                         restartButton.setTooltip(this.manager.translator.t("菜单_重启插件_描述"));
                         restartButton.setDisabled(isSelf || !isEnabled);
-                        restartButton.onClick(async () => {
+                        restartButton.onClick(this.action(async () => {
                             await this.restartPlugin(plugin);
-                        });
+                        }));
                     }
                 }
 
@@ -4281,9 +4337,9 @@ export class ManagerModal extends Modal {
                 if (hotkeysButton) {
                     hotkeysButton.setIcon("circle-plus");
                     hotkeysButton.setTooltip(this.manager.translator.t("菜单_快捷键_标题"));
-                    hotkeysButton.onClick(async () => {
+                    hotkeysButton.onClick(this.action(async () => {
                         await this.openPluginHotkeys(plugin.id);
-                    });
+                    }));
                 }
 
                 const copyIdButton = this.createConfiguredItemAction(itemEl.controlEl, "copyId");
@@ -4301,9 +4357,9 @@ export class ManagerModal extends Modal {
                         enableIgnoredButton.setIcon("shield-check");
                         enableIgnoredButton.setTooltip(this.manager.translator.t("菜单_启用BPM忽略插件_标题"));
                         enableIgnoredButton.setDisabled(isSelf);
-                        enableIgnoredButton.onClick(async () => {
+                        enableIgnoredButton.onClick(this.action(async () => {
                             await this.enableBpmIgnoredPlugin(plugin, ManagerPlugin);
-                        });
+                        }));
                     }
                 }
 
@@ -4314,9 +4370,9 @@ export class ManagerModal extends Modal {
                     const repoState = this.resolvePluginRepoAction(plugin.id, knownRepo);
                     openRepoButton.setTooltip(knownRepo ? repoState.tooltip : this.manager.translator.t("管理器_打开仓库_标题"));
                     openRepoButton.setDisabled(false);
-                    openRepoButton.onClick(async () => {
+                    openRepoButton.onClick(this.action(async () => {
                         await this.openPluginRepo(plugin.id, knownRepo);
-                    });
+                    }));
                 }
 
                 // [按钮] 打开设置
@@ -4327,7 +4383,7 @@ export class ManagerModal extends Modal {
                     openPluginSetting.onClick(() => {
                         // 仅打开设置界面，不修改外域预设。 / Opening the settings tab does not mutate a foreign preset.
                         openPluginSetting?.setDisabled(true);
-                        void (async () => {
+                        this.action(async () => {
                             try {
                                 await this.appSetting.open();
                                 await this.appSetting.openTabById(plugin.id);
@@ -4369,7 +4425,7 @@ export class ManagerModal extends Modal {
                         commandButton.setTooltip(this.manager.translator.t(active ? "菜单_移出命令面板_标题" : "菜单_加入命令面板_标题"));
                     };
                     syncCommandButton();
-                    commandButton.onClick(async () => {
+                    commandButton.onClick(this.action(async () => {
                         if (this.blockForeignScopeAction(this.manager.translator.t("菜单_加入命令面板_标题"))) return;
                         const active = commandIds().includes(plugin.id);
                         const next = active
@@ -4388,7 +4444,7 @@ export class ManagerModal extends Modal {
                             this.manager.settings.COMMAND_TOGGLE_PLUGINS = previous;
                             this.manager.devices.report(error);
                         }
-                    });
+                    }));
                 }
 
                 // [按钮] 清空配置
@@ -4397,9 +4453,9 @@ export class ManagerModal extends Modal {
                     clearConfigButton.setIcon("file-cog");
                     clearConfigButton.setTooltip(this.manager.translator.t("管理器_清空配置_描述"));
                     clearConfigButton.setDisabled(isSelf);
-                    clearConfigButton.onClick(async () => {
+                    clearConfigButton.onClick(this.action(async () => {
                         await this.clearPluginConfig(plugin, isSelf);
-                    });
+                    }));
                 }
 
                 // [按钮] 删除插件
@@ -4408,9 +4464,9 @@ export class ManagerModal extends Modal {
                     deletePluginButton.setIcon("trash");
                     deletePluginButton.setTooltip(this.manager.translator.t("管理器_删除插件_描述"));
                     if (isSelf) deletePluginButton.setDisabled(true);
-                    deletePluginButton.onClick(async () => {
+                    deletePluginButton.onClick(this.action(async () => {
                         await this.uninstallPluginWithConfirm(plugin, isSelf);
-                    });
+                    }));
                 }
 
                 // [按钮] 桌面端次要操作统一收进更多菜单
@@ -4438,7 +4494,7 @@ export class ManagerModal extends Modal {
                         isRestoring = false;
                     };
                     if (isBpmIgnored) stateToggle.setTooltip(this.manager.translator.t("提示_BPM忽略_描述"));
-                    stateToggle.onChange(async () => {
+                    stateToggle.onChange(this.action(async () => {
                         if (isRestoring) return;
                         const targetEnabled = stateToggle.getValue();
                         if (isBpmIgnored) {
@@ -4486,7 +4542,7 @@ export class ManagerModal extends Modal {
                         Commands(this.app, this.manager);
                         updateCardUI();
                         this.refreshPluginCard(plugin.id);
-                    });
+                    }));
                     this.pluginCardControllers.set(plugin.id, {
                         cardEl: itemEl.settingEl,
                         statusChip,
@@ -4537,7 +4593,7 @@ export class ManagerModal extends Modal {
                 const reloadButton = new ExtraButtonComponent(itemEl.controlEl);
                 reloadButton.setIcon("refresh-ccw");
                 reloadButton.setTooltip(this.manager.translator.t("管理器_还原内容_描述"));
-                reloadButton.onClick(async () => {
+                reloadButton.onClick(this.action(async () => {
                     if (!ManagerPlugin) return; // Fix TS2532
                     ManagerPlugin.name = plugin.name;
                     ManagerPlugin.desc = plugin.description;
@@ -4547,7 +4603,7 @@ export class ManagerModal extends Modal {
                     this.manager.applySpecialPluginTags(ManagerPlugin);
                     await this.manager.savePluginAndExport(plugin.id);
                     this.refreshPluginCard(plugin.id, { allowReload: true });
-                });
+                }));
                 // [编辑] 延迟
                 if (this.settings.DELAY) {
                     const delays: Array<[string, string]> = [
@@ -4562,7 +4618,7 @@ export class ManagerModal extends Modal {
                     const isIgnored = pSettings?.tags?.includes(BPM_IGNORE_TAG);
 
                     let isRestoring = false;
-                    delaysEl.onChange(async (val) => {
+                    delaysEl.onChange(this.action(async (val) => {
                         if (!ManagerPlugin) return; // Fix lint
                         if (isRestoring) return;
 
@@ -4575,7 +4631,7 @@ export class ManagerModal extends Modal {
                         }
                         await this.manager.overview.setPluginState(plugin.id, { delay: val });
                         this.refreshPluginCard(plugin.id, { allowReload: true });
-                    });
+                    }));
 
                 }
             }
@@ -4586,11 +4642,6 @@ export class ManagerModal extends Modal {
                 if (dateMetaEl) metaEl.appendChild(dateMetaEl);
                 if (hasVisibleTags) metaEl.appendChild(tags);
                 footerEl.appendChild(itemEl.controlEl);
-            }
-
-            if (this.settings.DEBUG) {
-                const cards = Array.from(this.pageEl.querySelectorAll(".manager-item"));
-                console.log("[BPM] render showData after loop, cards:", cards.length, "ids:", cards.map(el => el.getAttribute("data-plugin-id")).filter(Boolean).join(","));
             }
         }
         if (bulkBarHost) this.renderBulkBar(bulkBarHost);
@@ -4884,7 +4935,8 @@ export class ManagerModal extends Modal {
     private async statPath(path: string): Promise<{ ctime?: number; mtime?: number } | null> {
         try {
             return await this.app.vault.adapter.stat(path);
-        } catch {
+        } catch (error) {
+            if (this.settings.DEBUG) console.error('[BPM] statPath fallback failed', error);
             return null;
         }
     }
@@ -5007,7 +5059,7 @@ export class ManagerModal extends Modal {
 
         const changed = JSON.stringify(this.manager.settings.PLUGIN_LAYOUT) !== JSON.stringify(normalized);
         this.manager.settings.PLUGIN_LAYOUT = normalized;
-        if (changed) void this.manager.saveSettings();
+        if (changed) this.action(async () => { await this.manager.saveSettings(); })();
         return this.manager.settings.PLUGIN_LAYOUT;
     }
 
@@ -5049,9 +5101,9 @@ export class ManagerModal extends Modal {
         btn.setIcon(icon);
         btn.setTooltip(label);
         btn.setDisabled(disabled);
-        btn.onClick(async () => {
+        btn.onClick(this.action(async () => {
             await onClick();
-        });
+        }));
         return btn;
     }
 
@@ -5087,9 +5139,9 @@ export class ManagerModal extends Modal {
         titleInput.setValue(layoutItem.title || t("管理器_布局_分割线"));
         titleInput.setPlaceholder(t("管理器_布局_分割线标题"));
         titleInput.inputEl.setAttribute("aria-label", t("管理器_布局_分割线标题"));
-        titleInput.onChange(async (value) => {
+        titleInput.onChange(this.action(async (value) => {
             await this.updatePluginLayoutSeparator(layoutItem.id, value);
-        });
+        }));
 
         const actions = card.createDiv("manager-hidden-card__actions");
         const order = actions.createDiv("manager-hidden-card__order");
@@ -5136,22 +5188,23 @@ export class ManagerModal extends Modal {
         this.hiddenGhostEl = itemEl.cloneNode(true) as HTMLElement;
         this.hiddenGhostEl.addClass("drag-ghost");
         this.hiddenGhostEl.addClass("manager-hidden-drag-ghost");
-        activeDocument.body.appendChild(this.hiddenGhostEl);
+        this.hiddenDragDocument = itemEl.ownerDocument;
+        this.hiddenDragDocument.body.appendChild(this.hiddenGhostEl);
         this.hiddenGhostEl.setCssStyles({
             width: `${rect.width}px`,
             height: `${rect.height}px`,
         });
         this.updateHiddenLayoutGhost(event);
 
-        this.hiddenPlaceholderEl = activeDocument.createElement("div");
+        this.hiddenPlaceholderEl = (itemEl.ownerDocument.defaultView ?? window).createDiv();
         this.hiddenPlaceholderEl.className = "drag-gap-placeholder manager-hidden-drag-placeholder";
         this.hiddenPlaceholderEl.setCssStyles({ height: `${rect.height}px` });
         itemEl.parentNode?.insertBefore(this.hiddenPlaceholderEl, itemEl);
         itemEl.addClass("dragging");
 
-        activeDocument.addEventListener("pointermove", this.handleHiddenLayoutDragMove, { passive: false });
-        activeDocument.addEventListener("pointerup", this.handleHiddenLayoutDragEndEvent);
-        activeDocument.addEventListener("pointercancel", this.handleHiddenLayoutDragEndEvent);
+        this.hiddenDragDocument.addEventListener("pointermove", this.handleHiddenLayoutDragMove, { passive: false });
+        this.hiddenDragDocument.addEventListener("pointerup", this.handleHiddenLayoutDragEndEvent);
+        this.hiddenDragDocument.addEventListener("pointercancel", this.handleHiddenLayoutDragEndEvent);
     }
 
     private handleHiddenLayoutDragMove = (event: PointerEvent) => {
@@ -5212,9 +5265,7 @@ export class ManagerModal extends Modal {
         this.hiddenDraggedItemEl = null;
         this.hiddenDragStartIndex = -1;
         this.hiddenActivePointerId = null;
-        activeDocument.removeEventListener("pointermove", this.handleHiddenLayoutDragMove);
-        activeDocument.removeEventListener("pointerup", this.handleHiddenLayoutDragEndEvent);
-        activeDocument.removeEventListener("pointercancel", this.handleHiddenLayoutDragEndEvent);
+        this.clearHiddenDragListeners();
 
         await this.movePluginLayoutItemTo(oldIndex, newIndex);
     };
@@ -5284,7 +5335,8 @@ export class ManagerModal extends Modal {
             const stat = await this.app.vault.adapter.stat(folder);
             if (!stat) return undefined;
             return stat.ctime || stat.mtime || undefined;
-        } catch {
+        } catch (error) {
+            if (this.settings.DEBUG) console.error('[BPM] readSourcePackageCreatedAt fallback failed', error);
             return undefined;
         }
     }
@@ -5543,8 +5595,15 @@ export class ManagerModal extends Modal {
         const path = this.getAppearanceConfigPath();
         try {
             if (!(await adapter.exists(path))) return {};
-            return JSON.parse(await adapter.read(path)) as AppearanceJson;
-        } catch {
+            const value: unknown = JSON.parse(await adapter.read(path));
+            if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid appearance configuration');
+            const enabled: unknown = Reflect.get(value, 'enabledCssSnippets');
+            if (enabled !== undefined && (!Array.isArray(enabled) || !enabled.every((item: unknown) => typeof item === 'string'))) {
+                throw new Error('Invalid CSS snippet list in appearance configuration');
+            }
+            return { ...value, enabledCssSnippets: Array.isArray(enabled) ? enabled.filter((item: unknown): item is string => typeof item === 'string') : undefined };
+        } catch (error) {
+            if (this.settings.DEBUG) console.error('[BPM] Reading appearance configuration failed', error);
             return {};
         }
     }
@@ -5569,7 +5628,7 @@ export class ManagerModal extends Modal {
         const enabledIds = await this.getEnabledSnippetIds();
         try {
             if (!(await adapter.exists(snippetsDir))) return [];
-            const listed = await adapter.list(snippetsDir) as { files?: string[]; folders?: string[] };
+            const listed = await adapter.list(snippetsDir);
             const snippets = (listed.files || [])
                 .filter((file) => file.toLowerCase().endsWith(".css"))
                 .map((file) => {
@@ -5589,7 +5648,8 @@ export class ManagerModal extends Modal {
                 snippets.forEach((snippet) => { snippet.enabled = appearance.snippets[snippet.id] === true; });
             }
             return snippets;
-        } catch {
+        } catch (error) {
+            if (this.settings.DEBUG) console.error('[BPM] collectCssSnippets fallback failed', error);
             return [];
         }
     }
@@ -5877,9 +5937,9 @@ export class ManagerModal extends Modal {
             const applyBtn = new ButtonComponent(itemEl.controlEl);
             applyBtn.setIcon("wand-sparkles");
             applyBtn.setTooltip(t("外观总览_方案_应用"));
-            applyBtn.onClick(async () => {
+            applyBtn.onClick(this.action(async () => {
                 await this.applyAppearanceProfile(profile);
-            });
+            }));
 
             const editBtn = new ButtonComponent(itemEl.controlEl);
             editBtn.setIcon("pencil");
@@ -5891,10 +5951,10 @@ export class ManagerModal extends Modal {
             const deleteBtn = new ButtonComponent(itemEl.controlEl);
             deleteBtn.setIcon("trash-2");
             deleteBtn.setTooltip(t("外观总览_方案_删除"));
-            deleteBtn.onClick(async () => {
+            deleteBtn.onClick(this.action(async () => {
                 if (!(await confirmWithModal(this.app, this.manager, t("外观总览_方案_删除确认", { name: profile.name })))) return;
                 await this.deleteAppearanceProfile(profile.id);
-            });
+            }));
         }
         }
 
@@ -5961,17 +6021,17 @@ export class ManagerModal extends Modal {
             activateBtn.setIcon(theme.active ? "badge-check" : "paintbrush");
             activateBtn.setTooltip(boundProfile ? t("外观总览_方案_应用绑定", { name: boundProfile.name }) : (theme.active ? t("外观总览_操作_当前主题") : t("外观总览_操作_使用主题")));
             activateBtn.setDisabled(theme.active);
-            activateBtn.onClick(async () => {
+            activateBtn.onClick(this.action(async () => {
                 await this.activateThemeWithBoundProfile(theme.name);
-            });
+            }));
 
             if (boundProfile && theme.active) {
                 const applyBoundBtn = new ButtonComponent(itemEl.controlEl);
                 applyBoundBtn.setIcon("wand-sparkles");
                 applyBoundBtn.setTooltip(t("外观总览_方案_应用绑定", { name: boundProfile.name }));
-                applyBoundBtn.onClick(async () => {
+                applyBoundBtn.onClick(this.action(async () => {
                     await this.applyAppearanceProfile(boundProfile);
-                });
+                }));
             }
 
             const openDirBtn = new ButtonComponent(itemEl.controlEl);
@@ -6051,7 +6111,7 @@ export class ManagerModal extends Modal {
                 toggle.setTooltip(enabled ? t("外观总览_操作_禁用片段") : t("外观总览_操作_启用片段"));
                 this.renderAppearanceStats(themes, snippets);
             };
-            toggle.onChange(async (enabled) => {
+            toggle.onChange(this.action(async (enabled) => {
                 const previousEnabled = snippet.enabled;
                 toggle.setDisabled(true);
                 try {
@@ -6065,7 +6125,7 @@ export class ManagerModal extends Modal {
                 } finally {
                     toggle.setDisabled(false);
                 }
-            });
+            }));
 
             const openDirBtn = new ButtonComponent(itemEl.controlEl);
             openDirBtn.setIcon("folder-open");
@@ -6100,9 +6160,9 @@ export class ManagerModal extends Modal {
             btn.setIcon(icon);
             btn.setTooltip(label);
             btn.setDisabled(disabled);
-            btn.onClick(async () => {
+            btn.onClick(this.action(async () => {
                 await onClick();
-            });
+            }));
             return btn;
         };
         const bindDragHandle = (card: HTMLElement, index: number, label: string) => {
@@ -6137,9 +6197,9 @@ export class ManagerModal extends Modal {
                 titleInput.setValue(layoutItem.title || t("管理器_布局_分割线"));
                 titleInput.setPlaceholder(t("管理器_布局_分割线标题"));
                 titleInput.inputEl.setAttribute("aria-label", t("管理器_布局_分割线标题"));
-                titleInput.onChange(async (value) => {
+                titleInput.onChange(this.action(async (value) => {
                     await this.updatePluginLayoutSeparator(layoutItem.id, value);
-                });
+                }));
 
                 const actions = card.createDiv("manager-hidden-card__actions");
                 const order = actions.createDiv("manager-hidden-card__order");
@@ -6203,8 +6263,8 @@ export class ManagerModal extends Modal {
                 } else {
                     this.settings.HIDES = this.settings.HIDES.filter(id => id !== plugin.id);
                 }
-                void this.manager.saveSettings();
-                void this.reloadShowData();
+                this.action(async () => { await this.manager.saveSettings(); })();
+                this.action(async () => { await this.reloadShowData(); })();
             });
 
             this.displayPlugins.push(plugin);
@@ -6225,11 +6285,11 @@ export class ManagerModal extends Modal {
 
         const page = containerEl.createDiv("manager-source-page");
         const sources = this.getBetaSources();
-        void this.refreshSourcesPackageCreatedAt(sources).then(async (changed) => {
+        this.action(async () => { await this.refreshSourcesPackageCreatedAt(sources).then(async (changed) => {
             if (!changed || this.activePage !== "sources") return;
             await this.manager.saveSettings();
             this.renderContent();
-        });
+        }); })();
 
         if (sources.length === 0) {
             const empty = page.createDiv("bpm-empty-state manager-source-page__empty");
@@ -6253,28 +6313,28 @@ export class ManagerModal extends Modal {
         const checkAllBtn = new ButtonComponent(actions);
         checkAllBtn.setIcon("refresh-cw");
         checkAllBtn.setButtonText(t("来源_全部检查_按钮"));
-        checkAllBtn.onClick(async () => {
+        checkAllBtn.onClick(this.action(async () => {
             checkAllBtn.setDisabled(true);
             checkAllBtn.setButtonText(t("来源_检查中_按钮"));
             for (const source of sources) {
                 await this.checkBetaSource(source);
             }
             this.renderContent();
-        });
+        }));
 
         const updateTargets = sources.filter((source) => this.sourceHasUpdate(source));
         const updateAllBtn = new ButtonComponent(actions);
         updateAllBtn.setIcon("download");
         updateAllBtn.setButtonText(t("来源_更新可更新_按钮"));
         updateAllBtn.setDisabled(updateTargets.length === 0);
-        updateAllBtn.onClick(async () => {
+        updateAllBtn.onClick(this.action(async () => {
             updateAllBtn.setDisabled(true);
             updateAllBtn.setButtonText(t("来源_更新中_按钮"));
             for (const source of updateTargets) {
                 await this.updateBetaSource(source);
             }
             this.renderContent();
-        });
+        }));
 
         const list = page.createDiv("manager-source-page__list");
         const sortedSources = [...sources].sort((a, b) => a.repo.localeCompare(b.repo));
@@ -6395,13 +6455,13 @@ export class ManagerModal extends Modal {
             const modeDropdown = new DropdownComponent(strategyWrap);
             modeDropdown.addOptions({ latest: t("来源_模式_跟随最新"), frozen: t("来源_模式_固定版本") });
             modeDropdown.setValue(source.mode || "latest");
-            modeDropdown.onChange(async (value) => {
+            modeDropdown.onChange(this.action(async (value) => {
                 if (value !== "latest" && value !== "frozen") return;
                 source.mode = value;
                 if (value === "frozen" && !source.frozenVersion) source.frozenVersion = source.latestVersion || localVersion;
                 await this.manager.saveSettings();
                 this.renderContent();
-            });
+            }));
             modeDropdown.selectEl.addClass("manager-source-item__mode");
             modeDropdown.selectEl.setAttribute("aria-label", t("来源_版本策略"));
 
@@ -6411,12 +6471,12 @@ export class ManagerModal extends Modal {
                 version: t("来源_检测方式_版本号"),
             });
             updateCheckDropdown.setValue(source.updateCheckMode || "release");
-            updateCheckDropdown.onChange(async (value) => {
+            updateCheckDropdown.onChange(this.action(async (value) => {
                 if (value !== "release" && value !== "version") return;
                 source.updateCheckMode = value;
                 await this.manager.saveSettings();
                 this.renderContent();
-            });
+            }));
             updateCheckDropdown.selectEl.addClass("manager-source-item__mode");
             updateCheckDropdown.selectEl.addClass("manager-source-item__check-mode");
             updateCheckDropdown.selectEl.setAttribute("aria-label", t("来源_检测方式"));
@@ -6430,11 +6490,11 @@ export class ManagerModal extends Modal {
                     all: t("兼容性_显示全部"),
                 });
                 compatibilityDropdown.setValue(source.compatibilityMode || "compatible");
-                compatibilityDropdown.onChange(async (value) => {
+                compatibilityDropdown.onChange(this.action(async (value) => {
                     source.compatibilityMode = value === "all" ? "all" : "compatible";
                     await this.checkBetaSource(source);
                     this.renderContent();
-                });
+                }));
                 compatibilityDropdown.selectEl.addClass("manager-source-item__mode");
                 compatibilityDropdown.selectEl.setAttribute("aria-label", t("兼容性_策略"));
             }
@@ -6450,26 +6510,26 @@ export class ManagerModal extends Modal {
             delayInput.inputEl.setAttribute("step", "1");
             delayInput.inputEl.setAttribute("aria-label", t("来源_更新延迟_标签"));
             delayInput.inputEl.setAttribute("title", t("来源_更新延迟_说明"));
-            delayInput.onChange(async (value) => {
+            delayInput.onChange(this.action(async (value) => {
                 source.updateDelayDays = this.normalizeSourceUpdateDelayDays(value);
                 await this.manager.saveSettings();
-            });
+            }));
             delayInput.inputEl.addEventListener("blur", () => {
-                void this.checkBetaSource(source).then(() => {
+                this.action(async () => { await this.checkBetaSource(source).then(() => {
                     if (this.activePage === "sources") this.renderContent();
-                });
+                }); })();
             });
 
             if (source.mode === "frozen") {
                 const frozenInput = new TextComponent(strategyWrap);
-                frozenInput.setPlaceholder("tag");
+                frozenInput.setPlaceholder("Tag");
                 frozenInput.setValue(source.frozenVersion || "");
                 frozenInput.inputEl.addClass("manager-source-item__version");
                 frozenInput.inputEl.setAttribute("aria-label", t("来源_固定Tag_标签"));
-                frozenInput.onChange(async (value) => {
+                frozenInput.onChange(this.action(async (value) => {
                     source.frozenVersion = value.trim();
                     await this.manager.saveSettings();
-                });
+                }));
             }
 
             const updateToggleGrid = updatePanel.createDiv("manager-source-card__toggle-grid");
@@ -6480,11 +6540,11 @@ export class ManagerModal extends Modal {
             const autoToggle = new ToggleComponent(autoWrap);
             autoToggle.setValue(Boolean(source.autoUpdate));
             autoToggle.toggleEl.setAttribute("aria-label", t("来源_自动更新"));
-            autoToggle.onChange(async (value) => {
+            autoToggle.onChange(this.action(async (value) => {
                 source.autoUpdate = value;
                 await this.manager.saveSettings();
                 this.renderContent();
-            });
+            }));
 
             const prereleaseGroup = updateToggleGrid.createDiv("manager-source-card__control-group manager-source-card__control-group--pre");
             prereleaseGroup.createSpan({ cls: "manager-source-card__control-label", text: t("安装_发布类型_预发布") });
@@ -6493,12 +6553,12 @@ export class ManagerModal extends Modal {
             const prereleaseToggle = new ToggleComponent(prereleaseWrap);
             prereleaseToggle.setValue(Boolean(source.includePrerelease));
             prereleaseToggle.toggleEl.setAttribute("aria-label", t("安装_发布类型_预发布"));
-            prereleaseToggle.onChange(async (value) => {
+            prereleaseToggle.onChange(this.action(async (value) => {
                 source.includePrerelease = value;
                 await this.manager.saveSettings();
                 await this.checkBetaSource(source);
                 this.renderContent();
-            });
+            }));
 
             const actionGroup = updatePanel.createDiv("manager-source-card__actions");
             const prepareActionButton = (btn: ButtonComponent, label: string) => {
@@ -6509,12 +6569,12 @@ export class ManagerModal extends Modal {
             const checkBtn = new ButtonComponent(actionGroup);
             checkBtn.setIcon("refresh-cw");
             prepareActionButton(checkBtn, t("来源_检查更新_按钮"));
-            checkBtn.onClick(async () => {
+            checkBtn.onClick(this.action(async () => {
                 checkBtn.setDisabled(true);
                 await this.checkBetaSource(source);
                 checkBtn.setDisabled(false);
                 this.renderContent();
-            });
+            }));
 
             const updateBtn = new ButtonComponent(actionGroup);
             updateBtn.setIcon("download");
@@ -6522,22 +6582,22 @@ export class ManagerModal extends Modal {
             updateBtn.setDisabled(localVersion === notInstalledText
                 ? !source.latestReleaseTag && !source.latestVersion
                 : !hasUpdate);
-            updateBtn.onClick(async () => {
+            updateBtn.onClick(this.action(async () => {
                 updateBtn.setDisabled(true);
                 await this.updateBetaSource(source);
                 updateBtn.setDisabled(false);
                 this.renderContent();
-            });
+            }));
 
             const reinstallBtn = new ButtonComponent(actionGroup);
             reinstallBtn.setIcon("rotate-ccw");
             prepareActionButton(reinstallBtn, t("来源_重装_按钮"));
-            reinstallBtn.onClick(async () => {
+            reinstallBtn.onClick(this.action(async () => {
                 reinstallBtn.setDisabled(true);
                 await this.updateBetaSource(source, true);
                 reinstallBtn.setDisabled(false);
                 this.renderContent();
-            });
+            }));
 
             const githubBtn = new ButtonComponent(actionGroup);
             githubBtn.setIcon("github");
@@ -6549,12 +6609,12 @@ export class ManagerModal extends Modal {
             const removeBtn = new ButtonComponent(actionGroup);
             removeBtn.setIcon("trash-2");
             prepareActionButton(removeBtn, t("来源_停止跟踪_按钮"));
-            removeBtn.onClick(async () => {
+            removeBtn.onClick(this.action(async () => {
                 if (!(await confirmWithModal(this.app, this.manager, t("来源_停止跟踪_确认")))) return;
                 this.manager.settings.BETA_SOURCES = this.getBetaSources().filter((item) => item !== source);
                 await this.manager.saveSettings();
                 this.renderContent();
-            });
+            }));
         }
     }
 
@@ -6697,10 +6757,9 @@ export class ManagerModal extends Modal {
         const resetVersionControls = () => {
             if (versionSelectEl) {
                 versionSelectEl.empty();
-                const option = activeDocument.createElement("option");
+                const option = versionSelectEl.createEl("option");
                 option.value = "";
                 option.text = t("管理器_安装_版本_默认最新");
-                versionSelectEl.appendChild(option);
                 versionSelectEl.value = "";
             }
             if (versionInputEl) versionInputEl.value = "";
@@ -6783,7 +6842,7 @@ export class ManagerModal extends Modal {
                 this.installVersion = "";
                 if (this.installVersions.length === 0) new Notice(t("管理器_安装_版本_空提示"));
             } catch (e) {
-                console.error(e);
+                if (this.settings.DEBUG) console.error(e);
                 new Notice(t("管理器_安装_版本_失败提示"));
             } finally {
                 this.renderContent();
@@ -6819,7 +6878,7 @@ export class ManagerModal extends Modal {
             text.inputEl.addEventListener("keydown", (event) => {
                 if (event.key !== "Enter") return;
                 event.preventDefault();
-                void fetchVersions();
+                this.action(async () => { await fetchVersions(); })();
             });
         });
 
@@ -6840,7 +6899,7 @@ export class ManagerModal extends Modal {
                 const clearIcon = clearHistoryBtn.createSpan();
                 setIcon(clearIcon, "x");
                 clearHistoryBtn.addEventListener("click", () => {
-                    void (async () => {
+                    this.action(async () => {
                         if (!(await confirmWithModal(this.app, this.manager, t("安装_历史_清空_确认")))) return;
                         this.manager.settings.INSTALL_HISTORY = [];
                         await this.manager.saveSettings();
@@ -6893,7 +6952,7 @@ export class ManagerModal extends Modal {
         });
         versionSetting.addText((text) => {
             versionInputEl = text.inputEl;
-            text.setPlaceholder("tag");
+            text.setPlaceholder("Tag");
             text.setValue(this.installVersion);
             text.inputEl.addClass("manager-install__version-input");
             text.inputEl.setAttribute("spellcheck", "false");
@@ -6904,13 +6963,13 @@ export class ManagerModal extends Modal {
             text.inputEl.addEventListener("keydown", (event) => {
                 if (event.key !== "Enter") return;
                 event.preventDefault();
-                void fetchVersions();
+                this.action(async () => { await fetchVersions(); })();
             });
         });
         versionSetting.addButton((btn) => {
             fetchButton = btn;
             btn.setButtonText(t("管理器_安装_版本_获取按钮"));
-            btn.onClick(() => { void fetchVersions(); });
+            btn.onClick(() => { this.action(async () => { await fetchVersions(); })(); });
         });
 
         const releaseInfo = panel.createDiv("manager-install__release");
@@ -6944,7 +7003,7 @@ export class ManagerModal extends Modal {
             btn.setButtonText(t("管理器_安装_操作_按钮"));
             btn.setCta();
             btn.setDisabled(!repoIsValid);
-            btn.onClick(async () => {
+            btn.onClick(this.action(async () => {
                 const validRepo = this.requireInstallRepo();
                 if (!validRepo) { new Notice(t("管理器_安装_仓库为空提示")); return; }
                 btn.setDisabled(true);
@@ -6977,7 +7036,8 @@ export class ManagerModal extends Modal {
                                             enabled: true,
                                         }, versions)?.tag) || versions.find((item) => !item.prerelease) || versions[0] || null
                                         : versions.find((item) => !item.prerelease) || versions[0] || null;
-                            } catch {
+                            } catch (error) {
+            if (this.settings.DEBUG) console.error('[BPM] showInstallPanel fallback failed', error);
                                 selectedRelease = null;
                             }
                         }
@@ -7016,7 +7076,7 @@ export class ManagerModal extends Modal {
                 } else {
                     btn.setButtonText(t("管理器_安装_操作_按钮"));
                 }
-            });
+            }));
         });
     }
 
@@ -7045,7 +7105,7 @@ export class ManagerModal extends Modal {
             cls: "manager-ribbon-page__loading",
             text: this.manager.translator.t("Ribbon_标题"),
         });
-        await this.ribbonPage.syncRibbonItems();
+        this.ribbonPage.syncRibbonItems();
         if (!this.isRenderCurrent(renderGeneration, "ribbon")) return;
         this.ribbonPage.display(page, false);
     }
@@ -7082,7 +7142,7 @@ export class ManagerModal extends Modal {
         downloadBtn.setButtonText(t("导入导出_下载JSON"));
         downloadBtn.setCta();
         downloadBtn.setDisabled(this.transferBusy);
-        downloadBtn.onClick(() => { void this.exportTransferPackage("download"); });
+        downloadBtn.onClick(() => { this.action(async () => { await this.exportTransferPackage("download"); })(); });
     }
 
     private renderTransferDownloadHeader(card: HTMLElement) {
@@ -7103,7 +7163,7 @@ export class ManagerModal extends Modal {
         downloadAllBtn.setButtonText(t("导入导出_一键下载"));
         downloadAllBtn.setCta();
         downloadAllBtn.setDisabled(this.transferBusy || total === 0);
-        downloadAllBtn.onClick(() => { void this.downloadAllTransferItems(); });
+        downloadAllBtn.onClick(() => { this.action(async () => { await this.downloadAllTransferItems(); })(); });
     }
 
     private renderTransferMetric(container: HTMLElement, icon: string, label: string, value: string | number, tone?: string, summaryKey?: string): HTMLElement {
@@ -7171,7 +7231,8 @@ export class ManagerModal extends Modal {
                     name: plugin.name || plugin.id,
                     meta: `${plugin.id} · data.json`,
                 });
-            } catch {
+            } catch (error) {
+            if (this.settings.DEBUG) console.error('[BPM] getTransferPluginConfigItems fallback failed', error);
                 // A single unreadable plugin folder should not block the export page.
             }
         }
@@ -7346,10 +7407,9 @@ export class ManagerModal extends Modal {
     private downloadTextFile(filename: string, text: string) {
         const blob = new Blob([text], { type: "application/json;charset=utf-8" });
         const url = URL.createObjectURL(blob);
-        const link = activeDocument.createElement("a");
+        const link = this.modalEl.ownerDocument.body.createEl("a");
         link.href = url;
         link.download = filename;
-        activeDocument.body.appendChild(link);
         link.click();
         link.remove();
         window.setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -7392,7 +7452,7 @@ export class ManagerModal extends Modal {
                 new Notice(t("导入导出_已保存", { path }));
             }
         } catch (error) {
-            console.error("[BPM] export transfer package failed", error);
+            if (this.settings.DEBUG) console.error("[BPM] export transfer package failed", error);
             new Notice(t("导入导出_导出失败"));
         } finally {
             progress.hide();
@@ -7412,7 +7472,7 @@ export class ManagerModal extends Modal {
             this.transferFileName = file.name;
             this.renderContent();
         } catch (error) {
-            console.error("[BPM] import transfer package parse failed", error);
+            if (this.settings.DEBUG) console.error("[BPM] import transfer package parse failed", error);
             new Notice(t("导入导出_文件无效"));
         }
     }
@@ -7428,7 +7488,8 @@ export class ManagerModal extends Modal {
         if (repo && repo.includes("/")) return repo;
         try {
             return this.normalizeTransferRepo(await this.manager.repoResolver.resolveRepo(plugin.id) || "");
-        } catch {
+        } catch (error) {
+            if (this.settings.DEBUG) console.error('[BPM] resolveTransferPluginRepo fallback failed', error);
             return "";
         }
     }
@@ -7547,7 +7608,7 @@ export class ManagerModal extends Modal {
             this.updateStats();
             new Notice(t(result.failedPlugins.length + result.failedThemes.length > 0 ? "导入导出_下载失败" : "导入导出_下载完成"));
         } catch (error) {
-            console.error("[BPM] transfer item download failed", error);
+            if (this.settings.DEBUG) console.error("[BPM] transfer item download failed", error);
             new Notice(t("导入导出_下载失败"));
         } finally {
             progress.hide();
@@ -7589,7 +7650,7 @@ export class ManagerModal extends Modal {
             this.updateStats();
             new Notice(t(result.failedPlugins.length + result.failedThemes.length > 0 ? "导入导出_下载部分失败" : "导入导出_下载完成"));
         } catch (error) {
-            console.error("[BPM] transfer batch download failed", error);
+            if (this.settings.DEBUG) console.error("[BPM] transfer batch download failed", error);
             new Notice(t("导入导出_下载失败"));
         } finally {
             progress.hide();
@@ -7664,11 +7725,11 @@ export class ManagerModal extends Modal {
                 icon: "blocks",
                 type: t("导入导出_类型_插件"),
                 canDownload: !sameLocalVersion && Boolean(plugin.id || plugin.repo || plugin.downloadUrl),
-                onDownload: () => { void this.downloadSingleTransferItem("plugin", index); },
+                onDownload: () => { this.action(async () => { await this.downloadSingleTransferItem("plugin", index); })(); },
                 statusText: sameLocalVersion ? t("导入导出_已是当前版本") : undefined,
                 secondaryText: configByPluginId.has(plugin.id) ? t("导入导出_配置短标签") : undefined,
                 canSecondary: configByPluginId.has(plugin.id),
-                onSecondary: configByPluginId.has(plugin.id) ? () => { void this.importTransferPluginConfigs([plugin.id]); } : undefined,
+                onSecondary: configByPluginId.has(plugin.id) ? () => { this.action(async () => { await this.importTransferPluginConfigs([plugin.id]); })(); } : undefined,
             };
         });
         const themeItems = (this.transferPackage.data.themes || []).map((theme, index) => ({
@@ -7677,7 +7738,7 @@ export class ManagerModal extends Modal {
                 icon: "palette",
                 type: t("导入导出_类型_主题"),
                 canDownload: Boolean(this.resolveTransferThemeRepo(theme)),
-                onDownload: () => { void this.downloadSingleTransferItem("theme", index); },
+                onDownload: () => { this.action(async () => { await this.downloadSingleTransferItem("theme", index); })(); },
         }));
         const configOnlyItems = configs
             .filter((config) => !pluginIds.has(config.id))
@@ -7688,7 +7749,7 @@ export class ManagerModal extends Modal {
                 type: t("导入导出_类型_配置"),
                 canDownload: true,
                 actionText: t("导入导出_导入配置"),
-                onDownload: () => { void this.importTransferPluginConfigs([config.id]); },
+                onDownload: () => { this.action(async () => { await this.importTransferPluginConfigs([config.id]); })(); },
             }));
         this.renderTransferDownloadGroup(
             wrap,
@@ -7768,7 +7829,7 @@ export class ManagerModal extends Modal {
             this.updateStats();
             new Notice(t("导入导出_导入完成"));
         } catch (error) {
-            console.error("[BPM] import transfer package failed", error);
+            if (this.settings.DEBUG) console.error("[BPM] import transfer package failed", error);
             new Notice(t("导入导出_导入失败"));
         } finally {
             progress.hide();
@@ -7810,7 +7871,7 @@ export class ManagerModal extends Modal {
             this.updateStats();
             new Notice(t("导入导出_导入配置完成", { count: result.appliedPluginConfigs }));
         } catch (error) {
-            console.error("[BPM] import transfer plugin configs failed", error);
+            if (this.settings.DEBUG) console.error("[BPM] import transfer plugin configs failed", error);
             new Notice(t("导入导出_导入失败"));
         } finally {
             progress.hide();
@@ -7835,7 +7896,7 @@ export class ManagerModal extends Modal {
         fileInput.accept = ".json,application/json";
         fileInput.addEventListener("change", () => {
             const file = fileInput.files?.[0];
-            if (file) void this.loadTransferFile(file);
+            if (file) this.action(async () => { await this.loadTransferFile(file); })();
             fileInput.value = "";
         });
         const dropzone = importCard.createDiv("manager-transfer-dropzone manager-transfer-dropzone--compact");
@@ -7861,7 +7922,7 @@ export class ManagerModal extends Modal {
             event.preventDefault();
             dropzone.removeClass("is-dragover");
             const file = event.dataTransfer?.files?.[0];
-            if (file) void this.loadTransferFile(file);
+            if (file) this.action(async () => { await this.loadTransferFile(file); })();
         });
 
         const summary = page.createDiv("manager-transfer-summary");
@@ -8021,7 +8082,7 @@ export class ManagerModal extends Modal {
         button.buttonEl.setAttribute("aria-label", tooltip);
         button.setDisabled(disabled);
         button.onClick(() => {
-            void onClick();
+            this.action(async () => { await onClick(); })();
         });
         return button;
     }
@@ -8032,7 +8093,7 @@ export class ManagerModal extends Modal {
             new Notice(successMessage);
             await this.reloadShowData();
         } catch (error) {
-            console.error("[BPM] shared vault operation failed", error);
+            if (this.settings.DEBUG) console.error("[BPM] shared vault operation failed", error);
             new Notice((error as Error)?.message || this.manager.translator.t("通用_失败_文本"));
         }
     }
@@ -8144,9 +8205,9 @@ export class ManagerModal extends Modal {
         const canSetCurrentAsMain = !currentVault || currentVault.role === "main" || currentVault.role === "local";
         setMainButton.setDisabled(!canSetCurrentAsMain);
         setMainButton.onClick(() => {
-            void this.runVaultOperation(async () => {
+            this.action(async () => { await this.runVaultOperation(async () => {
                 await setCurrentVaultAsSharedMain(this.manager);
-            }, t("共享库_提示_已设为主库"));
+            }, t("共享库_提示_已设为主库")); })();
         });
 
         const linkButton = new ButtonComponent(actions);
@@ -8154,7 +8215,7 @@ export class ManagerModal extends Modal {
         linkButton.setButtonText(t("共享库_创建链接_按钮"));
         linkButton.setCta();
         linkButton.onClick(() => {
-            void this.handleCreateSharedVaultLinks();
+            this.action(async () => { await this.handleCreateSharedVaultLinks(); })();
         });
 
         if (snapshotVaultCount === 0) {
@@ -8259,12 +8320,12 @@ export class ManagerModal extends Modal {
             const toggle = new ToggleComponent(control);
             toggle.setValue(enabled);
             toggle.setDisabled(isSelf);
-            toggle.onChange(async (value) => {
+            toggle.onChange(this.action(async (value) => {
                 toggle.setDisabled(true);
                 await this.runVaultOperation(async () => {
                     await setSharedVaultPluginEnabled(this.manager, vault.path, plugin.id, value);
                 }, t("共享库_提示_插件状态已更新", { name: plugin.name || plugin.id }));
-            });
+            }));
         }
     }
 
@@ -8297,11 +8358,11 @@ export class ManagerModal extends Modal {
             dropdown.addOption(theme.name, `${theme.name}${theme.version ? ` · v${theme.version}` : ""}`);
         }
         dropdown.setValue(vault.activeTheme);
-        dropdown.onChange(async (value) => {
+        dropdown.onChange(this.action(async (value) => {
             await this.runVaultOperation(async () => {
                 await setSharedVaultTheme(this.manager, vault.path, value);
             }, t("共享库_提示_主题已更新"));
-        });
+        }));
     }
 
     private renderVaultSelector(container: HTMLElement, vaults: SharedVaultStatus[], selectedVault: SharedVaultStatus) {
@@ -8411,17 +8472,7 @@ export class ManagerModal extends Modal {
     }
 
     private openSyncNoticeDetail(): void {
-        const t = (key: string) => this.manager.translator.t(key);
-        const modal = new Modal(this.app);
-        modal.titleEl.setText(t("同步_循环保护_标题"));
-        modal.contentEl.createEl("p", { text: t("同步_循环保护_说明") });
-        modal.contentEl.createEl("p", { text: t("同步_循环保护_建议") });
-        new Setting(modal.contentEl).addButton((button) => {
-            button.setButtonText(t("通用_关闭_文本"));
-            button.setCta();
-            button.onClick(() => modal.close());
-        });
-        modal.open();
+        if (this.manager.configProtection?.privateCacheModified) this.manager.showPrivateCacheWarning();
     }
 
     public refreshDevicePanelIfOpen(): void {
@@ -8470,19 +8521,19 @@ export class ManagerModal extends Modal {
         if (this.activePage === "devices") {
             this.showDevicePanel();
         } else if (this.activePage === "ribbon") {
-            void this.showRibbonPanel(renderGeneration);
+            this.action(async () => { await this.showRibbonPanel(renderGeneration); })();
         } else if (this.activePage === "themes") {
-            void this.showThemeOverview(renderGeneration);
+            this.action(async () => { await this.showThemeOverview(renderGeneration); })();
         } else if (this.activePage === "troubleshoot") {
             this.showTroubleshootPanel();
         } else if (this.activePage === "transfer") {
-            void this.showTransferPanel(renderGeneration);
+            this.action(async () => { await this.showTransferPanel(renderGeneration); })();
         } else if (this.activePage === "vaults") {
-            void this.showVaultSharePanel(renderGeneration);
+            this.action(async () => { await this.showVaultSharePanel(renderGeneration); })();
         } else if (this.activePage === "install" || this.activePage === "sources" || this.installMode) {
             this.showInstallPanel();
         } else {
-            void this.showData(renderGeneration);
+            this.action(async () => { await this.showData(renderGeneration); })();
         }
     }
 
@@ -8504,7 +8555,7 @@ export class ManagerModal extends Modal {
         this.overviewToolbarLayout = undefined;
         this.clearInstallToolbarMenus();
         this.ensureAllowedActivePage();
-        if (this.settings.DEBUG) console.log("[BPM] reloadShowData start, children before empty:", this.pageEl.children.length);
+
         this.clearScheduledSearchRender();
         if (this.getAvailableDesktopPages().length === 0) { this.renderContent(); return; }
         const renderGeneration = this.nextRenderGeneration();
@@ -8542,7 +8593,7 @@ export class ManagerModal extends Modal {
             if (!this.isRenderCurrent(renderGeneration, "plugins")) return;
             modalElement.scrollTo(0, scrollTop);
         }
-        if (this.settings.DEBUG) console.log("[BPM] reloadShowData end, children after render:", this.pageEl.children.length);
+
     }
 
     private async refreshFilterOptions(preserveScroll = false) {
@@ -8578,12 +8629,69 @@ export class ManagerModal extends Modal {
         await this.reloadShowData();
     }
 
+    private conflictFeaturePage(page: ManagerPage): ConflictFeaturePage {
+        return page === 'sources' ? 'install' : page === 'vaults' ? 'transfer' : page;
+    }
+
+    private getConflictFeaturePages(): ReadonlySet<ConflictFeaturePage> {
+        const choices = this.manager.configProtection?.conflictChoices;
+        return choices ? conflictFeaturePages(choices) : new Set<ConflictFeaturePage>();
+    }
+
+    /** 仅更新导航标记，保留当前页面与输入焦点；Update markers without rebuilding the active view. */
+    private syncConflictNavigation(): void {
+        const differences = this.getConflictFeaturePages();
+        const items = this.getPageNavigationItems();
+        const visiblePages = new Set(items.map(item => this.conflictFeaturePage(item.page)));
+        this.modalEl.querySelectorAll<HTMLElement>('.manager-toolbar__tab[data-page]').forEach(tab => {
+            const item = items.find(item => item.page === tab.dataset.page);
+            this.markFeatureDifference(tab, Boolean(item && differences.has(this.conflictFeaturePage(item.page))));
+        });
+        const changedLabels = items.filter(item => differences.has(this.conflictFeaturePage(item.page))).map(item => item.label);
+        this.modalEl.querySelectorAll<HTMLElement>('.manager-mobile-page-switch').forEach(button =>
+            this.markFeatureDifference(button, changedLabels.length > 0, changedLabels.join(' · ')));
+        const hiddenDifferences = [...differences].filter(page => !visiblePages.has(page));
+        this.modalEl.querySelectorAll<HTMLElement>('[data-bpm-feature-page="settings"]').forEach(button =>
+            this.markFeatureDifference(button, hiddenDifferences.length > 0));
+    }
+
+    private markFeatureDifference(control: HTMLElement, changed: boolean, details?: string): void {
+        const marker = control.querySelector<HTMLElement>(':scope > .bpm-feature-difference');
+        control.toggleClass('has-feature-difference', changed);
+        if (!changed) {
+            marker?.remove();
+            for (const [attribute, key] of [['title', 'conflictNavTitle'], ['aria-label', 'conflictNavAria']] as const) {
+                const original = control.dataset[key];
+                if (original === undefined) continue;
+                if (original) control.setAttribute(attribute, original);
+                else control.removeAttribute(attribute);
+                delete control.dataset[key];
+            }
+            return;
+        }
+        if (!marker) {
+            const warning = control.createSpan({ cls: 'bpm-feature-difference', attr: { 'aria-hidden': 'true' } });
+            setIcon(warning, 'triangle-alert');
+            const chevron = control.querySelector<HTMLElement>(':scope > .manager-mobile-page-switch__chevron');
+            if (chevron) control.insertBefore(warning, chevron);
+        }
+        control.dataset.conflictNavTitle ??= control.getAttribute('title') ?? '';
+        control.dataset.conflictNavAria ??= control.getAttribute('aria-label') ?? control.dataset.label ?? '';
+        const message = `${protectionText(this.manager, 'featureDifferences')}${details ? `: ${details}` : ''}`;
+        const title = control.dataset.conflictNavTitle;
+        control.setAttribute('title', `${title ? `${title} · ` : ''}${message}`);
+        control.setAttribute('aria-label', `${control.dataset.conflictNavAria} · ${message}`);
+    }
+
+    public refreshSettingsSaveState(): void { this.settingsSaveButton?.refresh(); }
+
     public refreshConfigConflict(): void {
         const paused = Boolean(this.manager.configProtection?.protection.paused);
         this.modalEl?.toggleClass('has-config-conflict', paused);
         this.syncNoticeView?.refresh();
         this.conflictMarkers?.apply();
-        void this.conflictView?.refresh().catch(error => {
+        this.syncConflictNavigation();
+        void this.conflictView?.refresh().then(() => this.syncConflictNavigation()).catch(error => {
             if (this.settings.DEBUG) console.error('[BPM] Rendering configuration conflict failed', error);
             new Notice(protectionText(this.manager, 'error'));
         });
@@ -8612,48 +8720,72 @@ export class ManagerModal extends Modal {
         controller.statusChip.toggleClass('is-disabled', !enabled);
     }
 
-    public onOpen() {
+    public onOpen(): void {
+        this.opened = true;
         this.manager.beginSettingsEditing(this);
         this.conflictMarkers = new ConfigConflictMarkers(this.manager, this.modalEl, (row, value) => this.previewConflictPlugin(row, value));
         this.conflictObserver = new MutationObserver(() => {
             if (!this.manager.configProtection?.protection.conflict || this.conflictMarkerFrame !== undefined) return;
-            this.conflictMarkerFrame = window.requestAnimationFrame(() => {
+            const view = this.modalEl.ownerDocument.defaultView;
+            if (!view) return;
+            const id = view.requestAnimationFrame(() => {
                 this.conflictMarkerFrame = undefined;
                 this.conflictMarkers?.apply();
             });
+            this.conflictMarkerFrame = { view, id };
         });
         this.conflictObserver.observe(this.modalEl, { childList: true, subtree: true });
         this.scrollbars?.destroy();
         this.scrollbars = new FloatingScrollbars(this.modalEl);
-        void this.openAsync();
+        this.action(() => this.openAsync())();
     }
 
     private async openAsync() {
         await this.showHead();
+        if (!this.opened) return;
         await this.showData();
+        if (!this.opened) return;
         this.refreshConfigConflict();
         // 移动端不自动聚焦搜索框：会弹出软键盘挡住半个管理器。
         if (!Platform.isMobile) this.searchEl.inputEl.focus();
         this.applyEditingStyle();
         // [功能] ctrl+f聚焦
-        activeDocument.addEventListener("keydown", (event) => {
-            if (event.ctrlKey && event.key.toLowerCase() === "f") {
-                if (this.searchEl.inputEl) {
-                    this.searchEl.inputEl.focus();
-                }
-            }
-        });
+        this.shortcutDocument?.removeEventListener('keydown', this.onShortcut);
+        this.shortcutDocument = this.modalEl.ownerDocument;
+        this.shortcutDocument.addEventListener('keydown', this.onShortcut);
     }
 
-    public onClose() {
+    private clearHiddenDragListeners(): void {
+        this.hiddenDragDocument?.removeEventListener('pointermove', this.handleHiddenLayoutDragMove);
+        this.hiddenDragDocument?.removeEventListener('pointerup', this.handleHiddenLayoutDragEndEvent);
+        this.hiddenDragDocument?.removeEventListener('pointercancel', this.handleHiddenLayoutDragEndEvent);
+        this.hiddenDragDocument = undefined;
+    }
+
+    public onClose(): void {
+        this.opened = false;
+        this.nextRenderGeneration();
+        this.shortcutDocument?.removeEventListener('keydown', this.onShortcut);
+        this.shortcutDocument = undefined;
+        this.clearHiddenDragListeners();
+        this.hiddenGhostEl?.remove();
+        this.hiddenPlaceholderEl?.remove();
+        this.hiddenDraggedItemEl?.removeClass('dragging');
+        this.hiddenGhostEl = null;
+        this.hiddenPlaceholderEl = null;
+        this.hiddenDraggedItemEl = null;
+        this.hiddenDragStartIndex = -1;
+        this.hiddenActivePointerId = null;
         this.conflictObserver?.disconnect();
         this.conflictObserver = undefined;
-        if (this.conflictMarkerFrame !== undefined) window.cancelAnimationFrame(this.conflictMarkerFrame);
+        if (this.conflictMarkerFrame) this.conflictMarkerFrame.view.cancelAnimationFrame(this.conflictMarkerFrame.id);
         this.conflictMarkerFrame = undefined;
         this.conflictMarkers?.destroy();
         this.conflictMarkers = undefined;
         this.syncNoticeView?.destroy();
         this.syncNoticeView = undefined;
+        this.settingsSaveButton?.destroy();
+        this.settingsSaveButton = undefined;
         this.conflictView?.destroy();
         this.conflictView = undefined;
         this.clearInstallToolbarMenus();
@@ -8681,7 +8813,7 @@ export class ManagerModal extends Modal {
             .catch(error => this.manager.devices.report(error));
         if (this.settings.PERSISTENCE && this.settings.FILTER_SEARCH !== this.searchText) {
             this.settings.FILTER_SEARCH = this.searchText;
-            void this.manager.saveSettings();
+            this.action(async () => { await this.manager.saveSettings(); })();
         }
         this.contentEl.empty();
         this.modalChromeEl = undefined;

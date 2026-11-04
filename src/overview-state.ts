@@ -47,8 +47,39 @@ export class OverviewState {
         return cloneAppearance(this.appearanceOverrides.get(scope) ?? appearance);
     }
 
+    /** 保存选择更新永久基线，临时字段仍留在会话中。 Rebase session overrides onto a saved selection. */
+    reconcileSavedState(scope: string, plugins: Record<string, DevicePluginState>, appearance: ScopedAppearance): void {
+        const baselines = this.pluginBaselines.get(scope), overrides = this.pluginOverrides.get(scope);
+        for (const [id, before] of baselines ?? []) {
+            const saved = plugins[id], current = overrides?.get(id);
+            if (!saved || !current) { baselines?.delete(id); overrides?.delete(id); continue; }
+            const next = { enabled: current.enabled !== before.enabled ? current.enabled : saved.enabled,
+                delay: current.delay !== before.delay ? current.delay : saved.delay };
+            if (next.enabled === saved.enabled && next.delay === saved.delay) {
+                baselines?.delete(id); overrides?.delete(id);
+            } else { baselines?.set(id, { ...saved }); overrides?.set(id, next); }
+        }
+        const before = this.appearanceBaselines.get(scope), current = this.appearanceOverrides.get(scope);
+        if (!before || !current) return;
+        const next = cloneAppearance(appearance);
+        if (current.theme !== before.theme) next.theme = current.theme;
+        for (const id of new Set([...Object.keys(before.snippets), ...Object.keys(current.snippets)])) {
+            if (Boolean(current.snippets[id]) !== Boolean(before.snippets[id])) next.snippets[id] = Boolean(current.snippets[id]);
+        }
+        this.appearanceBaselines.set(scope, cloneAppearance(appearance));
+        this.appearanceOverrides.set(scope, next);
+    }
+
     /** 单项与批量共用原生生命周期入口；One lifecycle path for card and bulk operations. */
     async setPluginState(id: string, patch: Partial<DevicePluginState>): Promise<void> {
+        await this.withUserAction(() => this.applyPluginState(id, patch));
+    }
+    private async withUserAction(action: () => Promise<void>): Promise<void> {
+        const end = this.manager.configProtection?.beginUserAction();
+        try { await action(); }
+        finally { end?.(); }
+    }
+    private async applyPluginState(id: string, patch: Partial<DevicePluginState>): Promise<void> {
         const record = this.manager.settings.Plugins.find(plugin => plugin.id === id);
         if (!record || id === this.manager.manifest.id || record.tags.includes('bpm-ignore')) return;
         const scope = this.scope('plugins');
@@ -76,15 +107,26 @@ export class OverviewState {
             overrides.set(id, next);
             this.pluginOverrides.set(scope, overrides);
         } else {
-            this.pluginBaselines.get(scope)?.delete(id);
-            this.pluginOverrides.get(scope)?.delete(id);
+            const baselines = this.pluginBaselines.get(scope), overrides = this.pluginOverrides.get(scope);
+            const persistent = { ...(baselines?.get(id) ?? previous), ...patch };
+            // 持久操作只提交本次字段，不能顺带保存其它临时值。 Keep unrelated session fields temporary.
+            if (persistent.enabled !== next.enabled || persistent.delay !== next.delay) {
+                baselines?.set(id, persistent);
+                overrides?.set(id, next);
+            } else {
+                baselines?.delete(id);
+                overrides?.delete(id);
+            }
         }
         record.enabled = next.enabled;
         record.delay = next.delay;
-        await this.manager.saveSettings();
+        if (!session) await this.manager.saveSettings();
     }
 
     async writeAppearance(patch: AppearancePatch): Promise<void> {
+        await this.withUserAction(() => this.applyAppearance(patch));
+    }
+    private async applyAppearance(patch: AppearancePatch): Promise<void> {
         const devices = this.manager.devices;
         const scope = this.scope('themes');
         const foreign = devices.isProjectingForeign('themes');
@@ -135,7 +177,7 @@ export class OverviewState {
         this.appearanceBaselines.set(scope, baseline);
         this.appearanceOverrides.set(scope, next);
         const preset = devices.presetById(scope)?.preset;
-        if (preset) { preset.appearance = cloneAppearance(baseline); preset.configured = true; }
-        await this.manager.saveSettings();
+        if (preset && !session) { preset.appearance = cloneAppearance(baseline); preset.configured = true; }
+        if (!session) await this.manager.saveSettings();
     }
 }

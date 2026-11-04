@@ -49,6 +49,8 @@ export class BackgroundTaskCenter {
     private listeners = new Set<() => void>();
     private nextId = 1;
 
+    constructor(private readonly onListenerError: (error: unknown) => void) {}
+
     /**
      * 登记一个进行中的任务 / Register a running task.
      * 返回的 handle 在任务结束后忽略后续 update，避免迟到回调把进度改回去。
@@ -114,7 +116,7 @@ export class BackgroundTaskCenter {
                 listener();
             } catch (error) {
                 // UI 订阅者异常不应中断下载流程 / A faulty subscriber must not break downloads.
-                console.error("[BPM] task center listener failed", error);
+                this.onListenerError(error);
             }
         }
     }

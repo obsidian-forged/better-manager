@@ -35,7 +35,14 @@ export class UpdateModal extends Modal {
         this.repo = repo;
     }
 
-    async onOpen() {
+    onOpen(): void {
+        void this.initialize().catch(error => {
+            if (this.manager.settings.DEBUG) console.error('[BPM] Opening version picker failed', error);
+            if (!this.closed) new Notice(`${this.manager.translator.t('安装_错误_通用')} ${error instanceof Error ? error.message : ''}`);
+        });
+    }
+
+    private async initialize(): Promise<void> {
         this.closed = false;
         this.sourceConfirmed = !this.options.sourceConfirmation;
         const { contentEl } = this;

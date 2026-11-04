@@ -82,7 +82,7 @@ export default class ManagerBasis extends BaseSetting {
         const languageDropdown = new DropdownComponent(languageBar.controlEl);
         languageDropdown.addOptions(this.manager.translator.language);
         languageDropdown.setValue(this.settings.LANGUAGE);
-        languageDropdown.onChange(async (value) => {
+        languageDropdown.onChange(this.action(async (value) => {
             this.settings.LANGUAGE = value;
             void this.manager.saveSettings();
             // 非 en/zh-cn 的语言表是懒加载的，必须先物化再重绘，
@@ -92,7 +92,7 @@ export default class ManagerBasis extends BaseSetting {
             Commands(this.app, this.manager);
             this.settingTab.renderSettings();
             this.render();
-        });
+        }));
 
         const persistenceBar = new Setting(this.containerEl)
             .setName(this.manager.translator.t("设置_基础设置_筛选持久化_标题"))
@@ -324,7 +324,7 @@ export default class ManagerBasis extends BaseSetting {
             const saveTokenButton = new ButtonComponent(tokenBar.controlEl);
             saveTokenButton.setButtonText(this.manager.translator.t("设置_基础设置_GITHUB_TOKEN_保存"));
             saveTokenButton.setCta();
-            saveTokenButton.onClick(async () => {
+            saveTokenButton.onClick(this.action(async () => {
                 const token = tokenInput.getValue().trim();
                 if (!token) return;
                 await this.manager.setGithubToken(token);
@@ -332,18 +332,18 @@ export default class ManagerBasis extends BaseSetting {
                 tokenInput.setPlaceholder("********");
                 tokenStatus.setText(this.getGithubTokenStatusText());
                 clearTokenButton?.setDisabled(false);
-            });
+            }));
 
             clearTokenButton = new ButtonComponent(tokenBar.controlEl);
             clearTokenButton.setButtonText(this.manager.translator.t("设置_基础设置_GITHUB_TOKEN_清除"));
             clearTokenButton.setDisabled(!this.manager.hasGithubToken());
-            clearTokenButton.onClick(async () => {
+            clearTokenButton.onClick(this.action(async () => {
                 await this.manager.clearGithubToken();
                 tokenInput.setValue("");
-                tokenInput.setPlaceholder("ghp_xxx");
+                tokenInput.setPlaceholder("GitHub token");
                 tokenStatus.setText(this.getGithubTokenStatusText());
                 clearTokenButton?.setDisabled(true);
-            });
+            }));
 
             void this.manager.getGithubToken().then(() => {
                 tokenInput.setPlaceholder(this.manager.hasGithubToken() ? "********" : "ghp_xxx");
@@ -370,11 +370,11 @@ export default class ManagerBasis extends BaseSetting {
             .setDesc(this.manager.translator.t("设置_基础设置_边栏编排_描述"));
         const ribbonManagerToggle = new ToggleComponent(ribbonManagerBar.controlEl);
         ribbonManagerToggle.setValue(this.settings.RIBBON_MANAGER_ENABLED !== false);
-        ribbonManagerToggle.onChange(async (value) => {
+        ribbonManagerToggle.onChange(this.action(async (value) => {
             this.settings.RIBBON_MANAGER_ENABLED = value;
             await this.manager.saveSettings();
             await this.manager.refreshRibbonManagerFeature();
-        });
+        }));
 
         heading("设置_基础设置_分组_命令");
 

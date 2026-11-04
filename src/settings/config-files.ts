@@ -1,6 +1,7 @@
 import { ConfigDraft, ConfigProtectionIO, ConfigConflict, ConfigEditorReopened } from './config-protection';
 import { ConfigRecord, ConfigSnapshot, decodeConfig, DigestText, encodeConfig } from './config-revision';
 import { settingsFingerprint } from './session-store';
+import type { PrivateCacheWrites } from './private-cache-watch';
 
 export interface ConfigFileAdapter {
     exists(path: string): Promise<boolean>;
@@ -37,7 +38,8 @@ export class ConfigFiles implements ConfigProtectionIO {
     get hasPendingBundle(): boolean { return this.incomplete; }
 
     constructor(private readonly adapter: ConfigFileAdapter, readonly configDir: string, readonly pluginId: string,
-        private readonly owner: string, private readonly hash: DigestText, private readonly local: ConfigLocalAnchor) {
+        private readonly owner: string, private readonly hash: DigestText, private readonly local: ConfigLocalAnchor,
+        private readonly privateWrites?: PrivateCacheWrites) {
         if (!/^[a-z0-9-]{8,80}$/.test(owner)) throw new Error('Invalid configuration cache owner');
         if (!/^[a-zA-Z0-9_-]+$/.test(pluginId) || configDir.includes('..') || configDir.includes('\\') || configDir.startsWith('/')) throw new Error('Invalid plugin configuration directory');
         this.root = `${configDir}/plugins/${pluginId}`;
@@ -60,13 +62,23 @@ export class ConfigFiles implements ConfigProtectionIO {
             catch (error) { if (!await this.adapter.exists(current)) throw error; }
         }
     }
-    private async writeChanged(path: string, text: string, immutable = false): Promise<void> {
+    private async writeChanged(path: string, text: string, immutable = false, current?: () => boolean): Promise<void> {
         const previous = await this.read(path);
         if (previous === text) return;
-        if (immutable && previous !== undefined) throw new Error('BPM recovery snapshot was modified externally');
+        if (immutable && previous !== undefined) {
+            this.privateWrites?.altered(path);
+            throw new Error('BPM recovery snapshot was modified externally');
+        }
         await this.ensureParent(path);
-        await this.adapter.write(path, text);
-        if (await this.adapter.read(path) !== text) throw new Error('BPM configuration write verification failed');
+        const write = async () => {
+            if (current && !current()) throw new ConfigEditorReopened();
+            await this.adapter.write(path, text);
+        };
+        if (this.privateWrites) await this.privateWrites.write(path, text, write); else await write();
+        if (await this.adapter.read(path) !== text) {
+            this.privateWrites?.altered(path);
+            throw new Error('BPM configuration write verification failed');
+        }
     }
     private async privateJson(name: string, value: object, immutable = false): Promise<void> {
         const serializable: unknown = JSON.parse(JSON.stringify(value));
@@ -203,17 +215,33 @@ export class ConfigFiles implements ConfigProtectionIO {
     }
 
     private async readState(id: string): Promise<{ snapshot: ConfigSnapshot; state: StoredState }> {
-        const text = await this.read(`${this.privateRoot}/states/${id}.json`);
-        if (text === undefined) throw new Error('The trusted BPM configuration backup is missing');
-        const raw: unknown = JSON.parse(text);
-        if (!record(raw) || raw.owner !== this.owner || !record(raw.config) || !record(raw.files)) throw new Error('Invalid BPM recovery snapshot');
-        const files: Record<string, string | null> = {};
-        for (const [path, value] of Object.entries(raw.files)) {
-            if (!isManagedConfigFile(path) || value !== null && typeof value !== 'string') throw new Error('Invalid BPM recovery file');
-            files[path] = value;
+        const path = `${this.privateRoot}/states/${id}.json`, text = await this.read(path);
+        if (text === undefined) {
+            this.privateWrites?.altered(path);
+            throw new Error('The trusted BPM configuration backup is missing');
         }
-        const snapshot = await this.snapshotFrom(raw.config, files);
-        if (snapshot.id !== id) throw new Error('BPM recovery snapshot identity does not match the trusted anchor');
+        let raw: unknown;
+        try { raw = JSON.parse(text); }
+        catch (error) { this.privateWrites?.altered(path); throw error; }
+        if (!record(raw) || raw.owner !== this.owner || !record(raw.config) || !record(raw.files)) {
+            this.privateWrites?.altered(path);
+            throw new Error('Invalid BPM recovery snapshot');
+        }
+        const files: Record<string, string | null> = {};
+        for (const [relative, value] of Object.entries(raw.files)) {
+            if (!isManagedConfigFile(relative) || value !== null && typeof value !== 'string') {
+                this.privateWrites?.altered(path);
+                throw new Error('Invalid BPM recovery file');
+            }
+            files[relative] = value;
+        }
+        let snapshot: ConfigSnapshot;
+        try { snapshot = await this.snapshotFrom(raw.config, files); }
+        catch (error) { this.privateWrites?.altered(path); throw error; }
+        if (snapshot.id !== id) {
+            this.privateWrites?.altered(path);
+            throw new Error('BPM recovery snapshot identity does not match the trusted anchor');
+        }
         const state = { owner: this.owner, config: encodeConfig(snapshot), files };
         this.states.set(id, state);
         return { snapshot, state };
@@ -259,7 +287,10 @@ export class ConfigFiles implements ConfigProtectionIO {
     async writeDraft(value: ConfigDraft): Promise<void> { await this.privateJson('draft.json', { owner: this.owner, ...value }); }
     async removeDraft(): Promise<void> {
         const path = `${this.privateRoot}/draft.json`;
-        if (await this.adapter.exists(path)) await this.adapter.remove(path);
+        if (await this.adapter.exists(path)) {
+            const remove = () => this.adapter.remove(path);
+            if (this.privateWrites) await this.privateWrites.remove(path, remove); else await remove();
+        }
         // The immutable startup copy already preserves these owned caches. Do not resurrect a consumed draft.
         for (const legacy of [`${this.root}/data/recovery/${this.owner}.cache`, `${this.root}/data-${this.owner}.cache`]) {
             if (await this.adapter.exists(legacy)) await this.adapter.remove(legacy);
@@ -333,8 +364,13 @@ export class ConfigFiles implements ConfigProtectionIO {
         for (const [path, text] of Object.entries(files)) {
             if (!stillClosed()) throw new ConfigEditorReopened();
             const target = `${this.root}/${path}`;
-            if (text === null) { if (await this.adapter.exists(target)) await this.adapter.remove(target); }
-            else await this.writeChanged(target, text);
+            if (text === null) {
+                if (await this.adapter.exists(target)) {
+                    if (!stillClosed()) throw new ConfigEditorReopened();
+                    await this.adapter.remove(target);
+                }
+            }
+            else await this.writeChanged(target, text, false, stillClosed);
         }
         if (!stillClosed()) throw new ConfigEditorReopened();
         // Recheck the commit marker after auxiliary writes; foreign writers do not participate in this queue.
@@ -342,7 +378,8 @@ export class ConfigFiles implements ConfigProtectionIO {
         const raw: unknown = actual === undefined ? this.initialShared ?? {} : JSON.parse(actual);
         const marker = await this.sharedMarker(raw);
         if (marker.revision ? marker.id !== current.id : settingsFingerprint(marker.value) !== settingsFingerprint(current.value)) throw new ConfigDiskChanged();
-        await this.writeChanged(`${this.root}/data.json`, JSON.stringify(encodeConfig(snapshot), null, 2));
+        if (!stillClosed()) throw new ConfigEditorReopened();
+        await this.writeChanged(`${this.root}/data.json`, JSON.stringify(encodeConfig(snapshot), null, 2), false, stillClosed);
         const saved = await this.readShared();
         if (saved.id !== snapshot.id) throw new Error('BPM configuration publication verification failed');
     }

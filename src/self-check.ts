@@ -49,7 +49,7 @@ async function readCommunityPlugins(manager: Manager): Promise<string[]> {
         const path = getCommunityPluginsPath(manager);
         if (!(await adapter.exists(path))) return [];
 
-        const parsed = JSON.parse(await adapter.read(path));
+        const parsed: unknown = JSON.parse(await adapter.read(path));
         return Array.isArray(parsed) ? uniq(parsed.filter((id) => typeof id === 'string')) : [];
     } catch (error) {
         if (manager.settings.DEBUG) console.error('[BPM] Failed to read community-plugins.json:', error);
@@ -71,7 +71,7 @@ async function writeCommunityPlugins(
         await adapter.write(getCommunityPluginsPath(manager), JSON.stringify(nextPlugins, null, 2));
         return true;
     } catch (error) {
-        console.error('[BPM] Failed to write community-plugins.json:', error);
+        if (manager.settings.DEBUG) console.error('[BPM] Failed to write community-plugins.json:', error);
         return false;
     }
 }

@@ -1,4 +1,5 @@
 import type { RequestUrlResponse } from 'obsidian';
+import { toText } from '../shared/text';
 
 type HttpResponse = Pick<RequestUrlResponse, 'status' | 'headers' | 'text'>;
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -42,4 +43,6 @@ export function assertHttpSuccess(response: HttpResponse): void {
     if (response.status >= 400) throw new HttpRequestError(response);
 }
 export const resourceMissing = (error: unknown): boolean => error instanceof HttpRequestError && error.status === 404;
-export const errorMessage = (error: unknown): string => error instanceof Error ? error.message : 'Unknown error';
+/** Normalize unknown failures once while preserving HTTP errors and their diagnostic fields. */
+export const errorObject = (error: unknown): Error => error instanceof Error ? error : new Error(toText(error, 'Unknown error') || 'Unknown error');
+export const errorMessage = (error: unknown): string => errorObject(error).message;

@@ -56,7 +56,8 @@ export class RibbonGroups {
         if (!group || !ribbon?.items) return;
         const menu = new Menu();
         // 菜单头部：分组图标 + 分组名，使用原生 label 样式与分隔线。
-        const header = activeDocument.createDocumentFragment();
+        const view = event.targetNode?.ownerDocument?.defaultView ?? window;
+        const header = view.createFragment();
         const title = header.createSpan({ cls: 'bpm-group-menu-title', text: group.name });
         menu.addItem(item => {
             item.setTitle(header).setIcon(group.icon || 'folder').setIsLabel(true);

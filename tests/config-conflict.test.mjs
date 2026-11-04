@@ -1,9 +1,9 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {build} from 'esbuild';
-const result=await build({stdin:{contents:`export * from './src/settings/conflict-model'; export * from './src/settings/conflict-choices'; export * from './src/settings/sync-detector';`,resolveDir:process.cwd(),loader:'ts'},bundle:true,platform:'node',format:'cjs',write:false,logLevel:'silent'});
+const result=await build({stdin:{contents:`export * from './src/settings/conflict-model'; export * from './src/settings/conflict-choices'; export * from './src/settings/conflict-features'; export * from './src/settings/sync-detector';`,resolveDir:process.cwd(),loader:'ts'},bundle:true,platform:'node',format:'cjs',write:false,logLevel:'silent'});
 const module={exports:{}};new Function('module','exports',result.outputFiles[0].text)(module,module.exports);
-const {conflictSections,resolveConfiguration,conflictValueText,detectSyncPlugins,ConfigConflictChoices}=module.exports;
+const {conflictSections,resolveConfiguration,conflictValueText,detectSyncPlugins,ConfigConflictChoices,conflictFeaturePages}=module.exports;
 const config=(phone,other='local')=>({LANGUAGE:other,DEVICE_MANAGEMENT:{enabled:true,defaultPresets:{phone:'p1',computer:'c1',tablet:''},presets:{phone,computer:[{id:'c1',name:'Computer',plugins:{}}],tablet:[]}}});
 test('every changed preset is exposed regardless of the current device or filter',()=>{
     const a=config([{id:'p1',name:'Phone',plugins:{tasks:{enabled:true,delay:'1'}}}]);
@@ -88,4 +88,34 @@ test('the list source chip switches all listed plugin choices and reports indivi
     choices.toggleItem({kind:'plugin',id:'tasks',presetId:'p1'});assert.equal(choices.listSide(['tasks','other'],'p1'),'mixed');
     choices.toggleList(['tasks','other'],'p1');assert.equal(choices.listSide(['tasks','other'],'p1'),'incoming');
     choices.toggleList(['tasks','other'],'p1');assert.equal(choices.listSide(['tasks','other'],'p1'),'local');
+});
+
+test('feature markers locate off-screen preset filters, Ribbon, appearance and generic settings independently',()=>{
+    const local=config([{id:'p1',name:'Phone',plugins:{tasks:{enabled:true}},filters:{search:''},ribbon:[],appearance:{theme:''}}]);
+    const incoming=structuredClone(local),phone=incoming.DEVICE_MANAGEMENT.presets.phone[0];
+    phone.filters.search='changed';phone.ribbon=[{name:'Changed'}];phone.appearance.theme='Changed';incoming.LANGUAGE='zh';
+    const choices=new ConfigConflictChoices('features',local,incoming);choices.setFiles({},{});
+    assert.deepEqual([...conflictFeaturePages(choices)].sort(),['plugins','ribbon','settings','themes']);
+    const added=structuredClone(local);added.DEVICE_MANAGEMENT.presets.phone.push({id:'p2',name:'Another phone'});
+    assert.deepEqual([...conflictFeaturePages(new ConfigConflictChoices('added',local,added))],['devices']);
+});
+
+test('feature markers ignore version and heartbeat metadata but retain device file and icon changes',()=>{
+    const local=config([{id:'p1',name:'Phone',updatedAt:1,plugins:{tasks:{enabled:true}}}]);
+    local.Plugins=[{id:'tasks',version:'1',latestVersion:'2',enabled:true}];
+    const incoming=structuredClone(local);incoming.Plugins[0].version='2';incoming.DEVICE_MANAGEMENT.presets.phone[0].updatedAt=2;
+    const choices=new ConfigConflictChoices('metadata',local,incoming);
+    choices.setFiles({'data/devices/device.json':'{"id":"device","name":"Phone","lastSeen":1}'},
+        {'data/devices/device.json':'{"id":"device","name":"Phone","lastSeen":2}'});
+    assert.deepEqual([...conflictFeaturePages(choices)],[]);
+    choices.setFiles({'data/devices/device.json':'{"id":"device","name":"Phone"}','data/icons.css':'old'},
+        {'data/devices/device.json':'{"id":"device","name":"Renamed"}','data/icons.css':'new'});
+    assert.deepEqual([...conflictFeaturePages(choices)].sort(),['devices','plugins']);
+});
+
+test('feature markers distinguish install and transfer changes from general settings',()=>{
+    const choices=new ConfigConflictChoices('top-level',
+        {RIBBON_GROUPS:[],BETA_SOURCES:[],TRANSFER_DEFAULT_PATH:'',Plugins:[{id:'tasks',enabled:true,note:'one'}]},
+        {RIBBON_GROUPS:[{id:'group'}],BETA_SOURCES:[{id:'source'}],TRANSFER_DEFAULT_PATH:'packs',Plugins:[{id:'tasks',enabled:true,note:'two'}]});
+    assert.deepEqual([...conflictFeaturePages(choices)].sort(),['install','plugins','ribbon','transfer']);
 });

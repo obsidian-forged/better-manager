@@ -1,4 +1,5 @@
-import {
+import { createActionHandler } from '../ui/action-handler';
+import { Notice,
     App,
     DropdownComponent,
     Modal,
@@ -16,6 +17,10 @@ import type { ManagerModal } from "./manager-modal";
 import { ObsidianAppWithInternals } from "src/obsidian-internals";
 
 export class HideModal extends Modal {
+    private readonly action = createActionHandler(error => {
+        if (this.manager.settings.DEBUG) console.error('[BPM] Modal action failed', error);
+        new Notice(`${this.manager.translator.t('安装_错误_通用')} ${error instanceof Error ? error.message : ''}`);
+    });
     manager: Manager;
     managerModal: ManagerModal;
     settings: ManagerSettings;
@@ -115,7 +120,7 @@ export class HideModal extends Modal {
         const filterDropdown = new DropdownComponent(addField(t("通用_状态_文本")));
         filterDropdown.addOptions(filterOptions);
         filterDropdown.setValue(this.filter);
-        filterDropdown.onChange((value) => { this.filter = value; void this.reloadShowData(); });
+        filterDropdown.onChange((value) => { this.filter = value; this.action(async () => { await this.reloadShowData(); })(); });
 
         const operatorOptions = {
             "contains": t("筛选_操作符_包含"),
@@ -133,12 +138,12 @@ export class HideModal extends Modal {
         groupOperatorDropdown.selectEl.setAttribute("aria-label", t("筛选_分组取反_标签"));
         groupOperatorDropdown.onChange((value) => {
             this.groupOperator = value === "not-contains" ? "not-contains" : "contains";
-            void this.reloadShowData();
+            this.action(async () => { await this.reloadShowData(); })();
         });
         const groupsDropdown = new DropdownComponent(groupControl);
         this.addOrderedOptions(groupsDropdown, groups);
         groupsDropdown.setValue(this.group);
-        groupsDropdown.onChange((value) => { this.group = value; void this.reloadShowData(); });
+        groupsDropdown.onChange((value) => { this.group = value; this.action(async () => { await this.reloadShowData(); })(); });
 
         const tagCounts: { [key: string]: number } = this.settings.Plugins.reduce((acc, plugin) => { plugin.tags.forEach((tag) => { acc[tag] = (acc[tag] || 0) + 1; }); return acc; }, {} as { [key: string]: number });
         const tags: Array<[string, string]> = [
@@ -152,12 +157,12 @@ export class HideModal extends Modal {
         tagOperatorDropdown.selectEl.setAttribute("aria-label", t("筛选_标签取反_标签"));
         tagOperatorDropdown.onChange((value) => {
             this.tagOperator = value === "not-contains" ? "not-contains" : "contains";
-            void this.reloadShowData();
+            this.action(async () => { await this.reloadShowData(); })();
         });
         const tagsDropdown = new DropdownComponent(tagControl);
         this.addOrderedOptions(tagsDropdown, tags);
         tagsDropdown.setValue(this.tag);
-        tagsDropdown.onChange((value) => { this.tag = value; void this.reloadShowData(); });
+        tagsDropdown.onChange((value) => { this.tag = value; this.action(async () => { await this.reloadShowData(); })(); });
 
         if (this.settings.DELAY) {
             const delayCounts = this.settings.Plugins.reduce((acc: { [key: string]: number }, plugin) => { const delay = plugin.delay || ""; acc[delay] = (acc[delay] || 0) + 1; return acc; }, { "": 0 });
@@ -172,18 +177,18 @@ export class HideModal extends Modal {
             delayOperatorDropdown.selectEl.setAttribute("aria-label", t("筛选_延迟取反_标签"));
             delayOperatorDropdown.onChange((value) => {
                 this.delayOperator = value === "not-contains" ? "not-contains" : "contains";
-                void this.reloadShowData();
+                this.action(async () => { await this.reloadShowData(); })();
             });
             const delaysDropdown = new DropdownComponent(delayControl);
             this.addOrderedOptions(delaysDropdown, delays);
             delaysDropdown.setValue(this.delay || "");
-            delaysDropdown.onChange((value) => { this.delay = value; void this.reloadShowData(); });
+            delaysDropdown.onChange((value) => { this.delay = value; this.action(async () => { await this.reloadShowData(); })(); });
         }
 
         const searchWrap = chromeEl.createDiv("hide-modal__search");
         this.searchEl = new SearchComponent(searchWrap);
         this.searchEl.inputEl.setAttribute("aria-label", t("通用_搜索_文本"));
-        this.searchEl.onChange((value: string) => { this.searchText = value; void this.reloadShowData(); });
+        this.searchEl.onChange((value: string) => { this.searchText = value; this.action(async () => { await this.reloadShowData(); })(); });
     }
 
     public async showData() {
@@ -280,7 +285,7 @@ export class HideModal extends Modal {
                     } else {
                         this.settings.HIDES = this.settings.HIDES.filter(id => id !== plugin.id);
                     }
-                    void this.manager.saveSettings();
+                    this.action(async () => { await this.manager.saveSettings(); })();
                     this.managerModal.refreshPluginCard(plugin.id, { allowReload: true });
                 });
             }
@@ -297,7 +302,7 @@ export class HideModal extends Modal {
     }
 
     public onOpen() {
-        void (async () => {
+        this.action(async () => {
             await this.showHead();
             await this.showData();
         })();
