@@ -4,6 +4,7 @@ import { rankSettings, SearchableSetting } from './search';
 
 export interface SettingsSearchPage {
     label: string;
+    description: string;
     icon?: string;
     render(container: HTMLElement): void;
 }
@@ -34,6 +35,9 @@ export class SettingsSearch {
             const scratch = (doc.defaultView ?? window).createDiv();
             page.render(scratch);
             SettingsSearch.rows(scratch).forEach((row, ordinal) => {
+                // 用户命名的分组、标签和启动预设是配置值，不属于设置搜索元数据。
+                // Keep user-created taxonomy values out of the native settings index.
+                if (row.hasClass('manager-taxonomy-setting__row') && !row.hasClass('manager-taxonomy-setting__row--create')) return;
                 const personalize = row.hasClass('manager-personalize');
                 const name = personalize ? personalizeLabel : row.querySelector('.setting-item-name')?.textContent?.trim() ?? '';
                 const description = personalize

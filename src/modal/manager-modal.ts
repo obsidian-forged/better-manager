@@ -1,7 +1,6 @@
 import { FloatingScrollbars } from '../ui/floating-scrollbars';
 import { createActionHandler } from '../ui/action-handler';
 import { TaskCenterView } from '../ui/task-center-view';
-import { ConfigConflictView } from '../settings/conflict-view';
 import { protectionText } from '../settings/protection-text';
 import { SyncNoticeView } from '../ui/sync-notice-view';
 import { SettingsSaveButton } from '../ui/settings-save-button';
@@ -13,6 +12,7 @@ import { DevicePanel } from '../devices/device-panel';
 import { CatalogModal } from '../catalog/catalog-modal';
 import { createBpmFilterField, createBpmFilterSelectField } from '../ui/filter-field';
 import { ScopeSelect } from '../ui/scope-select';
+import { MultiSelectFilter } from '../ui/multi-select-filter';
 import { ResponsiveToolbar } from '../ui/responsive-toolbar';
 import { ResponsiveTabBar } from '../ui/responsive-tab-bar';
 import { DeviceScopeBar } from '../devices/device-scope-bar';
@@ -410,9 +410,9 @@ export class ManagerModal extends Modal {
     private pluginManifestCache?: { source: Record<string, PluginManifest>; plugins: PluginManifest[] };
     private modalChromeEl?: HTMLElement;
     private modalPageEl?: HTMLElement;
-    private conflictView?: ConfigConflictView;
     private syncNoticeView?: SyncNoticeView;
     private settingsSaveButton?: SettingsSaveButton;
+    private globalToolsHost?: HTMLElement;
     private conflictMarkers?: ConfigConflictMarkers;
     private conflictObserver?: MutationObserver;
     private conflictMarkerFrame?: { view: Window; id: number };
@@ -430,6 +430,7 @@ export class ManagerModal extends Modal {
     private mobileHeaderObserver?: ResizeObserver;
     private overviewSortSelect?: ScopeSelect;
     private overviewStatsSelect?: ScopeSelect;
+    private appearanceNavigation?: ScopeSelect;
     private overviewToolbarLayout?: ResponsiveToolbar;
     private installToolbarLayout?: ResponsiveToolbar;
     private installToolbarMenus: ScopeSelect[] = [];
@@ -1032,14 +1033,6 @@ export class ManagerModal extends Modal {
         return this.matchesOperator(matched, operator);
     }
 
-    private formatMultiSelectSummary(values: string[], options: Array<[string, string]>, allLabel: string): string {
-        if (values.length === 0) return allLabel;
-        const labelsByValue = new Map(options.map(([value, label]) => [value, label]));
-        if (values.length === 1) return labelsByValue.get(values[0]) || values[0];
-        const firstLabel = labelsByValue.get(values[0]) || values[0];
-        return `${firstLabel} +${values.length - 1}`;
-    }
-
     private createMultiSelectFilter(
         container: HTMLElement,
         options: Array<[string, string]>,
@@ -1049,166 +1042,20 @@ export class ManagerModal extends Modal {
         ariaLabel: string,
         onChange: (values: string[]) => void
     ): MultiSelectFilterControl {
-        const rootEl = container.createDiv("manager-multiselect-filter");
-        const buttonEl = rootEl.createEl("button", { cls: "manager-multiselect-filter__trigger" });
-        buttonEl.type = "button";
-        buttonEl.setAttribute("aria-label", ariaLabel);
-        buttonEl.setAttribute("aria-haspopup", "listbox");
-        buttonEl.setAttribute("aria-expanded", "false");
-        const summaryEl = buttonEl.createSpan({ cls: "manager-multiselect-filter__summary" });
-        const countEl = buttonEl.createSpan({ cls: "manager-multiselect-filter__count" });
-        const chevronEl = buttonEl.createSpan({ cls: "manager-multiselect-filter__chevron" });
-        setIcon(chevronEl, "chevron-down");
-        const menuEl = rootEl.createDiv("manager-multiselect-filter__menu");
-        menuEl.setAttribute("role", "listbox");
-        menuEl.setAttribute("aria-multiselectable", "true");
-        menuEl.setAttribute("aria-label", ariaLabel);
-        const filterFieldEl = rootEl.closest<HTMLElement>(".manager-filter-field");
-        const filterSectionEl = rootEl.closest<HTMLElement>(".manager-section--filters");
-        const mobileFilterPanelEl = rootEl.closest<HTMLElement>(".bpm-mobile-header__filters");
-        const managerContainerEl = rootEl.closest<HTMLElement>(".manager-container");
-
-        let currentOptions = options;
-        let selectedValues = this.normalizeFilterValues(values, allValue);
-        let isOpen = false;
-
-        const updateButton = () => {
-            summaryEl.setText(this.formatMultiSelectSummary(selectedValues, currentOptions, allLabel));
-            countEl.setText(selectedValues.length > 0 ? `${selectedValues.length}` : "");
-            countEl.toggleClass("is-empty", selectedValues.length === 0);
-            buttonEl.toggleClass("has-selection", selectedValues.length > 0);
-        };
-
-        function handleDocumentClick() {
-            close();
-        }
-
-        function close() {
-            isOpen = false;
-            rootEl.removeClass("is-open");
-            menuEl.setCssStyles({ left: "", width: "" });
-            filterFieldEl?.removeClass("is-filter-menu-open");
-            filterSectionEl?.removeClass("is-filter-menu-open");
-            mobileFilterPanelEl?.removeClass("is-filter-menu-open");
-            managerContainerEl?.removeClass("has-open-filter-menu");
-            buttonEl.setAttribute("aria-expanded", "false");
-            activeDocument.removeEventListener("click", handleDocumentClick);
-        }
-
-        /** 菜单与所属筛选控件左右对齐；控件比管理器宽时再压回容器内。 */
-        function positionMenu() {
-            const field = filterFieldEl ?? rootEl;
-            const rootRect = rootEl.getBoundingClientRect();
-            const fieldRect = field.getBoundingClientRect();
-            const container = managerContainerEl?.getBoundingClientRect();
-            let left = fieldRect.left - rootRect.left;
-            let width = fieldRect.width;
-            if (container) {
-                const maxWidth = container.width - 16;
-                if (width > maxWidth) width = maxWidth;
-                if (fieldRect.left + left + width > container.right - 8) {
-                    left = Math.max(0, container.right - 8 - width - fieldRect.left);
-                }
-            }
-            menuEl.setCssStyles({ left: `${left}px`, width: `${width}px`, minWidth: "0" });
-        }
-
-        const toggleOpen = () => {
-            if (isOpen) {
-                close();
-                return;
-            }
-            isOpen = true;
-            rootEl.addClass("is-open");
-            filterFieldEl?.addClass("is-filter-menu-open");
-            filterSectionEl?.addClass("is-filter-menu-open");
-            mobileFilterPanelEl?.addClass("is-filter-menu-open");
-            managerContainerEl?.addClass("has-open-filter-menu");
-            buttonEl.setAttribute("aria-expanded", "true");
-            positionMenu();
-            window.setTimeout(() => activeDocument.addEventListener("click", handleDocumentClick), 0);
-        };
-
-        const emitChange = () => {
-            updateButton();
-            onChange([...selectedValues]);
-        };
-
-        const renderOptions = () => {
-            menuEl.empty();
-            const renderAllOption = () => {
-                const allOption = menuEl.createEl("button", { cls: "manager-multiselect-filter__option" });
-                allOption.type = "button";
-                allOption.setAttribute("role", "option");
-                allOption.setAttribute("aria-selected", `${selectedValues.length === 0}`);
-                allOption.toggleClass("is-selected", selectedValues.length === 0);
-                const allCheck = allOption.createSpan({ cls: "manager-multiselect-filter__check" });
-                setIcon(allCheck, selectedValues.length === 0 ? "check" : "circle");
-                allOption.createSpan({ cls: "manager-multiselect-filter__option-label", text: allLabel });
-                allOption.addEventListener("click", () => {
-                    selectedValues = [];
-                    renderOptions();
-                    emitChange();
-                });
-            };
-            if (!currentOptions.some(([value]) => value === allValue)) renderAllOption();
-
-            for (const [value, label] of currentOptions) {
-                if (value === allValue) { renderAllOption(); continue; }
-                const selected = selectedValues.includes(value);
-                const optionEl = menuEl.createEl("button", { cls: "manager-multiselect-filter__option" });
-                optionEl.type = "button";
-                optionEl.setAttribute("role", "option");
-                optionEl.setAttribute("aria-selected", `${selected}`);
-                optionEl.toggleClass("is-selected", selected);
-                const check = optionEl.createSpan({ cls: "manager-multiselect-filter__check" });
-                setIcon(check, selected ? "square-check-big" : "square");
-                optionEl.createSpan({ cls: "manager-multiselect-filter__option-label", text: label });
-                optionEl.addEventListener("click", () => {
-                    selectedValues = selected
-                        ? selectedValues.filter((item) => item !== value)
-                        : [...selectedValues, value];
-                    renderOptions();
-                    emitChange();
-                });
-            }
-        };
-
-        buttonEl.addEventListener("click", (event) => {
-            event.stopPropagation();
-            toggleOpen();
+        const control = new MultiSelectFilter(container, {
+            options: options.map(([value, label]) => ({ value, label })),
+            values, allValue, allLabel, label: ariaLabel, onChange,
         });
-        rootEl.addEventListener("click", (event) => event.stopPropagation());
-        rootEl.addEventListener("keydown", (event) => {
-            if (event.key === "Escape") {
-                event.preventDefault();
-                close();
-            }
-        });
-
-        const control: MultiSelectFilterControl = {
-            rootEl,
-            buttonEl,
-            menuEl,
-            setValues: (nextValues: string[]) => {
-                selectedValues = this.normalizeFilterValues(nextValues, allValue);
-                renderOptions();
-                updateButton();
-            },
-            refreshOptions: (nextOptions: Array<[string, string]>, nextValues?: string[]) => {
-                currentOptions = nextOptions;
-                const availableValues = new Set(nextOptions.map(([value]) => value).filter((value) => value !== allValue));
-                selectedValues = this.normalizeFilterValues(nextValues || selectedValues, allValue)
-                    .filter((value) => availableValues.has(value));
-                renderOptions();
-                updateButton();
-            },
-            close,
+        return {
+            rootEl: control.rootEl,
+            buttonEl: control.buttonEl,
+            menuEl: control.menuEl,
+            setValues: nextValues => control.setValues(nextValues),
+            refreshOptions: (nextOptions, nextValues) => control.refreshOptions(
+                nextOptions.map(([value, label]) => ({ value, label })), nextValues
+            ),
+            close: () => control.close(),
         };
-
-        renderOptions();
-        updateButton();
-        return control;
     }
 
     /** 筛选字段的共用结构：图标 + 标签 + 控件，桌面过滤行与移动端过滤面板共用。 */
@@ -1218,6 +1065,14 @@ export class ManagerModal extends Modal {
 
     private createFilterSelectField(parent: HTMLElement, label: string, icon: string, variant: "select" | "search" | "compound" = "select"): HTMLElement {
         return createBpmFilterSelectField(parent, label, icon, variant);
+    }
+
+    private closePluginFilterMenus(): void {
+        [this.statusMultiSelect, this.groupMultiSelect, this.tagMultiSelect, this.delayMultiSelect].forEach(control => control?.close());
+        this.statusMultiSelect = undefined;
+        this.groupMultiSelect = undefined;
+        this.tagMultiSelect = undefined;
+        this.delayMultiSelect = undefined;
     }
 
     private renderPluginFilterControls(
@@ -2642,6 +2497,7 @@ export class ManagerModal extends Modal {
     }
 
     public async showHead() {
+        this.closePluginFilterMenus();
         this.pageTabBar?.destroy(); this.pageTabBar = undefined;
         this.migratePersistedFilterValues();
         const t = (k: string, vars?: Record<string, string | number | boolean | null | undefined>) => this.manager.translator.t(k, vars);
@@ -2670,8 +2526,6 @@ export class ManagerModal extends Modal {
         const shell = this.contentEl.createDiv("manager-modal-shell");
         const chromeEl = shell.createDiv("manager-modal-chrome");
         this.modalChromeEl = chromeEl;
-        this.conflictView?.destroy();
-        this.conflictView = undefined;
         this.modalPageEl = shell.createDiv("manager-modal-page manager-item-container");
 
         if (Platform.isMobile) {
@@ -2791,7 +2645,6 @@ export class ManagerModal extends Modal {
         // [过滤行]
         const filterWrapper = chromeEl.createDiv("manager-section manager-section--filters");
         this.desktopFilterWrapper = filterWrapper;
-        this.mountConfigConflict(filterWrapper);
         const filterContent = filterWrapper.createDiv("manager-section__content");
         filterContent.addClass("manager-section__content--filters");
 
@@ -2858,6 +2711,7 @@ export class ManagerModal extends Modal {
 
     private renderGlobalTools(parent: HTMLElement): void {
         const t = (key: string) => this.manager.translator.t(key);
+        this.globalToolsHost = parent;
         this.syncNoticeView?.destroy();
         this.syncNoticeView = new SyncNoticeView(this.manager, parent, () => { if (this.manager.configProtection?.protection.paused) this.focusConfigConflict(); else this.openSyncNoticeDetail(); });
         this.taskCenterView?.destroy();
@@ -2877,13 +2731,19 @@ export class ManagerModal extends Modal {
             });
             return el;
         };
-        const settings = createIconTool('settings', t('管理器_插件设置_描述'), () => this.openSettingsTab(this.manager.manifest.id));
-        settings.dataset.bpmFeaturePage = 'settings';
         this.settingsSaveButton?.destroy();
-        this.settingsSaveButton = new SettingsSaveButton(this.manager, parent);
-        this.settingsSaveButton.buttonEl.addClass('manager-global-tool');
+        this.settingsSaveButton = undefined;
+        this.refreshSettingsSaveState();
         const more = createIconTool('more-vertical', t('管理器_更多操作_描述'), (event) => {
             const menu = new Menu();
+            menu.addItem(item => item.setTitle(t('管理器_BPM设置_短')).setIcon('settings')
+                .onClick(() => this.openSettingsTab(this.manager.manifest.id)));
+            if (this.manager.settings.MANUAL_CONFIG_SAVE === false) {
+                menu.addItem(item => item.setTitle(protectionText(this.manager, 'saveSettings')).setIcon('save')
+                    .setDisabled(this.manager.isSavingSettings)
+                    .onClick(this.action(async () => { await this.manager.savePendingSettings(); })));
+            }
+            menu.addSeparator();
             menu.addItem(item => item.setTitle(t('任务_标题')).setIcon('cloud-download')
                 .onClick(() => { this.taskCenterView?.show(); }));
             menu.addSeparator();
@@ -2902,6 +2762,7 @@ export class ManagerModal extends Modal {
         });
         more.setAttribute('aria-haspopup', 'menu');
         more.addClass('manager-global-more');
+        more.dataset.bpmFeaturePage = 'settings';
         this.taskCenterView = new TaskCenterView(this.manager, parent, more);
         this.refreshConfigConflict();
         const close = createIconTool('x', t('通用_关闭窗口'), () => this.close());
@@ -3271,6 +3132,7 @@ export class ManagerModal extends Modal {
     }
 
     private showHeadMobile() {
+        this.closePluginFilterMenus();
         const t = (k: string) => this.manager.translator.t(k);
         this.migratePersistedFilterValues();
         const chromeEl = this.modalChromeEl ?? this.titleEl;
@@ -3297,7 +3159,6 @@ export class ManagerModal extends Modal {
         if (this.activePage !== "plugins") return;
 
         const filterArea = header.createDiv('bpm-mobile-header__filter-area');
-        this.mountConfigConflict(filterArea);
         const searchWrap = filterArea.createDiv("bpm-mobile-header__search");
         this.searchEl = new SearchComponent(searchWrap);
         if (this.settings.PERSISTENCE && typeof this.settings.FILTER_SEARCH === "string") {
@@ -5943,6 +5804,20 @@ export class ManagerModal extends Modal {
         const workspace = this.pageEl.createDiv("manager-repo-page manager-appearance-workspace");
         this.renderDeviceScope(workspace, 'themes');
         const toolbar = workspace.createDiv("manager-repo-page__toolbar manager-appearance-toolbar");
+        this.appearanceNavigation?.close();
+        const navigation: Array<{ value: AppearanceView; icon: string; label: string; count: number }> = [];
+        if (toolEnabled(this.settings, 'appearanceProfiles')) navigation.push({ value: 'profiles', icon: 'layers-3', label: t('外观总览_分区_外观方案'), count: visibleProfiles.length });
+        navigation.push({ value: 'themes', icon: 'palette', label: t('外观总览_分区_主题'), count: visibleThemes.length },
+            { value: 'snippets', icon: 'file-code-2', label: t('外观总览_分区_CSS片段'), count: visibleSnippets.length });
+        this.appearanceNavigation = ScopeSelect.compact(toolbar, t('管理器_切换功能'), this.appearanceView,
+            navigation.map(item => ({ value: item.value, icon: item.icon, label: `${item.label} ${item.count}` })), value => {
+                const target = navigation.find(item => item.value === value);
+                if (!target || target.value === this.appearanceView) return;
+                this.appearanceView = target.value;
+                this.syncPageChrome();
+                this.renderContent();
+            });
+        this.appearanceNavigation.field.addClass('manager-appearance-navigation-menu');
         const tabs = toolbar.createDiv("manager-repo-page__switcher manager-appearance-tabs");
         tabs.setAttribute("role", "tablist");
         tabs.setAttribute("data-slot", "tabs-list");
@@ -8580,6 +8455,7 @@ export class ManagerModal extends Modal {
     }
 
     private renderContent() {
+        this.appearanceNavigation?.close(); this.appearanceNavigation = undefined;
         this.overviewToolbarLayout?.destroy();
         this.overviewToolbarLayout = undefined;
         this.clearInstallToolbarMenus();
@@ -8629,6 +8505,7 @@ export class ManagerModal extends Modal {
     }
 
     public async reloadShowData() {
+        this.appearanceNavigation?.close(); this.appearanceNavigation = undefined;
         this.overviewToolbarLayout?.destroy();
         this.overviewToolbarLayout = undefined;
         this.clearInstallToolbarMenus();
@@ -8764,7 +8641,22 @@ export class ManagerModal extends Modal {
         control.setAttribute('aria-label', `${control.dataset.conflictNavAria} · ${message}`);
     }
 
-    public refreshSettingsSaveState(): void { this.settingsSaveButton?.refresh(); }
+    public refreshSettingsSaveState(): void {
+        const parent = this.globalToolsHost;
+        if (!parent) return;
+        if (this.manager.settings.MANUAL_CONFIG_SAVE === false) {
+            this.settingsSaveButton?.destroy();
+            this.settingsSaveButton = undefined;
+            return;
+        }
+        if (!this.settingsSaveButton) {
+            this.settingsSaveButton = new SettingsSaveButton(this.manager, parent);
+            this.settingsSaveButton.buttonEl.addClass('manager-global-tool');
+            const more = parent.querySelector<HTMLElement>('.manager-global-more');
+            if (more) parent.insertBefore(this.settingsSaveButton.buttonEl, more);
+        }
+        this.settingsSaveButton.refresh();
+    }
 
     public refreshConfigConflict(): void {
         const paused = Boolean(this.manager.configProtection?.protection.paused);
@@ -8772,19 +8664,9 @@ export class ManagerModal extends Modal {
         this.syncNoticeView?.refresh();
         this.conflictMarkers?.apply();
         this.syncConflictNavigation();
-        void this.conflictView?.refresh().then(() => this.syncConflictNavigation()).catch(error => {
-            if (this.settings.DEBUG) console.error('[BPM] Rendering configuration conflict failed', error);
-            new Notice(protectionText(this.manager, 'error'));
-        });
     }
 
-    private mountConfigConflict(anchor: HTMLElement): void {
-        this.conflictView?.destroy();
-        anchor.addClass('bpm-config-conflict-anchor');
-        this.conflictView = new ConfigConflictView(this.manager, anchor.createDiv());
-    }
-
-    public focusConfigConflict(): void { this.conflictView?.focus(); }
+    public focusConfigConflict(): void { this.manager.openConfigConflict(); }
 
     private previewConflictPlugin(row: HTMLElement, value: unknown): void {
         if (!value || typeof value !== 'object' || typeof Reflect.get(value, 'enabled') !== 'boolean') return;
@@ -8844,6 +8726,9 @@ export class ManagerModal extends Modal {
     }
 
     public onClose(): void {
+        this.globalToolsHost = undefined;
+        this.appearanceNavigation?.close(); this.appearanceNavigation = undefined;
+        this.closePluginFilterMenus();
         this.pageTabBar?.destroy(); this.pageTabBar = undefined;
         this.opened = false;
         this.nextRenderGeneration();
@@ -8868,8 +8753,6 @@ export class ManagerModal extends Modal {
         this.syncNoticeView = undefined;
         this.settingsSaveButton?.destroy();
         this.settingsSaveButton = undefined;
-        this.conflictView?.destroy();
-        this.conflictView = undefined;
         this.clearInstallToolbarMenus();
         this.overviewToolbarLayout?.destroy();
         this.overviewToolbarLayout = undefined;

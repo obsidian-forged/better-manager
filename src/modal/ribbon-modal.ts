@@ -8,6 +8,7 @@ import { RIBBON_GROUP_ITEM_PREFIX } from "../manager/ribbon-groups";
 import { SystemRibbonManager } from "../manager/system-ribbon-manager";
 import { DeviceScopeBar } from "../devices/device-scope-bar";
 import { ScopeSelect } from "../ui/scope-select";
+import { MultiSelectFilter } from "../ui/multi-select-filter";
 
 class GroupIconPicker extends FuzzySuggestModal<string> {
     constructor(app: App, private readonly choose: (icon: string) => void) { super(app); }
@@ -40,8 +41,14 @@ export class RibbonModal extends Modal {
     /** 重绘、换页与关闭均清理菜单监听；Clean up shared menus across rendering and page lifecycles. */
     closeGroupMenus(): void {
         this.closeItemGroupMenus();
+        this.closeFilterMenus();
+    }
+
+    private closeFilterMenus(): void {
         this.filterSelects.forEach(select => select.close());
         this.filterSelects = [];
+        this.statusSelects.forEach(select => select.close());
+        this.statusSelects = [];
     }
 
     private closeItemGroupMenus(): void {
@@ -53,6 +60,7 @@ export class RibbonModal extends Modal {
     private statusFilters = new Set<RibbonStatusFilter>();
     private groupFilter = '';
     private filterSelects: ScopeSelect[] = [];
+    private statusSelects: MultiSelectFilter[] = [];
     private externalFilterBar = false;
     private externalFilterHost?: HTMLElement;
     private groupsCollapsed = false;
@@ -82,6 +90,7 @@ export class RibbonModal extends Modal {
     }
 
     mountFilterBar(containerEl: HTMLElement): void {
+        this.closeFilterMenus();
         this.externalFilterHost = containerEl;
         containerEl.empty();
         this.buildFilterBar(containerEl, () => this.refreshSearchResults());
@@ -449,12 +458,22 @@ export class RibbonModal extends Modal {
             { key: "disabled", label: t("Ribbon_插件被禁用"), count: disabledCount, icon: "ban" },
         ];
 
+        const statusButtons: Array<{ key: "all" | RibbonStatusFilter; button: HTMLButtonElement }> = [];
+        const updateStatusControls = () => {
+            for (const { key, button } of statusButtons) {
+                const active = key === "all" ? this.statusFilters.size === 0 : this.statusFilters.has(key);
+                button.toggleClass("is-active", active);
+                button.setAttribute('aria-pressed', `${active}`);
+            }
+            statusSelect.setValues([...this.statusFilters]);
+        };
         filters.forEach(filter => {
             const active = filter.key === "all" ? this.statusFilters.size === 0 : this.statusFilters.has(filter.key);
             const btn = new ButtonComponent(filterGroup);
             btn.buttonEl.addClass("ribbon-filter-btn");
             btn.buttonEl.setAttribute('aria-pressed', `${active}`);
             if (active) btn.buttonEl.addClass("is-active");
+            statusButtons.push({ key: filter.key, button: btn.buttonEl });
 
             // 自定义按钮内容：图标 + 文本 + 数量
             btn.buttonEl.empty();
@@ -467,9 +486,24 @@ export class RibbonModal extends Modal {
                 else if (this.statusFilters.has(filter.key)) this.statusFilters.delete(filter.key);
                 else this.statusFilters.add(filter.key);
                 if (this.statusFilters.size === 3) this.statusFilters.clear();
-                this.displayWithoutSearch();
+                updateStatusControls();
+                refresh();
             });
         });
+
+        // 手机端与插件总览复用同一多选控件，不重建搜索框；Share the overview multi-select without remounting search.
+        const statusSelect = new MultiSelectFilter(filterGroup, {
+            options: filters.map(filter => ({ value: filter.key, label: filter.label, icon: filter.icon, count: filter.count })),
+            values: [...this.statusFilters], allValue: "all", allLabel: t("通用_全部_文本"), label: t("筛选_状态_标签"),
+            icon: "list-filter", collapseAllSelected: true, fixed: true,
+            onChange: values => {
+                this.statusFilters = new Set(values.filter((value): value is RibbonStatusFilter => value === 'visible' || value === 'hidden' || value === 'disabled'));
+                updateStatusControls();
+                refresh();
+            },
+        });
+        statusSelect.rootEl.addClass("ribbon-manager-state-menu");
+        this.statusSelects.push(statusSelect);
 
         // 分隔线左侧全部是多选状态钮；分组改为 BPM 同款下拉。
         filterGroup.createSpan({ cls: "ribbon-filter-divider" });
@@ -477,7 +511,7 @@ export class RibbonModal extends Modal {
             ...this.manager.settings.RIBBON_GROUPS.map(group => ({ value: group.id, label: `${group.name} (${group.members.length})` }))];
         this.filterSelects.push(ScopeSelect.compact(filterGroup, t("Ribbon_分组筛选"), this.groupFilter, groupOptions, value => {
             this.groupFilter = value;
-            this.displayWithoutSearch();
+            refresh();
         }));
 
         // 右侧：显示已分组开关 + 搜索框

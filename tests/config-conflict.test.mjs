@@ -119,3 +119,38 @@ test('feature markers distinguish install and transfer changes from general sett
         {RIBBON_GROUPS:[{id:'group'}],BETA_SOURCES:[{id:'source'}],TRANSFER_DEFAULT_PATH:'packs',Plugins:[{id:'tasks',enabled:true,note:'two'}]});
     assert.deepEqual([...conflictFeaturePages(choices)].sort(),['install','plugins','ribbon','transfer']);
 });
+
+test('all-source selection replaces mixed item, preset, settings and file choices in one operation',()=>{
+    const local=config([{id:'p1',name:'Phone',plugins:{tasks:{enabled:true}}},{id:'p2',name:'Remove remotely',plugins:{}}]);
+    local.Plugins=[{id:'tasks',enabled:true,note:'local'}];
+    const incoming=structuredClone(local);incoming.LANGUAGE='remote';incoming.Plugins[0].note='remote';
+    incoming.DEVICE_MANAGEMENT.presets.phone=[{id:'p1',name:'Remote phone',plugins:{tasks:{enabled:false}}}];
+    incoming.DEVICE_MANAGEMENT.presets.computer[0].plugins.tasks={enabled:false};
+    incoming.DEVICE_MANAGEMENT.presets.tablet=[{id:'t1',name:'Remote tablet',plugins:{}}];
+    incoming.DEVICE_MANAGEMENT.defaultPresets.tablet='t1';
+    const choices=new ConfigConflictChoices('all',local,incoming);
+    choices.setFiles({'data/icons.css':'local icons','data/devices/removed.json':'local device'},
+        {'data/icons.css':'remote icons','data/devices/added.json':'remote device'});
+    choices.toggleItem({kind:'plugin',id:'tasks',presetId:'p1'});
+    choices.selectSection('file:data/icons.css','incoming');
+    assert.equal(choices.allSide(),'mixed');choices.result(); // Populate the preview cache before replacing it.
+    choices.selectAll('incoming');
+    assert.equal(choices.allSide(),'incoming');assert.ok(choices.sections.every(section=>choices.sectionSide(section.id)==='incoming'));
+    assert.deepEqual(choices.result(),{value:incoming,files:{'data/icons.css':'remote icons','data/devices/removed.json':null,'data/devices/added.json':'remote device'}});
+    choices.toggleItem({kind:'plugin',id:'tasks',presetId:'p1'});assert.equal(choices.allSide(),'mixed');
+    choices.selectAll('local');
+    assert.equal(choices.allSide(),'local');assert.equal(choices.itemSide({kind:'plugin',id:'tasks',presetId:'p1'}),'local');
+    assert.deepEqual(choices.result(),{value:local,files:{'data/icons.css':'local icons','data/devices/removed.json':'local device','data/devices/added.json':null}});
+    assert.equal(local.DEVICE_MANAGEMENT.presets.phone[0].plugins.tasks.enabled,true);
+});
+
+test('all-source actions wait for file copies and report no source when there are no differences',()=>{
+    const choices=new ConfigConflictChoices('not-ready',{enabled:true},{enabled:false});
+    choices.toggleItem({kind:'field',id:'enabled'});
+    assert.equal(choices.allSide(),undefined);assert.throws(()=>choices.selectAll('local'),/not ready/);
+    assert.equal(choices.itemSide({kind:'field',id:'enabled'}),'incoming');
+    choices.setFiles({'data/icons.css':'old'},{'data/icons.css':'new'});assert.equal(choices.allSide(),'mixed');
+    choices.selectAll('incoming');assert.equal(choices.allSide(),'incoming');
+    const equal=new ConfigConflictChoices('same',{enabled:true},{enabled:true});equal.setFiles({},{});
+    assert.equal(equal.allSide(),undefined);equal.selectAll('incoming');assert.equal(equal.allSide(),undefined);
+});

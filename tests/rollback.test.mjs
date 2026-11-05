@@ -16,8 +16,8 @@ function fixture(enabled = true) {
     const writes = [], registry = { manifests: { example: JSON.parse(manifest('1.0.0')) }, plugins: enabled ? { example: {} } : {}, enabledPlugins: new Set(enabled ? ['example'] : []) };
     const state = { files, writes, fail: undefined, failLoad: undefined, unload: undefined };
     const adapter = {
-        exists: async path => files.has(path), read: async path => { if (!files.has(path)) throw Error(`Missing ${path}`); return files.get(path); },
-        write: async (path, text) => { if (state.fail?.(path, text)) throw Error('Disk failure'); writes.push(path); files.set(path, text); },
+        exists: async path => files.has(path), read: async path => { if (!files.has(path)) throw Error(`Missing ${path}`); const text = files.get(path); await state.onRead?.(path); return text; },
+        write: async (path, text) => { if (state.fail?.(path, text)) throw Error('Disk failure'); writes.push(path); files.set(path, text); await state.onWrite?.(path, text); },
         mkdir: async path => files.set(path, 'directory'), remove: async path => files.delete(path),
         list: async path => ({ files: [...files.keys()].filter(key => key.startsWith(`${path}/`) && !key.slice(path.length + 1).includes('/')), folders: [] }),
     };
@@ -39,7 +39,7 @@ async function update(manager, version = '2.0.0') {
 }
 test('release availability blocks rollback and automatic backups even when old settings enable them', async () => {
     const { manager, state } = fixture(); manager.settings.PLUGIN_ROLLBACK_ENABLED = true;
-    const history = new PluginHistory(manager); manager.history = history;
+    const history = new PluginHistory(manager, false); manager.history = history;
     assert.equal(history.available, false); assert.equal(history.enabled(), false);
     await update(manager);
     assert.equal([...state.files.keys()].some(path => path.includes('/history/')), false);
@@ -377,4 +377,121 @@ test('installation persists source and plugin registration together once and und
     assert.deepEqual(manager.settings.Plugins, before); assert.deepEqual(manager.settings.BPM_INSTALLED, []);
     assert.deepEqual(manager.settings.PLUGIN_INSTALLATIONS.example.source, receipt.source);
     assert.equal(manager.settings.PLUGIN_INSTALLATIONS.example.tag, receipt.tag);
+});
+
+test('the preview capability remains opt-in and no restore point is captured until enabled', async () => {
+    const { manager, state } = fixture();
+    const history = new PluginHistory(manager); manager.history = history;
+    assert.equal(history.available, true); assert.equal(history.enabled(), false);
+    await update(manager);
+    assert.equal([...state.files.keys()].some(path => path.includes('/history/')), false);
+});
+
+test('capturing a point rejects a build or source binding that changes while its files are read', async () => {
+    for (const change of ['build', 'source']) {
+        const { manager, state, history, registry } = fixture(); manager.settings.PLUGIN_ROLLBACK_ENABLED = true;
+        let changed = false;
+        state.onRead = async path => {
+            if (changed || path !== `${root}/main.js`) return;
+            changed = true;
+            if (change === 'build') state.files.set(path, 'externally changed build');
+            else await bind(manager, github('external/example'));
+        };
+        await assert.rejects(history.create('example', 'Inconsistent'), /回退_预览变化/);
+        assert.deepEqual(await history.list('example'), []);
+        assert.ok(registry.plugins.example);
+    }
+});
+
+test('restore rechecks files, bindings and the chosen point after writing the undo snapshot', async () => {
+    for (const change of ['configuration', 'source', 'snapshot']) {
+        const { manager, state, history, registry } = fixture(); manager.settings.PLUGIN_ROLLBACK_ENABLED = true;
+        const point = await history.create('example', 'Original'); await update(manager);
+        const plan = await history.prepare('example', point.id), chosenPath = pointPath(state, point);
+        let changed = false;
+        state.onWrite = async (path, text) => {
+            if (changed || !path.includes('/history/example/') || !JSON.parse(text).automatic) return;
+            changed = true;
+            if (change === 'configuration') state.files.set(`${root}/data.json`, '{"externalChange":true}');
+            else if (change === 'source') await bind(manager, github('external/example', '2.0.0'));
+            else { const snapshot = JSON.parse(state.files.get(chosenPath)); snapshot.label = 'Changed remotely'; state.files.set(chosenPath, JSON.stringify(snapshot)); }
+        };
+        await assert.rejects(history.restore(plan), /回退_预览变化/);
+        assert.equal(state.files.get(`${root}/main.js`), 'build 2.0.0');
+        assert.equal(registry.manifests.example.version, '2.0.0'); assert.ok(registry.plugins.example);
+        if (change === 'configuration') assert.equal(state.files.get(`${root}/data.json`), '{"externalChange":true}');
+        if (change === 'source') assert.equal(manager.settings.REPO_MAP.example, 'external/example');
+    }
+});
+
+test('closing a restore before file writes leaves the current build and runtime intact', async () => {
+    const { manager, state, history, registry } = fixture(); manager.settings.PLUGIN_ROLLBACK_ENABLED = true;
+    const point = await history.create('example', 'Original'); await update(manager);
+    const plan = await history.prepare('example', point.id); let current = true;
+    state.onWrite = path => { if (path.includes('/history/example/')) current = false; };
+    const writes = state.writes.length;
+    await assert.rejects(history.restore(plan, () => current), /通用_取消_文本/);
+    assert.equal(state.files.get(`${root}/main.js`), 'build 2.0.0'); assert.ok(registry.plugins.example);
+    assert.equal(state.writes.slice(writes).some(path => path.startsWith(`${root}/`)), false);
+    assert.equal(manager.settings.PLUGIN_INSTALLATIONS.example.tag, '2.0.0');
+});
+
+test('closing during restore file writes rolls back build, configuration, source and enabled state', async () => {
+    for (const running of [true, false]) {
+        const { manager, state, history, registry } = fixture(running); manager.settings.PLUGIN_ROLLBACK_ENABLED = true;
+        await bind(manager, github('original/example'));
+        const point = await history.create('example', 'Original'); await update(manager);
+        state.files.set(`${root}/data.json`, '{"color":"current","nested":{"size":9},"newOption":true}');
+        const before = state.files.get(`${root}/data.json`), plan = await history.prepare('example', point.id, true);
+        let current = true;
+        state.onWrite = (path, text) => { if (path === `${root}/main.js` && text === 'build 1') current = false; };
+        await assert.rejects(history.restore(plan, () => current), /通用_取消_文本/);
+        assert.equal(state.files.get(`${root}/main.js`), 'build 2.0.0'); assert.equal(state.files.get(`${root}/data.json`), before);
+        assert.equal(registry.manifests.example.version, '2.0.0'); assert.equal(Boolean(registry.plugins.example), running);
+        assert.equal(registry.enabledPlugins.has('example'), running);
+        assert.equal(manager.settings.PLUGIN_INSTALLATIONS.example.tag, '2.0.0');
+        assert.equal(await manager.repoResolver.resolveRepo('example'), 'team/example');
+    }
+});
+
+test('a cancellation after source persistence restores the original source binding as well as the build', async () => {
+    const { manager, state, history, registry } = fixture(); manager.settings.PLUGIN_ROLLBACK_ENABLED = true;
+    await bind(manager, github('original/example'));
+    const point = await history.create('example', 'Original'); await update(manager);
+    const plan = await history.prepare('example', point.id); let current = true;
+    manager.saveSettings = async () => { current = false; };
+    await assert.rejects(history.restore(plan, () => current), /通用_取消_文本/);
+    assert.equal(state.files.get(`${root}/main.js`), 'build 2.0.0'); assert.ok(registry.plugins.example);
+    assert.equal(manager.settings.PLUGIN_INSTALLATIONS.example.tag, '2.0.0');
+    assert.equal(await manager.repoResolver.resolveRepo('example'), 'team/example');
+});
+
+test('restoring an automatic point protects it from the undo snapshot retention pass', async () => {
+    const { manager, history, registry } = fixture(); manager.settings.PLUGIN_ROLLBACK_ENABLED = true; manager.settings.PLUGIN_ROLLBACK_LIMIT = 1;
+    await update(manager);
+    const point = (await history.list('example'))[0]; assert.equal(point.automatic, true);
+    await history.restore(await history.prepare('example', point.id));
+    assert.equal(registry.manifests.example.version, '1.0.0');
+    assert.ok((await history.list('example')).some(point => point.automatic && point.version === '2.0.0'));
+});
+
+test('point creation and restore share the installation lock without changing persistent enablement', async () => {
+    const { manager, state, history, registry } = fixture(); manager.settings.PLUGIN_ROLLBACK_ENABLED = true;
+    const point = await history.create('example', 'Original'); await update(manager);
+    const plan = await history.prepare('example', point.id);
+    let release, entered, held = false;
+    const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
+    state.onRead = async path => { if (!held && path === `${root}/main.js`) { held = true; entered(); await gate; } };
+    const creating = history.create('example', 'Concurrent'); await started;
+    await assert.rejects(history.restore(plan), /Another installation/);
+    release(); await creating;
+    assert.equal(registry.manifests.example.version, '2.0.0'); assert.ok(registry.plugins.example);
+    assert.equal(registry.enabledPlugins.has('example'), true);
+});
+
+test('point creation reports a silent runtime reload failure instead of claiming success', async () => {
+    const { manager, history, registry } = fixture(); manager.settings.PLUGIN_ROLLBACK_ENABLED = true;
+    registry.enablePlugin = async () => false;
+    await assert.rejects(history.create('example', 'Original'), /could not be reloaded/);
+    assert.equal(registry.enabledPlugins.has('example'), true);
 });

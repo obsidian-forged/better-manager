@@ -1,10 +1,11 @@
 import { FloatingScrollbars } from '../ui/floating-scrollbars';
 import { SettingsSaveButton } from '../ui/settings-save-button';
 import { ScopeSelect } from '../ui/scope-select';
-import { App, ButtonComponent, PluginSettingTab, setIcon } from 'obsidian';
+import { App, ButtonComponent, PluginSettingTab, requireApiVersion, setIcon } from 'obsidian';
 import type { SettingDefinitionItem, SettingDefinitionPage } from 'obsidian';
 import { SettingsSearch, SettingsSearchPage } from './search-view';
-import { ConfigConflictView } from './conflict-view';
+import { SyncNoticeView } from '../ui/sync-notice-view';
+import { syncNativeSettingsPageTitle } from './native-page-title';
 import Manager from "../main";
 import type BaseSetting from './base-setting';
 
@@ -22,7 +23,7 @@ class ManagerSettingTab extends PluginSettingTab {
     contentEl!: HTMLDivElement;
     private scrollbars?: FloatingScrollbars;
     private search?: SettingsSearch;
-    private conflictView?: ConfigConflictView;
+    private syncNoticeView?: SyncNoticeView;
     private settingsSaveButton?: SettingsSaveButton;
     private navigation?: ScopeSelect;
     private navigationObserver?: MutationObserver;
@@ -38,10 +39,10 @@ class ManagerSettingTab extends PluginSettingTab {
         const pages = this.searchPages();
         const indexed = SettingsSearch.index(pages, this.containerEl.ownerDocument, this.manager.translator.t('功能开关_个性化'));
         this.observeNavigation();
-        return [{ type: 'group', heading: this.manager.translator.t('管理器_BPM设置_短'), items: pages.map((page, index): SettingDefinitionPage => ({
+        return [{ type: 'group', cls: 'manager-setting-navigation', heading: this.manager.translator.t('管理器_BPM设置_短'), items: pages.map((page, index): SettingDefinitionPage => ({
             type: 'page',
             name: page.label,
-            desc: this.navigationDescription(page, indexed.filter(item => item.page === index).map(item => item.name)),
+            desc: this.navigationDescription(page),
             items: [{
                 name: page.label,
                 desc: indexed.filter(item => item.page === index).map(item => `${item.name} ${item.description}`).join(' '),
@@ -65,14 +66,12 @@ class ManagerSettingTab extends PluginSettingTab {
     }
 
     /** 原生入口保留名称和项目概览，再补原生图标；Decorate only this tab's native page entries. */
-    private navigationDescription(page: SettingsSearchPage, names: string[]): DocumentFragment {
+    private navigationDescription(page: SettingsSearchPage): DocumentFragment {
         const doc = this.containerEl.ownerDocument;
         const fragment = (doc.defaultView ?? window).createFragment();
         const summary = (doc.defaultView ?? window).createDiv({ cls: 'manager-setting-navigation__summary' });
         summary.setAttribute('data-bpm-setting-icon', page.icon ?? 'settings-2');
-        const unique = [...new Set(names.filter(Boolean))];
-        summary.setText(unique.slice(0, 6).join(' · ') + (unique.length > 6 ? ' …' : ''));
-        summary.setAttribute('title', unique.join(' · '));
+        summary.setText(page.description);
         fragment.append(summary);
         return fragment;
     }
@@ -82,6 +81,15 @@ class ManagerSettingTab extends PluginSettingTab {
         const root = this.containerEl;
         const view = root.ownerDocument.defaultView ?? window;
         const decorate = () => {
+            root.querySelectorAll<HTMLElement>('.manager-setting-navigation > .setting-item-heading > .setting-item-name').forEach(heading => {
+                if (heading.hasClass('manager-setting-navigation__heading')) return;
+                const label = heading.textContent ?? this.manager.translator.t('管理器_BPM设置_短');
+                heading.empty();
+                heading.addClass('manager-setting-navigation__heading');
+                const icon = heading.createSpan({ cls: 'manager-setting-navigation__heading-icon', attr: { 'aria-hidden': 'true' } });
+                setIcon(icon, 'settings');
+                heading.createSpan({ cls: 'manager-setting-navigation__heading-label', text: label });
+            });
             root.querySelectorAll<HTMLElement>('.manager-setting-navigation__summary').forEach(summary => {
                 const row = summary.closest<HTMLElement>('.setting-item.mod-navigable');
                 if (!row || row.hasClass('manager-setting-navigation__entry')) return;
@@ -101,7 +109,7 @@ class ManagerSettingTab extends PluginSettingTab {
         this.isVisible = false;
         this.scrollbars?.destroy(); this.scrollbars = undefined;
         this.search?.destroy(); this.search = undefined;
-        this.conflictView?.destroy(); this.conflictView = undefined;
+        this.syncNoticeView?.destroy(); this.syncNoticeView = undefined;
         this.settingsSaveButton?.destroy(); this.settingsSaveButton = undefined;
         this.navigation?.close(); this.navigation = undefined;
         // Switching native settings tabs hides this tab, but does not close its editor session.
@@ -123,7 +131,8 @@ class ManagerSettingTab extends PluginSettingTab {
         super(app, manager);
         this.manager = manager;
         this.app = app;
-        manager.register(() => { this.clearRestoreFrames(); this.closeObserver?.disconnect(); this.conflictView?.destroy(); this.settingsSaveButton?.destroy(); this.navigation?.close(); this.navigationObserver?.disconnect(); });
+        if (requireApiVersion('1.11.0')) this.icon = 'settings';
+        manager.register(() => { this.clearRestoreFrames(); this.closeObserver?.disconnect(); this.syncNoticeView?.destroy(); this.settingsSaveButton?.destroy(); this.navigation?.close(); this.navigationObserver?.disconnect(); });
     }
 
     display(): void {
@@ -141,9 +150,7 @@ class ManagerSettingTab extends PluginSettingTab {
 
     refreshConfigConflict(): void {
         this.renderRoot.toggleClass('has-config-conflict', Boolean(this.manager.configProtection?.protection.paused));
-        void this.conflictView?.refresh().catch(error => {
-            if (this.manager.settings.DEBUG) console.error('[BPM] Settings conflict view failed', error);
-        });
+        this.syncNoticeView?.refresh();
     }
 
     refreshSettingsSaveState(): void { this.settingsSaveButton?.refresh(); }
@@ -202,12 +209,19 @@ class ManagerSettingTab extends PluginSettingTab {
         this.settingsSaveButton = undefined;
         containerEl.empty();
         containerEl.addClass('manager-setting__container');
-        this.conflictView?.destroy();
-        this.conflictView = new ConfigConflictView(this.manager, containerEl.createDiv());
+        this.syncNoticeView?.destroy(); this.syncNoticeView = undefined;
         this.refreshConfigConflict();
         const topbar = containerEl.createDiv();
         topbar.addClass('manager-setting__topbar');
         const navigationHost = topbar.createDiv('manager-setting__navigation');
+        const navigationLabel = this.manager.translator.t('设置_切换设置');
+        const label = navigationHost.createSpan('manager-setting__brand');
+        setIcon(label.createSpan({ cls: 'manager-setting__brand-icon', attr: { 'aria-hidden': 'true' } }), 'settings');
+        label.createSpan({ text: navigationLabel });
+        this.syncNoticeView = new SyncNoticeView(this.manager, topbar, () => {
+            if (this.manager.configProtection?.protection.paused) this.manager.openConfigConflict();
+            else this.manager.showPrivateCacheWarning();
+        });
         const searchButton = new ButtonComponent(topbar).setIcon('search').setTooltip(this.manager.translator.t('设置_搜索_标题'));
         searchButton.buttonEl.addClass('manager-setting-search__trigger');
         searchButton.onClick(() => {
@@ -235,24 +249,25 @@ class ManagerSettingTab extends PluginSettingTab {
             this.activeTabIndex = index;
             this.contentEl.empty();
             page.render(this.contentEl);
+            syncNativeSettingsPageTitle(this.nativeContainer, page.label, this.app);
         };
         this.activeTabIndex = Math.min(this.activeTabIndex, pages.length - 1);
-        this.navigation = ScopeSelect.compact(navigationHost, this.manager.translator.t('管理器_BPM设置_短'),
+        this.navigation = ScopeSelect.compact(navigationHost, navigationLabel,
             `${this.activeTabIndex}`, pages.map((page, index) => ({ value: `${index}`, label: page.label, icon: page.icon })), activate);
         activate(`${this.activeTabIndex}`);
         this.scrollbars = new FloatingScrollbars(containerEl);
         restore();
     }
     private searchPages(): SettingsSearchPage[] {
-        const pages: Array<{ key: string; icon: string; view: new (tab: ManagerSettingTab, container?: HTMLElement) => BaseSetting }> = [
-            { key: '设置_基础设置_前缀', icon: 'settings-2', view: ManagerBasis },
-            { key: '设置_主页面功能_前缀', icon: 'mouse-pointer-click', view: ManagerMainPage },
-            { key: '设置_样式设置_前缀', icon: 'palette', view: ManagerStyle },
-            { key: '设置_分组设置_前缀', icon: 'folder-tree', view: ManagerGroup },
-            { key: '设置_标签设置_前缀', icon: 'tags', view: ManagerTag },
+        const pages: Array<{ key: string; descriptionKey: string; icon: string; view: new (tab: ManagerSettingTab, container?: HTMLElement) => BaseSetting }> = [
+            { key: '设置_基础设置_前缀', descriptionKey: '设置_导航_基础配置描述', icon: 'settings-2', view: ManagerBasis },
+            { key: '设置_主页面功能_前缀', descriptionKey: '设置_导航_功能入口描述', icon: 'mouse-pointer-click', view: ManagerMainPage },
+            { key: '设置_样式设置_前缀', descriptionKey: '设置_导航_界面样式描述', icon: 'palette', view: ManagerStyle },
+            { key: '设置_分组设置_前缀', descriptionKey: '设置_导航_分组管理描述', icon: 'folder-tree', view: ManagerGroup },
+            { key: '设置_标签设置_前缀', descriptionKey: '设置_导航_标签管理描述', icon: 'tags', view: ManagerTag },
         ];
-        if (this.manager.settings.DELAY) pages.push({ key: '设置_延迟设置_前缀', icon: 'timer', view: ManagerDelay });
-        return pages.map(page => ({ label: this.manager.translator.t(page.key), icon: page.icon, render: container => new page.view(this, container).render() }));
+        if (this.manager.settings.DELAY) pages.push({ key: '设置_延迟设置_前缀', descriptionKey: '设置_导航_延迟启动描述', icon: 'timer', view: ManagerDelay });
+        return pages.map(page => ({ label: this.manager.translator.t(page.key), description: this.manager.translator.t(page.descriptionKey), icon: page.icon, render: container => new page.view(this, container).render() }));
     }
     basisDisplay() { this.contentEl.empty(); new ManagerBasis(this).render(); }
     mainPageDisplay() { this.contentEl.empty(); new ManagerMainPage(this).render(); }

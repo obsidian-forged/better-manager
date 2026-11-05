@@ -59,6 +59,8 @@ async function fixture(options = {}) {
     const calls = [];
     const locals = new Map();
     const manager = new Manager();
+    let conflictDialogOpens = 0;
+    manager.openConfigConflict = () => { conflictDialogOpens++; };
     manager.settings = settings;
     manager.manifest = { id: 'self' };
     manager.translator = { t: (key, vars) => `${key}${vars?.names || ''}` };
@@ -78,7 +80,7 @@ async function fixture(options = {}) {
     manager.refreshRibbonManagerFeature = async () => { calls.push(['ribbon']); };
     manager.devices = new DeviceManager(manager);
     await manager.devices.initialize();
-    return { manager, settings, calls, getLocal: () => locals.get(manager.devices.storageKey), setLocal: (value) => { locals.set(manager.devices.storageKey, value); } };
+    return { manager, settings, calls, conflictDialogOpens: () => conflictDialogOpens, getLocal: () => locals.get(manager.devices.storageKey), setLocal: (value) => { locals.set(manager.devices.storageKey, value); } };
 }
 
 test('reapplying an unchanged appearance does not write or reload native styles', async () => {
@@ -146,7 +148,7 @@ test('yield cancellation releases both the owning window frame and its fallback 
 });
 
 test('shared file events and editor close do not read, pause, apply or publish settings', async () => {
-    const adapter=memoryAdapter(),{manager}=await fixture({adapter}),path='.obsidian/plugins/self/data.json';
+    const adapter=memoryAdapter(),{manager,conflictDialogOpens}=await fixture({adapter}),path='.obsidian/plugins/self/data.json';
     adapter.files[path]=JSON.stringify(manager.devices.persistedSettings());await manager.loadSettings();const current=manager.settings;
     let renders=0,reads=0;const read=adapter.read;adapter.read=async path=>{reads++;return read(path);};
     manager.managerModal={modalEl:{isConnected:true},refreshStyleSettings(){renders++;},reloadShowData(){renders++;}};
@@ -155,9 +157,12 @@ test('shared file events and editor close do not read, pause, apply or publish s
     assert.equal(reads,0);assert.equal(manager.settings,current);assert.equal(manager.settings.RECENT_INSTALL_DAYS,7);assert.equal(manager.configProtection.protection.paused,false);
     manager.settings.RECENT_INSTALL_DAYS=14;await manager.saveSettings();manager.endSettingsEditing(editor);await manager.settingsSaveQueue;
     assert.equal(JSON.parse(adapter.files[path]).RECENT_INSTALL_DAYS,10);assert.equal(manager.hasUnsavedSettings,true);
+    assert.equal(conflictDialogOpens(),0);
     assert.equal(await manager.savePendingSettings(),false);assert.equal(manager.configProtection.protection.paused,true);
+    assert.equal(conflictDialogOpens(),1);
     await manager.configProtection.choose(manager.devices.persistedSettings(),manager.configProtection.protection.pendingFiles);
     assert.equal(await manager.savePendingSettings(),true);assert.equal(JSON.parse(adapter.files[path]).RECENT_INSTALL_DAYS,14);assert.equal(manager.settings,current);assert.equal(renders,0);
+    assert.equal(conflictDialogOpens(),1);
 });
 
 test('explicit Save preserves local edits and requires a reviewed choice for concurrent fields', async () => {
@@ -183,12 +188,12 @@ async function drainEditorClose(manager) {
     for (let pass = 0; pass < 3; pass++) { await new Promise(resolve => setImmediate(resolve)); await manager.settingsSaveQueue; }
 }
 async function closeSaveFixture() {
-    const adapter = memoryAdapter(), { manager } = await fixture({ adapter });
+    const adapter = memoryAdapter(), { manager, conflictDialogOpens } = await fixture({ adapter });
     manager.settings.MANUAL_CONFIG_SAVE = false;
     const path = '.obsidian/plugins/self/data.json';
     adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
     await manager.loadSettings();
-    return { adapter, manager, path };
+    return { adapter, manager, path, conflictDialogOpens };
 }
 
 test('manual saving remains the default for new and previously stored settings', async () => {
@@ -233,7 +238,7 @@ test('optional close saving waits for the last editor and retains the explicit S
 });
 
 test('optional close saving preserves both conflicting versions and never adopts external settings', async () => {
-    const { adapter, manager, path } = await closeSaveFixture(), editor = {};
+    const { adapter, manager, path, conflictDialogOpens } = await closeSaveFixture(), editor = {};
     manager.beginSettingsEditing(editor);
     manager.settings.RECENT_INSTALL_DAYS = 19; await manager.saveSettings({ captureDevice: false });
     const remote = JSON.parse(adapter.files[path]); remote.LANGUAGE = 'fr'; adapter.files[path] = JSON.stringify(remote);
@@ -244,6 +249,7 @@ test('optional close saving preserves both conflicting versions and never adopts
     assert.equal(manager.settings.RECENT_INSTALL_DAYS, 19); assert.notEqual(manager.settings.LANGUAGE, 'fr');
     assert.ok(Object.keys(adapter.files).some(path => path.includes('/conflicts/')));
     assert.equal(manager.hasUnsavedSettings, true);
+    assert.equal(conflictDialogOpens(), 0);
 });
 
 test('reopening during an opted-in close save cancels it before shared publication', async () => {

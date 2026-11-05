@@ -61,3 +61,10 @@ test('version picker shows the HTTP reason when loading history fails', async ()
     assert.ok(descendants(modal.contentEl).some(el => el.attributes.role === 'alert' && el.text.includes('HTTP 403')));
     assert.equal(modal.downloadButton.disabled, true);
 });
+
+test('partial release metadata errors remain visible with their HTTP context', async () => {
+    const modal = new UpdateModal({}, manager(), 'example', [{ version: '2.0.0', prerelease: false,
+        metadataError: 'HTTP 403: API rate limit exceeded' }], '2.0.0');
+    await modal.onOpen();
+    assert.ok(descendants(modal.contentEl).some(el => el.text.includes('HTTP 403: API rate limit exceeded') && el.attributes.role === 'status'));
+});

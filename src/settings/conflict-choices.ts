@@ -57,6 +57,19 @@ export class ConfigConflictChoices {
         const side = this.choices.get(id) ?? 'local';
         return [...this.overrides.values()].some(item => item.binding.section === id && item.side !== side) ? 'mixed' : side;
     }
+    /** All-source actions include files and discard every finer-grained exception. */
+    selectAll(side: ConflictSide): void {
+        if (!this.filesReady) throw new Error('The configuration copies are not ready');
+        this.choices.clear();
+        for (const section of this.sections) this.choices.set(section.id, side);
+        this.overrides.clear();
+        this.cached = undefined;
+    }
+    allSide(): ConflictSide | 'mixed' | undefined {
+        if (!this.filesReady || !this.sections.length) return undefined;
+        const sides = new Set(this.sections.map(section => this.sectionSide(section.id)));
+        return sides.size > 1 || sides.has('mixed') ? 'mixed' : sides.values().next().value;
+    }
     selectSection(id: string, side: ConflictSide): void {
         if (!this.sections.some(item => item.id === id)) throw new Error('The configuration section is no longer available');
         this.choices.set(id, side);

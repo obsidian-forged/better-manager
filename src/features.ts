@@ -6,8 +6,8 @@ export type FeatureSettings = Partial<Record<FeatureId, boolean>>;
 export const TOOL_IDS = ['updates', 'bulkEdit', 'layoutEditor', 'reload', 'catalog', 'pluginMarket', 'appearanceMarket', 'appearanceProfiles'] as const;
 export type ToolId = typeof TOOL_IDS[number];
 export type ToolSettings = Partial<Record<ToolId, boolean>>;
-const RELEASE_CAPABILITIES: Record<'catalog' | 'rollback', boolean> = { catalog: false, rollback: false };
-/** 发布可用性不可由旧配置开启；Saved preferences cannot expose unreleased capabilities. */
+const RELEASE_CAPABILITIES: Record<'catalog' | 'rollback', boolean> = { catalog: true, rollback: true };
+/** Preview availability is separate from the user's opt-in for stores and backup writes. */
 export function releaseCapabilityAvailable(id: keyof typeof RELEASE_CAPABILITIES): boolean {
     return RELEASE_CAPABILITIES[id];
 }

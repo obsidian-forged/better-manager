@@ -77,8 +77,9 @@ export class PluginHistory {
         if (!this.manager.appPlugins.manifests[id]) return;
         await this.capture(id, '', true);
     }
-    private async capture(id: string, label: string, automatic: boolean): Promise<BuildSnapshot> {
+    private async capture(id: string, label: string, automatic: boolean, protectedSnapshot?: string): Promise<BuildSnapshot> {
         this.assertEnabled();
+        const binding = captureSourceBinding(this.manager, id), bindingFingerprint = JSON.stringify(binding);
         const files = await this.readBuild(id);
         if (!files['manifest.json'] || !files['main.js']) throw new Error(this.manager.translator.t('回退_构建不完整'));
         const manifest = parseInstallManifest(JSON.parse(files['manifest.json']) as unknown, id);
@@ -86,14 +87,19 @@ export class PluginHistory {
         this.lastCreatedAt = createdAt;
         const snapshotId = `${createdAt.toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
         const snapshot: BuildSnapshot = { schema: 1, id: snapshotId, pluginId: id, version: manifest.version, label: label.trim().slice(0, 100), createdAt, automatic, files,
-            receipt: readInstalledRelease(this.manager.settings.PLUGIN_INSTALLATIONS?.[id]), binding: readSourceBinding(captureSourceBinding(this.manager, id)) };
+            receipt: binding.receipt, binding: readSourceBinding(binding) };
+        this.validate(snapshot, id, snapshotId);
+        this.assertEnabled();
+        if (JSON.stringify(await this.readBuild(id)) !== JSON.stringify(files)
+            || JSON.stringify(captureSourceBinding(this.manager, id)) !== bindingFingerprint) throw new Error(this.manager.translator.t('回退_预览变化'));
+        this.assertEnabled();
         const store = pluginStorage(this.manager), text = JSON.stringify(snapshot), name = this.name(id, snapshotId);
         await store.write('data', name, text);
         if (await store.read('data', name) !== text) throw new Error('Restore point write verification failed');
         const automaticPoints = (await this.list(id)).filter(point => point.automatic);
         const limit = this.manager.settings.PLUGIN_ROLLBACK_LIMIT;
         const retention = Number.isFinite(limit) ? Math.min(100, Math.max(1, Math.floor(limit))) : 10;
-        for (const point of automaticPoints.slice(retention)) await this.remove(id, point.id);
+        for (const point of automaticPoints.slice(retention)) if (point.id !== protectedSnapshot) await this.remove(id, point.id);
         return snapshot;
     }
     async create(id: string, label: string): Promise<BuildSnapshot> {
@@ -101,8 +107,22 @@ export class PluginHistory {
         const directory = this.directory(id), registry = this.manager.appPlugins;
         return withPluginBuildLock(this.manager.app.vault.adapter, directory, async () => {
             const running = Boolean(registry.plugins?.[id]);
-            try { if (running) await registry.disablePlugin(id); return await this.capture(id, label, false); }
-            finally { if (running) await registry.enablePlugin(id); }
+            const reload = async () => {
+                if (running) {
+                    await registry.enablePlugin(id);
+                    if (!registry.plugins?.[id]) throw new Error('The plugin could not be reloaded after creating its restore point');
+                }
+            };
+            let snapshot: BuildSnapshot;
+            try { if (running) await registry.disablePlugin(id); snapshot = await this.capture(id, label, false); }
+            catch (error) {
+                const failure = error instanceof Error ? error : new Error('Restore point creation failed');
+                try { await reload(); }
+                catch (reloadError) { throw new Error(`${failure.message}; runtime restore failed: ${reloadError instanceof Error ? reloadError.message : 'unknown error'}`); }
+                throw failure;
+            }
+            await reload();
+            return snapshot;
         });
     }
     async rename(id: string, snapshotId: string, label: string): Promise<void> {
@@ -130,8 +150,12 @@ export class PluginHistory {
         }
         return plan;
     }
-    async restore(plan: RestorePlan): Promise<void> {
-        this.assertEnabled();
+    async restore(plan: RestorePlan, current: () => boolean = () => true): Promise<void> {
+        const assertCurrent = () => {
+            this.assertEnabled();
+            if (!current()) throw new Error(this.manager.translator.t('通用_取消_文本'));
+        };
+        assertCurrent();
         const { pluginId: id, id: snapshotId } = plan.snapshot, directory = this.directory(id), registry = this.manager.appPlugins;
         const snapshot = await this.read(id, snapshotId);
         if (JSON.stringify(snapshot) !== plan.snapshotFingerprint) throw new Error(this.manager.translator.t('回退_预览变化'));
@@ -142,24 +166,38 @@ export class PluginHistory {
         if (plan.config !== undefined) files['data.json'] = plan.config;
         let stopped = false, lifecycleStarted = false, bindingChanged = false;
         await replacePluginBuild(this.manager.app.vault.adapter, directory, files, async () => {
-            this.assertEnabled();
+            assertCurrent();
             if (JSON.stringify(captureSourceBinding(this.manager, id)) !== plan.bindingFingerprint || JSON.stringify(await this.readBuild(id)) !== plan.fingerprint) throw new Error(this.manager.translator.t('回退_预览变化'));
+            if (Boolean(registry.plugins?.[id]) !== running) throw new Error(this.manager.translator.t('回退_预览变化'));
             lifecycleStarted = true;
             if (running) { await registry.disablePlugin(id); stopped = true; }
             if (JSON.stringify(await this.readBuild(id)) !== plan.fingerprint) throw new Error(this.manager.translator.t('回退_预览变化'));
-            await this.capture(id, '', true);
+            await this.capture(id, '', true, snapshotId);
+            // Recovery-point storage is asynchronous too. Recheck the reviewed inputs
+            // after it finishes, immediately before the transaction may replace files.
+            if (JSON.stringify(await this.read(id, snapshotId)) !== plan.snapshotFingerprint
+                || JSON.stringify(await this.readBuild(id)) !== plan.fingerprint
+                || JSON.stringify(captureSourceBinding(this.manager, id)) !== plan.bindingFingerprint) throw new Error(this.manager.translator.t('回退_预览变化'));
+            assertCurrent();
         }, async () => {
+            assertCurrent();
             await registry.loadManifests();
+            assertCurrent();
             if (running) { await registry.enablePlugin(id); if (!registry.plugins?.[id]) throw new Error('Restored plugin could not be loaded'); }
+            assertCurrent();
             if (JSON.stringify(captureSourceBinding(this.manager, id)) !== plan.bindingFingerprint) throw new Error(this.manager.translator.t('回退_预览变化'));
             bindingChanged = true;
             await applySourceBinding(this.manager, id, snapshot.binding);
             await this.manager.saveSettings();
+            assertCurrent();
         }, async () => {
             if (!lifecycleStarted || !stopped && running) return;
             if (registry.plugins?.[id]) await registry.disablePlugin(id);
             await registry.loadManifests();
-            if (running) await registry.enablePlugin(id);
+            if (running) {
+                await registry.enablePlugin(id);
+                if (!registry.plugins?.[id]) throw new Error('The previous plugin could not be reloaded');
+            }
             if (bindingChanged) { await applySourceBinding(this.manager, id, binding); await this.manager.saveSettings(); }
         }, async () => {
             if (registry.plugins?.[id]) await registry.disablePlugin(id);

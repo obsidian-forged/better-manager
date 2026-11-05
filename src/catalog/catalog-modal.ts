@@ -17,6 +17,7 @@ import { catalogActivity, matchesStoreFilters } from './store-filters';
 import { catalogVersions, installCatalogRelease } from './catalog-installer';
 import { readInstalledRelease, sourceIdentity } from '../updates/update-policy';
 import { toolEnabled } from '../features';
+import { createCatalogInstallGuard } from './install-selection';
 
 type CatalogTab = "discover" | "browse" | "try-list" | "sources";
 
@@ -180,8 +181,9 @@ export class CatalogModal extends Modal {
         }
         navigation.addEventListener("keydown", event => {
             if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-            if (!(event.target instanceof HTMLButtonElement)) return;
-            const index = buttons.indexOf(event.target);
+            const target = event.target as HTMLButtonElement | null;
+            if (!target?.instanceOf?.(navigation.ownerDocument.defaultView?.HTMLButtonElement ?? HTMLButtonElement)) return;
+            const index = buttons.indexOf(target);
             if (index < 0) return;
             event.preventDefault();
             const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
@@ -414,10 +416,11 @@ export class CatalogModal extends Modal {
     }
 
     private installButton(container: HTMLElement, entry: CatalogEntry, showLabel = false): void {
+        const self = entry.id === this.manager.manifest.id;
         const available = Boolean(entry.repo || entry.releases.some(release => release.manifest && release.main));
-        const label = this.t(available ? (this.manager.appPlugins.manifests[entry.id] ? '目录_管理版本' : '目录_选择安装版本') : '目录_安装不支持');
+        const label = this.t(self ? '更新规则_原因_self' : available ? (this.manager.appPlugins.manifests[entry.id] ? '目录_管理版本' : '目录_选择安装版本') : '目录_安装不支持');
         const button = new ButtonComponent(container).setIcon("download").setTooltip(label)
-            .setDisabled(this.busy || !available);
+            .setDisabled(this.busy || self || !available);
         if (showLabel) button.setButtonText(label);
         button.buttonEl.setAttribute("aria-label", label);
         button.onClick(() => this.openVersions(entry));
@@ -425,6 +428,7 @@ export class CatalogModal extends Modal {
     }
 
     private openVersions(entry: CatalogEntry): void {
+        if (entry.id === this.manager.manifest.id) return;
         const independent = entry.releases.some(release => release.manifest && release.main);
         if (!independent && !entry.repo) return;
         const origin = independent ? { kind: 'catalog' as const, key: entry.key, sourceId: entry.source.id, pluginId: entry.id, url: entry.source.url }
@@ -434,12 +438,12 @@ export class CatalogModal extends Modal {
         const stored = readInstalledRelease(this.manager.settings.PLUGIN_INSTALLATIONS?.[entry.id]);
         const sameSource = stored ? sourceIdentity(stored.source) === identity
             : !independent && this.manager.settings.REPO_MAP[entry.id]?.toLowerCase() === entry.repo.toLowerCase();
-        const originalBinding = JSON.stringify(stored?.source);
+        let checkSelection: (version: string) => void;
+        try { checkSelection = createCatalogInstallGuard(this.manager, this.service, entry); }
+        catch (error) { this.failure(error); return; }
         const guard = () => {
             this.manager.updates.assertAllowed(entry.id, identity, selectedVersion);
-            if (JSON.stringify(readInstalledRelease(this.manager.settings.PLUGIN_INSTALLATIONS?.[entry.id])?.source) !== originalBinding) throw new Error(this.t('批量更新_清单变化'));
-            const current = this.service.entries().find(item => item.key === entry.key);
-            if (!current || current.source.url !== entry.source.url) throw new Error(this.t('目录_来源冲突'));
+            checkSelection(selectedVersion);
         };
         let versions: ReleaseVersion[] = [];
         let selectedVersion = '';
@@ -548,7 +552,10 @@ export class CatalogModal extends Modal {
         const installation = this.detail.createDiv("manager-source-card");
         const installationActions = this.sectionHeader(installation, this.t("目录_安装"), this.t("目录_历史版本提示"));
         if (entry.repo) {
-            new ButtonComponent(installationActions).setButtonText(this.t("目录_手动安装")).onClick(() => { this.close(); this.install(entry.repo); });
+            new ButtonComponent(installationActions).setButtonText(this.t("目录_手动安装"))
+                .setDisabled(entry.id === this.manager.manifest.id)
+                .setTooltip(entry.id === this.manager.manifest.id ? this.t('更新规则_原因_self') : this.t('目录_手动安装'))
+                .onClick(() => { this.close(); this.install(entry.repo); });
             const load = new ButtonComponent(installationActions).setButtonText(this.t("目录_获取仓库"));
             load.onClick(() => {
                 load.setDisabled(true);

@@ -1,6 +1,7 @@
 import { App, ButtonComponent, Modal, Notice, Setting } from 'obsidian';
 import type Manager from '../main';
 import type { BuildSnapshot, RestorePlan } from './plugin-history';
+import { addSettingTags } from '../settings/setting-tags';
 
 export class HistoryModal extends Modal {
     private pluginId: string;
@@ -14,29 +15,37 @@ export class HistoryModal extends Modal {
     private t(key: string, vars?: Record<string, string | number>): string { return this.manager.translator.t(key, vars); }
     onOpen(): void {
         if (!this.manager.history.available) { this.close(); return; }
-        this.manager.beginSettingsEditing(this); this.titleEl.setText(this.t('回退_标题')); this.modalEl.addClass('manager-container', 'manager-history'); void this.load();
+        this.closed = false;
+        this.manager.beginSettingsEditing(this); this.titleEl.setText(this.t('回退_标题')); this.modalEl.addClass('manager-container', 'manager-history'); this.run(() => this.load());
     }
     private run(action: () => Promise<void>): void {
         if (this.busy || this.closed) return;
         this.busy = true;
         this.modalEl.setAttribute('aria-busy', 'true');
-        void action().catch(error => {
-            if (this.manager.settings.DEBUG) console.error('[BPM] Restore points failed', error);
-            if (!this.closed) new Notice(error instanceof Error ? error.message : this.t('安装_错误_通用'), 8000);
-            if (!this.closed) void this.load();
+        void action().catch(async error => {
+            this.report(error);
+            if (!this.closed) {
+                try { await this.load(); }
+                catch (refreshError) { this.report(refreshError); }
+            }
         }).finally(() => { this.busy = false; this.modalEl.removeAttribute('aria-busy'); });
     }
+    private report(error: unknown): void {
+        if (this.manager.settings.DEBUG) console.error('[BPM] Restore points failed', error);
+        if (!this.closed) new Notice(error instanceof Error ? error.message : this.t('安装_错误_通用'), 8000);
+    }
     private async load(): Promise<void> {
+        if (this.closed) return;
         const generation = ++this.generation;
         this.contentEl.empty();
         this.contentEl.createEl('p', { text: this.t('回退_说明'), cls: 'setting-item-description' });
-        new Setting(this.contentEl).setName(this.t('回退_开启')).setDesc(this.t('回退_开启说明')).addToggle(toggle => toggle
+        addSettingTags(new Setting(this.contentEl).setName(this.t('回退_开启')), ['Preview']).setDesc(this.t('回退_开启说明')).addToggle(toggle => toggle
             .setValue(this.manager.history.enabled()).onChange(value => this.run(async () => {
                 this.manager.settings.PLUGIN_ROLLBACK_ENABLED = value; await this.manager.saveSettings(); await this.load();
             })));
         new Setting(this.contentEl).setName(this.t('回退_插件')).addDropdown(dropdown => {
             for (const manifest of Object.values(this.manager.appPlugins.manifests).filter(manifest => manifest.id !== this.manager.manifest.id)) dropdown.addOption(manifest.id, manifest.name);
-            dropdown.setValue(this.pluginId).onChange(value => { if (this.busy) return; this.pluginId = value; this.label = ''; void this.load(); });
+            dropdown.setValue(this.pluginId).onChange(value => { if (this.busy) return; this.pluginId = value; this.label = ''; this.run(() => this.load()); });
         });
         if (!this.pluginId) return;
         const controls = new Setting(this.contentEl).setName(this.t('回退_创建')).setDesc(this.t('回退_命名说明'));
@@ -110,10 +119,15 @@ export class HistoryModal extends Modal {
         actions.addButton(button => { restoreButton = button; button.setButtonText(this.t('回退_确认')).setCta().setDisabled(!reviewed).onClick(() => this.run(async () => {
             if (!reviewed) return;
             button.setDisabled(true);
-            try { await this.manager.history.restore(plan); new Notice(this.t('回退_成功')); await this.load(); }
-            finally { button.setDisabled(false); }
+            const generation = this.generation;
+            const endAction = this.manager.configProtection?.beginUserAction();
+            try {
+                await this.manager.history.restore(plan, () => !this.closed && generation === this.generation);
+                if (!this.closed) { new Notice(this.t('回退_成功')); await this.load(); }
+            }
+            finally { endAction?.(); button.setDisabled(false); }
         })); });
-        new ButtonComponent(actions.controlEl).setButtonText(this.t('通用_取消_文本')).onClick(() => { if (!this.busy) void this.load(); });
+        new ButtonComponent(actions.controlEl).setButtonText(this.t('通用_取消_文本')).onClick(() => this.run(() => this.load()));
     }
     onClose(): void { this.closed = true; this.generation++; this.manager.endSettingsEditing(this); this.contentEl.empty(); }
 }

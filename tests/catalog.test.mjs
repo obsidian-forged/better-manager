@@ -40,10 +40,10 @@ test('official-style catalog preserves legacy IDs and normalizes GitHub URLs', (
     assert.equal(parsed.plugins[1].id, 'waka_time_box');
 });
 
-test('unreleased store stays unavailable even with a saved opt-in while existing tools keep their defaults', () => {
-    assert.equal(toolAvailable('catalog'), false);
+test('Preview store is available while retaining explicit opt-in and the other tool defaults', () => {
+    assert.equal(toolAvailable('catalog'), true);
     assert.equal(toolEnabled({}, 'catalog'), false);
-    assert.equal(toolEnabled({ TOOLS: { catalog: true } }, 'catalog'), false);
+    assert.equal(toolEnabled({ TOOLS: { catalog: true } }, 'catalog'), true);
     assert.equal(toolEnabled({ TOOLS: { catalog: false } }, 'catalog'), false);
     assert.equal(toolEnabled({}, 'updates'), true);
 });
@@ -439,6 +439,7 @@ test('GitHub installation preserves disabled state and rejects incompatible or m
             text: url.endsWith('/manifest.json') ? JSON.stringify(payload) : 'new main' }),
     });
     const manager = {
+        manifest: { id: 'better-plugins-manager' },
         settings: { DEBUG: false, Plugins: [{ id: 'plugin', tags: [], enabled: false }], BPM_INSTALLED: [] },
         app: { vault: { configDir: '.obsidian', adapter: {
             exists: async path => values.has(path), read: async path => values.get(path), write: async (path, value) => { writes++; values.set(path, value); },
@@ -460,4 +461,13 @@ test('GitHub installation preserves disabled state and rejects incompatible or m
     payload = { ...payload, minAppVersion: '1.8.0', id: 'other' };
     assert.equal(await installPluginFromGithub(manager, 'team/plugin', '2.0.0', false, 'plugin'), false);
     assert.equal(writes, previousWrites);
+});
+
+test('the shared install boundary rejects self replacement before any storage or lifecycle work', async () => {
+    const { installPluginFiles } = await loadModule('src/install/plugin-installer.ts');
+    const manager = { manifest: { id: 'better-plugins-manager' }, translator: { t: key => key } };
+    const files = { manifestText: JSON.stringify({ id: manager.manifest.id, version: '1.2.20', minAppVersion: '1.5.8' }), mainJs: 'build', styles: null };
+    for (const source of [{ kind: 'github', repo: 'owner/manager' }, { kind: 'catalog', key: 'source:manager', sourceId: 'source', pluginId: manager.manifest.id }]) {
+        await assert.rejects(installPluginFiles(manager, files, { source, tag: '1.2.20', label: 'Manager' }, { update() { throw new Error('Unexpected install work'); } }), /更新规则_原因_self/);
+    }
 });

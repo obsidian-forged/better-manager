@@ -7,6 +7,7 @@ import { ProtectedConfigSession } from './settings/protected-session';
 import { applySettingsEdit, copySettingsRecord, queueSettingsSave, reconcileSettingsRecord, settingsSaveMessage } from './settings/save-request';
 import { detectSyncPlugins } from './settings/sync-detector';
 import { SyncWarningModal } from './settings/sync-warning';
+import { ConfigConflictModal } from './settings/conflict-view';
 import { PluginIcons } from './icons/plugin-icons';
 import { pluginStorage } from './storage/plugin-storage';
 import { LocalStateStore } from './storage/local-state';
@@ -131,6 +132,7 @@ export default class Manager extends Plugin {
     private settingsTab?: ManagerSettingTab;
     public configProtection?: ProtectedConfigSession;
     private syncWarningModal?: SyncWarningModal;
+    private configConflictModal?: ConfigConflictModal;
     private readonly settingsEditors = new Set<object>();
     private settingsEditorEpoch = 0;
     private noteTip!: NoteTipFeature;
@@ -378,6 +380,7 @@ export default class Manager extends Plugin {
         this.isUnloaded = true;
         this.configProtection?.destroy();
         this.syncWarningModal?.close();
+        this.configConflictModal?.close();
         this.pluginIcons.dispose();
         this.updates.dispose();
         this.managerModal?.close();
@@ -980,9 +983,24 @@ export default class Manager extends Plugin {
     }
 
     public refreshConfigConflict(): void {
+        this.configConflictModal?.refresh();
         this.managerModal?.refreshConfigConflict?.();
         this.settingsTab?.refreshConfigConflict();
         this.refreshSettingsSaveState();
+    }
+
+    public openConfigConflict(): void {
+        if (this.isUnloaded || !this.configProtection?.protection?.conflict) return;
+        if (this.configConflictModal) {
+            this.configConflictModal.refresh();
+            this.configConflictModal?.focusContent();
+            return;
+        }
+        const modal = new ConfigConflictModal(this, () => {
+            if (this.configConflictModal === modal) this.configConflictModal = undefined;
+        });
+        this.configConflictModal = modal;
+        modal.open();
     }
 
     public get hasUnsavedSettings(): boolean {
@@ -1129,6 +1147,7 @@ export default class Manager extends Plugin {
                 return true;
             }
             if (notifySuccess || result.status !== 'cancelled') new Notice(settingsSaveMessage(this.settings.LANGUAGE, result.status), 10_000);
+            if (notifySuccess && result.status === 'conflict') this.openConfigConflict();
             return false;
         } catch (error) {
             this.reportError("Saving settings failed", error);

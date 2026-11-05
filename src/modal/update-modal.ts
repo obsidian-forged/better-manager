@@ -227,6 +227,7 @@ export class UpdateModal extends Modal {
             if (release.name && release.name !== release.version) meta.createSpan({ text: release.name });
             if (release.minAppVersion) meta.createSpan({ text: t("兼容性_需要版本", { version: release.minAppVersion }) });
             if (release.publishedAt) meta.createSpan({ text: this.formatDate(release.publishedAt) });
+            if (release.metadataError) meta.createSpan({ text: release.metadataError, cls: 'mod-warning', attr: { role: 'status' } });
 
             const check = item.createSpan({ cls: "manager-version-picker__item-check" });
             setIcon(check, release.version === this.selectedVersion ? "check" : "circle");

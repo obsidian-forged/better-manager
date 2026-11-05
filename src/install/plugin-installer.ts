@@ -28,6 +28,7 @@ export async function installPluginFiles(manager: Manager, files: PluginBuildFil
     if (!files.manifestText || !files.mainJs) throw new Error(manager.translator.t('安装_错误_缺少插件资源'));
     const payload: unknown = JSON.parse(files.manifestText);
     const manifest = parseInstallManifest(payload, options.expectedId);
+    if (manifest.id === manager.manifest.id) throw new UpdateGuardError('self', manager.translator.t('更新规则_原因_self'));
     if (options.expectedManifestVersion && manifest.version !== options.expectedManifestVersion) throw new UpdateGuardError('changed', manager.translator.t('批量更新_清单变化'));
     if (!requireApiVersion(manifest.minAppVersion)) throw new Error(manager.translator.t('兼容性_需要版本', { version: manifest.minAppVersion }));
     if (Platform.isMobile && manifest.isDesktopOnly) throw new Error(manager.translator.t('目录_仅桌面'));

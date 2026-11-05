@@ -11,11 +11,11 @@ const api = {
     requireApiVersion: version => version.split('.').map(Number).reduce((sum, value) => sum * 1000 + value, 0) <= current.host.split('.').map(Number).reduce((sum, value) => sum * 1000 + value, 0),
     requestUrl: async input => current.request(input),
 };
-const compiled = await build({ stdin: { contents: `export * from './src/updates/update-service'; export * from './src/updates/update-policy'; export * from './src/catalog/obsidian-io'; export * from './src/catalog/catalog-installer';`, resolveDir: process.cwd(), loader: 'ts' },
+const compiled = await build({ stdin: { contents: `export * from './src/updates/update-service'; export * from './src/updates/update-policy'; export * from './src/catalog/obsidian-io'; export * from './src/catalog/catalog-installer'; export * from './src/catalog/install-selection';`, resolveDir: process.cwd(), loader: 'ts' },
     bundle: true, format: 'cjs', platform: 'node', write: false, external: ['obsidian', 'electron'], logLevel: 'silent' });
 const module = { exports: {} };
 new Function('require', 'module', 'exports', compiled.outputFiles[0].text)(name => { if (name === 'obsidian') return api; throw Error(`Unexpected dependency ${name}`); }, module, module.exports);
-const { UpdateService, sourceIdentity, notificationsMuted, getCatalogService, catalogVersions, installCatalogRelease } = module.exports;
+const { UpdateService, sourceIdentity, notificationsMuted, getCatalogService, catalogVersions, installCatalogRelease, createCatalogInstallGuard } = module.exports;
 let sequence = 0;
 const root = id => `.obsidian/plugins/${id}`;
 const manifest = (id, version = '1.0.0', extra = {}) => ({ id, name: id, version, minAppVersion: '1.5.8', ...extra });
@@ -267,6 +267,53 @@ test('independent files with an incorrect ID, missing compatibility or failed do
     assert.equal(await installCatalogRelease(manager, entry, entry.releases[0], { quiet: true }), false);
     assert.equal(state.writes.length, writes);
     assert.equal(state.files.get(`${root('a')}/data.json`), 'current user settings');
+});
+
+test('independent manifest HTTP failures retain their reason in version metadata and stop installation before writes', async () => {
+    const { state, manager } = harness(['a']);
+    state.external = new Map([['https://cdn.example/main.js', 'new main']]);
+    const request = state.request.bind(state);
+    state.request = async input => input.url === 'https://cdn.example/manifest.json'
+        ? { status: 403, headers: { 'x-ratelimit-remaining': '0' }, text: '{"message":"API rate limit exceeded"}', arrayBuffer: new ArrayBuffer(0) }
+        : request(input);
+    const service = getCatalogService(manager);
+    await service.importSource({ schemaVersion: 1, name: 'Custom', plugins: [{ id: 'a', releases: [{ version: '2',
+        manifest: 'https://cdn.example/manifest.json', main: 'https://cdn.example/main.js' }] }] }, 'custom.json');
+    const entry = service.entries()[0], writes = state.writes.length, errors = [];
+    const versions = await catalogVersions(manager, entry);
+    assert.equal(versions[0].compatibilityChecked, false);
+    assert.match(versions[0].metadataError, /HTTP 403.*rate limit/i);
+    assert.equal(await installCatalogRelease(manager, entry, entry.releases[0], { quiet: true, onError: error => errors.push(error) }), false);
+    assert.equal(errors[0].status, 403);
+    assert.equal(state.writes.length, writes);
+    assert.equal(state.files.get(`${root('a')}/data.json`), 'current user settings');
+});
+
+test('the store cannot install or replace Better Manager itself and makes no download request', async () => {
+    const { manager, state } = harness([]), service = getCatalogService(manager), errors = [];
+    await service.importSource({ schemaVersion: 1, name: 'Custom', plugins: [{ id: manager.manifest.id, releases: [{ version: 'next',
+        manifest: 'https://cdn.example/manifest.json', main: 'https://cdn.example/main.js' }] }] }, 'custom.json');
+    const entry = service.entries()[0], writes = state.writes.length;
+    assert.equal(await installCatalogRelease(manager, entry, entry.releases[0], { quiet: true, onError: error => errors.push(error) }), false);
+    assert.match(errors[0].message, /更新规则_原因_self/);
+    assert.equal(state.requests.length, 0); assert.equal(state.writes.length, writes);
+});
+
+test('a catalog source binding changed while downloading invalidates the reviewed choice before any build write', async () => {
+    const { state, manager } = harness(['a']);
+    state.external = new Map([['https://cdn.example/manifest.json', manifest('a', '2.0.0')], ['https://cdn.example/main.js', 'new main']]);
+    const service = getCatalogService(manager);
+    await service.importSource({ schemaVersion: 1, name: 'Custom', plugins: [{ id: 'a', releases: [{ version: 'release-two',
+        manifest: 'https://cdn.example/manifest.json', main: 'https://cdn.example/main.js' }] }] }, 'custom.json');
+    const entry = service.entries()[0], writes = state.writes.length, errors = [];
+    const selection = createCatalogInstallGuard(manager, service, entry);
+    state.beforeRequest = input => { if (input.url.endsWith('/main.js')) manager.settings.REPO_MAP.a = 'changed/repository'; };
+    assert.equal(await installCatalogRelease(manager, entry, entry.releases[0], { quiet: true, guard: () => selection('release-two'),
+        expectedManifestVersion: '2.0.0', onError: error => errors.push(error) }), false);
+    assert.equal(errors[0].reason, 'changed');
+    assert.equal(state.writes.length, writes);
+    assert.equal(state.files.get(`${root('a')}/data.json`), 'current user settings');
+    assert.equal(manager.appPlugins.manifests.a.version, '1.0.0');
 });
 
 test('explicit install receipts override stale same-ID subscriptions and unknown legacy origins never fall back', async () => {

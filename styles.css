@@ -2648,6 +2648,7 @@ body.is-tablet .manager-container--mobile .bpm-mobile-filter-fields .manager-fil
 
 .manager-search-line {
     display: flex;
+    flex-wrap: wrap;
     align-items: stretch;
     gap: 8px;
     width: 100%;
@@ -2655,7 +2656,7 @@ body.is-tablet .manager-container--mobile .bpm-mobile-filter-fields .manager-fil
 }
 
 .manager-search-line .manager-filter-field--search:not(.manager-filter-field--sort) {
-    flex: 1 1 auto;
+    flex: 1 1 16rem;
 }
 
 .manager-search-line .manager-filter-field--sort {
@@ -2665,7 +2666,7 @@ body.is-tablet .manager-container--mobile .bpm-mobile-filter-fields .manager-fil
 
 .manager-filter-control-group {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
     gap: 8px;
     width: 100%;
     min-width: 0;
@@ -6514,17 +6515,6 @@ body.is-tablet .manager-container--mobile .bpm-mobile-filter-fields .manager-fil
 
 .manager-container--mobile .bpm-mobile-header__actions {
     gap: 8px;
-}
-
-.manager-container--mobile .bpm-mobile-header__actions button,
-.manager-container--mobile .bpm-mobile-header__actions .manager-modal-close {
-    width: 42px;
-    height: 42px;
-    min-width: 42px;
-    min-height: 42px;
-    border-radius: var(--bpm-radius);
-    border-color: var(--bpm-control-border, var(--bpm-border));
-    background: transparent;
 }
 
 .manager-container--mobile .bpm-mobile-header__filters-toggle,
@@ -12086,6 +12076,7 @@ body.is-phone .manager-container.manager-container--main.manager-container--mobi
 }
 
 .manager-container .manager-theme-overview .manager-appearance-toolbar {
+    flex: 0 0 auto;
     justify-content: flex-start;
 }
 
@@ -12407,11 +12398,6 @@ body.is-tablet button.manager-device-scope__quick-apply {
     flex: 0 0 auto;
     width: 17px;
     height: 17px;
-}
-
-.manager-device-scope--inline .manager-filter-field {
-    width: 100%;
-    height: 100%;
 }
 
 /* ===== 备注 Tooltip（悬停 Ribbon 图标展示插件备注） ===== */
@@ -13013,7 +12999,11 @@ body.is-tablet button.manager-device-scope__quick-apply {
 
 /* 导航、全局入口与栏目操作各有位置；Separate navigation, global controls and page actions. */
 .manager-container .manager-feature-disabled { display: none; }
-.manager-global-tools { display: flex; flex: 0 1 auto; min-width: 0; align-items: center; gap: var(--size-4-2); overflow-x: auto; }
+.manager-global-tools {
+    --bpm-global-tool-size: var(--bpm-action-size);
+    display: flex; flex: 0 1 auto; min-width: 0; align-items: center; gap: var(--size-4-2); overflow-x: auto;
+}
+.manager-container--mobile .manager-global-tools { --bpm-global-tool-size: var(--bpm-touch-size); }
 .manager-container .manager-page-tools {
     width: auto; height: auto; margin: 0; margin-inline-start: auto; flex: 0 1 auto; justify-content: flex-end; gap: var(--size-4-2);
 }
@@ -13142,11 +13132,6 @@ body.is-tablet .manager-container.manager-container--main .manager-overview-head
 .manager-container .manager-tool-hidden { display: none; }
 .manager-container .manager-global-tools { flex: 0 0 auto; overflow: visible; }
 .manager-global-tools:empty { display: none; }
-.manager-global-tools > button {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: var(--bpm-action-size); height: var(--bpm-action-size); padding: 0; flex-shrink: 0;
-    border-radius: var(--bpm-radius-sm);
-}
 /* 手机栏整体居中，操作从开头单行滚动；Centered mobile bars with start-aligned scrolling actions. */
 body.is-phone .manager-container--mobile .manager-overview-heading { flex-direction: column; flex-wrap: nowrap; align-items: center; }
 body.is-phone .manager-container--mobile .manager-overview-heading .manager-food { flex: 0 0 auto; width: 100%; flex-shrink: 0; }
@@ -13160,7 +13145,6 @@ body.is-phone .manager-container--mobile .manager-page-tools .setting-item-contr
     min-width: 0; gap: var(--size-4-2); flex-shrink: 0;
 }
 .manager-container--mobile .manager-global-tools--mobile { align-self: center; flex-wrap: nowrap; }
-.manager-container--mobile .manager-global-tools > button,
 .manager-container--mobile .manager-page-tools .manager-tool {
     min-width: var(--bpm-touch-size); min-height: var(--bpm-touch-size);
 }
@@ -13174,8 +13158,6 @@ body.is-tablet .manager-container--mobile .manager-page-tools .setting-item-cont
 /* 原生关闭按钮融入顶栏且保留触摸面积；Place native close alongside the global toolbar controls. */
 .manager-container--mobile .manager-global-tools > .manager-modal-close {
     position: static; inset: auto; transform: none; margin: 0; padding: 0;
-    display: inline-flex; align-items: center; justify-content: center; flex: 0 0 var(--bpm-touch-size);
-    width: var(--bpm-touch-size); height: var(--bpm-touch-size); min-width: var(--bpm-touch-size); min-height: var(--bpm-touch-size);
     border: 1px solid var(--bpm-control-border, var(--text-error)); border-radius: var(--bpm-radius-sm); color: var(--text-error); box-shadow: none;
 }
 
@@ -13218,7 +13200,7 @@ body.is-tablet .manager-container--mobile .manager-page-tools .setting-item-cont
 .manager-container--mobile .bpm-mobile-header__top.is-controls-tight .manager-sync-notice__text { display: none; }
 .manager-container--mobile .bpm-mobile-header__top.is-controls-tight .manager-sync-notice.is-active {
     justify-content: center;
-    width: var(--bpm-action-size);
+    width: var(--bpm-sync-notice-size);
     padding-inline: 0;
 }
 .manager-mobile-page-switch__chevron { margin: 0; color: var(--text-muted); }
@@ -13250,16 +13232,20 @@ body.is-tablet .manager-container--mobile .manager-page-tools .setting-item-cont
 .manager-scope-select--compact {
     display: inline-flex; flex: 0 1 auto; min-width: 0; max-width: 100%; height: var(--bpm-control-size);
 }
-.manager-scope-select--compact > .manager-multiselect-filter > button.manager-multiselect-filter__trigger {
+.manager-scope-select--compact > .manager-multiselect-filter > button.manager-multiselect-filter__trigger,
+.ribbon-manager-filter-group > .ribbon-manager-state-menu > button.manager-multiselect-filter__trigger {
     height: 100%; min-height: 0; padding: 0 var(--size-4-2); margin: 0;
-    border: 1px solid var(--bpm-border); border-radius: var(--bpm-radius-sm);
+    border: var(--bpm-scope-select-border, 1px solid var(--bpm-border)); border-radius: var(--bpm-radius-sm);
     background: var(--bpm-card); box-shadow: none;
 }
 .manager-scope-select--compact > .manager-multiselect-filter > button.manager-multiselect-filter__trigger:hover,
-.manager-scope-select--compact > .manager-multiselect-filter > button.manager-multiselect-filter__trigger:focus-visible {
+.manager-scope-select--compact > .manager-multiselect-filter > button.manager-multiselect-filter__trigger:focus-visible,
+.ribbon-manager-filter-group > .ribbon-manager-state-menu > button.manager-multiselect-filter__trigger:hover,
+.ribbon-manager-filter-group > .ribbon-manager-state-menu > button.manager-multiselect-filter__trigger:focus-visible {
     background: var(--background-modifier-hover); border-color: var(--interactive-accent);
 }
-.manager-scope-select--compact .manager-multiselect-filter__menu.is-fixed {
+.manager-scope-select--compact .manager-multiselect-filter__menu.is-fixed,
+.ribbon-manager-state-menu .manager-multiselect-filter__menu.is-fixed {
     position: fixed; right: auto; max-height: min(280px, 48vh); overscroll-behavior: contain; z-index: var(--layer-modal);
 }
 .ribbon-manager-modal .ribbon-manager-group-select { flex: 0 1 8rem; width: 8rem; }
@@ -13331,11 +13317,6 @@ body.is-mobile .ribbon-manager-modal .ribbon-manager-item-control-root > .ribbon
     --bpm-card-heading-glyph-size: var(--size-4-6);
 }
 
-/* 桌面筛选固定同一行，字段数量随延迟开关变化；Desktop filters share one row with equal flexible columns. */
-.manager-container.manager-container--main:not(.manager-container--mobile) .manager-filter-control-group {
-    grid-template-columns: none; grid-template-rows: auto; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr);
-}
-
 /* 管理器顶栏：BPM 设置入口与按内容伸缩的功能项 / BPM settings entry and content-sized tabs */
 /* 设置分页：标签左侧图标与选中态（对齐图标按钮的底色与边框） */
 .manager-setting__tabs-icon {
@@ -13368,7 +13349,15 @@ body .manager-setting__tabs .manager-setting__tabs-item[data-state="active"] .ma
     min-width: 0;
 }
 
-.manager-setting__navigation { flex: 1 1 auto; min-width: 0; }
+.manager-setting__navigation {
+    --bpm-scope-select-border: 0;
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: var(--size-4-2);
+    min-width: 0;
+}
+.manager-setting__navigation > .manager-scope-select--compact { flex: 1 1 auto; width: auto; min-width: 0; }
 .manager-setting-navigation__entry.setting-item { gap: var(--size-4-3); }
 .manager-setting-navigation__icon {
     display: inline-flex;
@@ -13379,6 +13368,17 @@ body .manager-setting__tabs .manager-setting__tabs-item[data-state="active"] .ma
 }
 .manager-setting-navigation__icon svg { width: var(--icon-m); height: var(--icon-m); }
 .manager-setting-navigation__summary { overflow-wrap: anywhere; }
+.manager-setting-navigation__heading {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--size-4-2);
+}
+.manager-setting-navigation__heading-icon {
+    display: inline-flex;
+    flex: 0 0 var(--icon-size);
+    color: var(--text-accent);
+}
+.manager-setting-navigation__heading-icon svg { width: var(--icon-size); height: var(--icon-size); }
 
 .manager-setting__brand {
     display: inline-flex;
@@ -13416,18 +13416,23 @@ body .manager-setting__tabs .manager-setting__tabs-item[data-state="active"] .ma
     margin-inline-start: auto;
 }
 
-.manager-global-tools .manager-global-tool {
+.manager-container .manager-global-tools > .manager-global-tool {
+    box-sizing: border-box;
     display: inline-flex;
-    flex: 0 0 auto;
+    flex: 0 0 var(--bpm-global-tool-size);
     align-items: center;
     justify-content: center;
-    width: var(--bpm-action-size);
-    height: var(--bpm-action-size);
+    width: var(--bpm-global-tool-size);
+    height: var(--bpm-global-tool-size);
+    min-width: var(--bpm-global-tool-size);
+    min-height: var(--bpm-global-tool-size);
+    max-width: var(--bpm-global-tool-size);
+    max-height: var(--bpm-global-tool-size);
     padding: 0;
-    border: 1px solid var(--background-modifier-border);
+    border: 1px solid var(--bpm-control-border, var(--background-modifier-border));
     border-radius: var(--bpm-radius-sm);
     background: transparent;
-    color: var(--text-muted);
+    color: var(--bpm-global-tool-color, var(--text-muted));
     box-shadow: none;
     cursor: pointer;
 }
@@ -13437,7 +13442,7 @@ body .manager-setting__tabs .manager-setting__tabs-item[data-state="active"] .ma
     color: var(--text-normal);
 }
 
-.manager-global-tools .manager-global-tool svg {
+.manager-container .manager-global-tools > .manager-global-tool svg {
     width: 18px;
     height: 18px;
 }
@@ -13500,9 +13505,6 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    width: var(--bpm-action-size);
-    height: var(--bpm-action-size);
-    min-width: var(--bpm-action-size);
     padding: 0;
     margin: 0;
     border: 1px solid var(--background-modifier-border);
@@ -13546,6 +13548,7 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
 /* 关闭按钮使用红色警示色 */
 .manager-container .manager-modal-close {
     --bpm-control-border: color-mix(in srgb, var(--text-error) 55%, var(--background-modifier-border));
+    --bpm-global-tool-color: var(--text-error);
     color: var(--text-error);
     border-color: var(--bpm-control-border);
 }
@@ -13830,20 +13833,6 @@ body .manager-container .manager-toolbar__tabs .manager-toolbar__tab[data-state=
     flex: 0 0 auto;
 }
 
-/* 移动端：关闭按钮与顶栏图标按钮同尺寸（仅移动端） */
-.manager-container--mobile .bpm-mobile-header__actions .manager-global-tools > .manager-modal-close {
-    width: var(--bpm-action-size);
-    height: var(--bpm-action-size);
-    min-width: var(--bpm-action-size);
-    min-height: var(--bpm-action-size);
-    border-radius: var(--bpm-radius-sm);
-}
-
-.manager-container--mobile .bpm-mobile-header__actions .manager-global-tools > .manager-modal-close svg {
-    width: 18px;
-    height: 18px;
-}
-
 /* 手机端概览：统计只留图标+数字，操作按钮换行而不是被滚动隐藏 */
 body.is-phone .manager-container--mobile .manager-overview-heading .manager-food {
     flex-wrap: nowrap;
@@ -13877,13 +13866,6 @@ body.is-phone .manager-container--mobile .manager-page-tools .setting-item-contr
 /* 隐藏标签时，长按功能项临时显示标签 */
 .manager-toolbar__tab--label-preview .manager-toolbar__tab-label {
     display: inline;
-}
-
-/* 移动端关闭按钮宽度也强制与图标按钮一致（含 flex 基准与上限） */
-.manager-container.manager-container--mobile .bpm-mobile-header__actions .manager-global-tools > .manager-modal-close {
-    flex: 0 0 var(--bpm-action-size);
-    width: var(--bpm-action-size);
-    max-width: var(--bpm-action-size);
 }
 
 /* BPM 内部滚动条统一使用 Obsidian 的滚动条样式变量 */
@@ -14015,15 +13997,21 @@ body.is-phone .manager-container.manager-container--main.manager-container--mobi
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    width: var(--input-height);
+    width: var(--bpm-personalize-tool-width, var(--input-height));
     height: var(--input-height);
     min-width: var(--input-height);
-    padding: 0;
+    max-width: 100%;
+    gap: var(--size-4-1);
+    padding: var(--bpm-personalize-tool-padding, 0);
     border: 1px solid var(--bpm-border);
     border-radius: var(--bpm-radius-sm);
     background: transparent;
     color: var(--text-muted);
     box-shadow: none;
+}
+.manager-personalize__tool--preview {
+    --bpm-personalize-tool-width: auto;
+    --bpm-personalize-tool-padding: 0 var(--size-4-2);
 }
 .manager-personalize .manager-personalize__tools .setting-item-control > button.manager-personalize__tool:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
 body .manager-personalize .manager-personalize__feature.is-active,
@@ -14588,16 +14576,60 @@ button.manager-setting-search__result:hover { background: var(--background-modif
 }
 
 .ribbon-manager-filter-group > .manager-scope-select--compact .manager-multiselect-filter__trigger {
-    height: 30px;
+    height: var(--bpm-ribbon-filter-height, 30px);
     padding-inline: 10px;
-    border: 0;
-    background: transparent;
+    border: var(--bpm-ribbon-filter-border, 0);
+    background: var(--bpm-ribbon-filter-background, transparent);
     color: var(--text-muted);
 }
 
 .ribbon-manager-filter-group > .manager-scope-select--compact .manager-multiselect-filter__trigger:hover {
     background: var(--background-modifier-hover);
     color: var(--text-normal);
+}
+
+.ribbon-manager-state-menu { display: none; }
+/* 状态多选与分组在手机端共享满行控件，不再依赖横向滚动；Touch filters share full-row menus. */
+:is(.manager-container--mobile, body.is-mobile) .ribbon-manager-filter-bar {
+    --bpm-ribbon-filter-height: 100%;
+    --bpm-ribbon-filter-border: 1px solid var(--bpm-border);
+    --bpm-ribbon-filter-background: var(--bpm-card);
+    flex-wrap: wrap;
+    align-items: stretch;
+    overflow: visible;
+}
+:is(.manager-container--mobile, body.is-mobile) .ribbon-manager-filter-group {
+    display: flex;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    width: 100%;
+    max-width: 100%;
+    padding: 0;
+    background: transparent;
+    overflow: visible;
+}
+:is(.manager-container--mobile, body.is-mobile) .ribbon-manager-filter-group > :is(.ribbon-filter-btn, .ribbon-filter-divider) { display: none; }
+:is(.manager-container--mobile, body.is-mobile) .ribbon-manager-filter-group > :is(.ribbon-manager-state-menu, .manager-scope-select--compact) {
+    display: inline-flex;
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    width: 100%;
+    max-width: 100%;
+    height: var(--bpm-ui-touch-size);
+    min-height: var(--bpm-ui-touch-size);
+}
+:is(.manager-container--mobile, body.is-mobile) .ribbon-manager-filter-right {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    margin-inline-start: 0;
+}
+:is(.manager-container--mobile, body.is-mobile) .ribbon-manager-search-container {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
 }
 
 @media (max-width: 760px) {
@@ -14964,7 +14996,8 @@ body.mod-windows .manager-container.manager-container--main.manager-container__t
 .manager-container .manager-page-tools .manager-tool.manager-tool--mobile-more,
 .bpm-responsive-toolbar .manager-overview-stats-menu,
 .bpm-responsive-toolbar .manager-repo-page__navigation-menu,
-.bpm-responsive-toolbar .manager-repo-page__summary-menu {
+.bpm-responsive-toolbar .manager-repo-page__summary-menu,
+.manager-appearance-navigation-menu {
     display: none;
 }
 .manager-container.manager-container--main .bpm-responsive-toolbar:is(.is-measuring, .is-compact) {
@@ -14986,19 +15019,21 @@ body .manager-container.manager-container--main :is(.manager-overview-heading, .
     width: max-content;
     max-width: none;
 }
-.bpm-responsive-toolbar.is-compact:not(.is-measuring) :is(.manager-overview-stats-menu, .manager-repo-page__navigation-menu, .manager-repo-page__summary-menu, .manager-tool--mobile-more) {
+.bpm-responsive-toolbar.is-compact:not(.is-measuring) :is(.manager-overview-stats-menu, .manager-repo-page__navigation-menu, .manager-repo-page__summary-menu, .manager-tool--mobile-more),
+.manager-container--mobile .bpm-responsive-toolbar:not(.is-measuring) :is(.manager-overview-stats-menu, .manager-repo-page__navigation-menu, .manager-repo-page__summary-menu, .manager-tool--mobile-more) {
     display: inline-flex;
 }
-.bpm-responsive-toolbar.is-compact:not(.is-measuring) :is(.bpm-stat-chip, .manager-tool--mobile-overflow, .manager-repo-page__switcher, .manager-repo-page__stats) {
+.bpm-responsive-toolbar.is-compact:not(.is-measuring) :is(.bpm-stat-chip, .manager-tool--mobile-overflow, .manager-repo-page__switcher, .manager-repo-page__stats),
+.manager-container--mobile .bpm-responsive-toolbar:not(.is-measuring) :is(.bpm-stat-chip, .manager-tool--mobile-overflow, .manager-repo-page__switcher, .manager-repo-page__stats) {
     display: none;
 }
 .manager-container .manager-repo-page__toolbar.bpm-responsive-toolbar.is-compact {
-    flex-wrap: nowrap;
+    flex-wrap: var(--bpm-toolbar-wrap, nowrap);
     justify-content: space-between;
 }
 .manager-container .manager-repo-page__toolbar.bpm-responsive-toolbar:not(.is-compact) {
     flex-direction: row;
-    flex-wrap: nowrap;
+    flex-wrap: var(--bpm-toolbar-wrap, nowrap);
     align-items: center;
 }
 .manager-container .manager-repo-page__toolbar.bpm-responsive-toolbar:not(.is-compact) > :is(.manager-repo-page__switcher, .manager-repo-page__stats) {
@@ -15012,13 +15047,16 @@ body .manager-container.manager-container--main :is(.manager-overview-heading, .
     margin-inline-start: auto;
 }
 .bpm-responsive-toolbar .manager-repo-page__navigation-menu {
-    flex: 0 1 auto;
+    flex: var(--bpm-toolbar-menu-flex, 0 1 auto);
     min-width: 0;
-    max-width: 70%;
+    width: var(--bpm-toolbar-menu-width, auto);
+    max-width: var(--bpm-toolbar-navigation-max-width, 70%);
     margin-inline-end: auto;
 }
 .bpm-responsive-toolbar .manager-repo-page__summary-menu {
-    flex: 0 0 auto;
+    flex: var(--bpm-toolbar-menu-flex, 0 0 auto);
+    width: var(--bpm-toolbar-menu-width, auto);
+    max-width: 100%;
     margin-inline-start: auto;
 }
 .manager-scope-select__stat {
@@ -15032,31 +15070,56 @@ body .manager-container.manager-container--main .manager-overview-heading.bpm-re
     justify-content: flex-start;
     gap: var(--size-2-2);
 }
-.manager-container.manager-container--main .manager-overview-heading.bpm-responsive-toolbar.is-compact:not(.is-measuring) :is(.manager-food, .manager-page-tools, .manager-bar__action, .setting-item-control) {
+.manager-container.manager-container--main .manager-overview-heading.bpm-responsive-toolbar.is-compact:not(.is-measuring) :is(.manager-food, .manager-page-tools, .manager-bar__action, .setting-item-control),
+.manager-container.manager-container--main.manager-container--mobile .manager-overview-heading.bpm-responsive-toolbar:not(.is-measuring) :is(.manager-food, .manager-page-tools, .manager-bar__action, .setting-item-control) {
     display: flex;
-    flex: 0 1 auto;
+    flex: var(--bpm-toolbar-menu-flex, 0 1 auto);
     flex-wrap: wrap;
     align-items: center;
     min-width: 0;
     max-width: 100%;
-    width: auto;
+    width: var(--bpm-toolbar-menu-width, auto);
     gap: var(--size-4-2);
 }
 @supports (display: contents) {
 
-    .manager-container.manager-container--main .manager-overview-heading.bpm-responsive-toolbar.is-compact:not(.is-measuring) :is(.manager-food, .manager-page-tools, .manager-bar__action, .setting-item-control) {
+    .manager-container.manager-container--main .manager-overview-heading.bpm-responsive-toolbar.is-compact:not(.is-measuring) :is(.manager-food, .manager-page-tools, .manager-bar__action, .setting-item-control),
+.manager-container.manager-container--main.manager-container--mobile .manager-overview-heading.bpm-responsive-toolbar:not(.is-measuring) :is(.manager-food, .manager-page-tools, .manager-bar__action, .setting-item-control) {
         display: contents;
     }
 }
-.bpm-responsive-toolbar.is-compact .manager-overview-stats-menu {
-    flex: 0 1 auto;
+.bpm-responsive-toolbar .manager-overview-stats-menu {
+    flex: var(--bpm-toolbar-menu-flex, 0 1 auto);
     min-width: 0;
-    max-width: calc(100% - 4 * (var(--bpm-touch-size) + var(--size-2-2)));
+    width: var(--bpm-toolbar-menu-width, auto);
+    max-width: var(--bpm-toolbar-overview-max-width, calc(100% - 4 * (var(--bpm-touch-size) + var(--size-2-2))));
 }
 .manager-overview-stats-menu.manager-scope-select--compact > .manager-multiselect-filter > button.manager-multiselect-filter__trigger {
     gap: var(--size-2-2);
     padding-inline: var(--size-2-2);
 }
+
+/* 移动端工具栏菜单各占一行，操作组从下一行开始；Mobile menus own complete rows before page actions. */
+.manager-container--mobile .bpm-responsive-toolbar {
+    --bpm-toolbar-wrap: wrap;
+    --bpm-toolbar-menu-flex: 0 0 auto;
+    --bpm-toolbar-menu-width: 100%;
+    --bpm-toolbar-navigation-max-width: 100%;
+    --bpm-toolbar-overview-max-width: 100%;
+}
+:is(.manager-container--mobile, body.is-mobile) :is(.manager-overview-stats-menu, .manager-repo-page__navigation-menu, .manager-repo-page__summary-menu, .manager-appearance-navigation-menu) {
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    height: var(--bpm-ui-touch-size);
+    min-height: var(--bpm-ui-touch-size);
+}
+.manager-container--mobile .manager-appearance-navigation-menu { display: inline-flex; }
+.manager-container--mobile .manager-theme-overview .manager-appearance-tabs { display: none; }
+body.is-mobile .manager-setting__topbar { flex-wrap: wrap; --bpm-setting-search-size: var(--bpm-ui-touch-size); }
+body.is-mobile .manager-setting__navigation { flex: 0 0 100%; width: 100%; }
 
 /* 商店远程文档继承原生 Markdown 样式 / Store documents inherit native Markdown styles. */
 .manager-catalog-document {
@@ -15095,10 +15158,6 @@ body .manager-container.manager-container--main .manager-overview-heading.bpm-re
 }
 .manager-setting__topbar > .bpm-settings-save:hover:not(:disabled) { background: var(--background-modifier-hover); }
 .manager-setting__topbar > .bpm-settings-save svg { width: var(--icon-size); height: var(--icon-size); }
-.manager-container--mobile .manager-global-tools > button.bpm-settings-save {
-    min-width: var(--bpm-touch-size);
-    min-height: var(--bpm-touch-size);
-}
 .manager-container .manager-global-tools .bpm-settings-save.has-unsaved-settings,
 .manager-setting__topbar > .bpm-settings-save.has-unsaved-settings {
     color: var(--text-accent);
@@ -15132,87 +15191,128 @@ body .manager-container.manager-container--main .manager-overview-heading.bpm-re
 .bpm-config-conflict[hidden] {
     display: none;
 }
-.bpm-config-conflict {
-    position: absolute;
-    inset: 0;
-    z-index: 10;
+.modal.bpm-config-conflict-modal {
+    --bpm-conflict-control-size: var(--bpm-ui-control-size);
     display: flex;
     flex-direction: column;
     min-height: 0;
+    max-height: calc(100vh - var(--size-4-8) - env(safe-area-inset-bottom, 0px));
     overflow: hidden;
-    padding: var(--size-4-2);
-    border: var(--border-width) solid var(--text-warning);
-    border-radius: var(--radius-m);
-    background: var(--background-primary);
 }
-.bpm-config-conflict-anchor, .manager-setting__container { position: relative; }
-.manager-setting__container > .bpm-config-conflict { inset-block-end: auto; height: 180px; }
-.bpm-config-conflict__content { display: flex; flex-wrap: wrap; align-content: flex-start; align-items: flex-start; gap: var(--size-4-2); flex: 1 1 auto; min-height: 0; overflow: auto; }
+.bpm-config-conflict-modal > .modal-content.bpm-config-conflict {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: var(--size-4-3);
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+.bpm-config-conflict__content {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--size-4-2);
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-inline-end: var(--size-4-1);
+}
 .bpm-config-conflict__heading, .bpm-config-conflict__footer { flex: 0 0 auto; }
 .bpm-config-conflict__heading > button { margin-inline-start: auto; }
-.bpm-config-conflict__footer { display: flex; align-items: center; justify-content: flex-end; gap: var(--size-4-2); }
-.bpm-config-conflict__footer > [role=status] { font-size: var(--font-ui-small); color: var(--text-muted); }
+.bpm-config-conflict__footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--size-4-2);
+}
+.bpm-config-conflict__footer > [role=status] {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+}
+.bpm-config-conflict__footer > button { flex: 0 0 auto; min-height: var(--bpm-conflict-control-size); }
 .bpm-config-conflict__heading,
-.bpm-config-conflict__version-title,
 .bpm-config-conflict__section-title {
     font-weight: var(--font-semibold);
 }
 .bpm-config-conflict__heading {
-    display: inline-flex;
+    display: flex;
+    flex-wrap: wrap;
     align-items: center;
+    justify-content: space-between;
     gap: var(--size-4-2);
     color: var(--text-warning);
 }
 .bpm-config-conflict__section {
     margin: 0;
-    display: inline-flex;
+    display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: var(--size-4-2);
-    flex: 0 1 auto;
+    flex: 0 0 auto;
+    min-width: 0;
     max-width: 100%;
     flex-wrap: wrap;
+    padding-block: var(--size-4-1);
 }
-.bpm-config-conflict__section-title { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; font-size: var(--font-ui-small); }
-.bpm-config-conflict__choices { display: inline-flex; flex: 0 1 auto; flex-wrap: wrap; gap: var(--size-4-1); }
+.bpm-config-conflict__section-title { flex: 1 1 8rem; min-width: 0; overflow-wrap: anywhere; font-size: var(--font-ui-small); }
+.bpm-config-conflict__choices { display: inline-flex; flex: 0 0 auto; max-width: 100%; flex-wrap: wrap; gap: var(--size-4-1); }
 .bpm-config-conflict__choice--local { --bpm-conflict-color: var(--color-blue); }
 .bpm-config-conflict__choice--incoming { --bpm-conflict-color: var(--color-purple); }
-.bpm-config-conflict .bpm-config-conflict__choice { display: inline-flex; align-items: center; gap: var(--size-4-1); flex: 0 0 auto; width: auto; white-space: nowrap; border-radius: 999px; color: var(--bpm-conflict-color); border: var(--border-width) solid var(--bpm-conflict-color); }
-.bpm-config-conflict .bpm-config-conflict__choice.is-selected { box-shadow: inset 0 0 0 1px var(--bpm-conflict-color); background: var(--background-modifier-hover); }
-.bpm-config-conflict__versions {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: var(--size-4-2);
-    margin-top: var(--size-4-2);
+.bpm-config-conflict-modal .bpm-config-conflict button.bpm-config-conflict__choice {
+    box-sizing: border-box;
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    gap: var(--size-4-1);
+    width: auto;
+    max-width: 100%;
+    height: auto;
+    min-height: var(--bpm-conflict-control-size);
+    margin: 0;
+    padding: var(--size-4-1) var(--size-4-2);
+    white-space: nowrap;
+    border-radius: var(--radius-rounded);
+    color: var(--bpm-conflict-color, var(--text-warning));
+    border: var(--border-width) solid var(--bpm-conflict-color, var(--text-warning));
+    background: transparent;
+    box-shadow: none;
 }
-.bpm-config-conflict__version {
-    min-width: 0;
-    padding: var(--size-4-2);
-    border: 2px solid var(--bpm-conflict-color);
-    border-radius: var(--radius-m);
-    overflow-wrap: anywhere;
+.bpm-config-conflict-modal .bpm-config-conflict button.bpm-config-conflict__choice.is-selected {
+    box-shadow: inset 0 0 0 1px var(--bpm-conflict-color, var(--text-warning));
+    background: var(--background-modifier-hover);
 }
-.bpm-config-conflict__version--local { --bpm-conflict-color: var(--color-blue); }
-.bpm-config-conflict__version--incoming { --bpm-conflict-color: var(--color-purple); }
-.bpm-config-conflict__version-title { color: var(--bpm-conflict-color); }
-.bpm-config-conflict__version.is-selected { box-shadow: inset 0 0 0 2px var(--bpm-conflict-color); }
-.bpm-config-conflict__field { color: var(--text-muted); font-size: var(--font-ui-small); }
-.bpm-config-conflict__difference { padding-block: var(--size-4-1); }
-.bpm-config-conflict__version > button { max-width: 100%; white-space: normal; height: auto; min-height: var(--input-height); }
-.manager-container .manager-global-tools .manager-sync-notice { display: none; }
-.manager-container .manager-global-tools .manager-sync-notice.is-active {
+body.is-mobile .bpm-config-conflict-modal { --bpm-conflict-control-size: var(--bpm-ui-touch-size); }
+.manager-global-tools { --bpm-sync-notice-size: var(--bpm-global-tool-size); }
+.manager-setting__topbar { --bpm-sync-notice-size: var(--bpm-setting-search-size); }
+.manager-sync-notice { display: none; }
+.manager-sync-notice.is-active {
+    box-sizing: border-box;
     display: inline-flex;
     flex: 0 0 auto;
     align-items: center;
     gap: var(--size-4-1);
     padding: var(--size-4-1) var(--size-4-2);
-    height: var(--bpm-action-size);
+    height: var(--bpm-sync-notice-size);
+    min-height: var(--bpm-sync-notice-size);
     width: max-content;
-    max-width: none;
+    max-width: 100%;
+    font-size: var(--font-ui-small);
+    line-height: 1;
     color: var(--text-warning);
     border: var(--border-width) solid var(--background-modifier-border);
-    border-radius: 999px;
+    border-radius: var(--radius-rounded);
     cursor: pointer;
 }
+.manager-sync-notice.is-active:hover { background: var(--background-modifier-hover); }
+.manager-sync-notice.is-active:focus-visible { outline: var(--border-width) solid var(--interactive-accent); outline-offset: var(--size-2-1); }
 .manager-container .bpm-has-item-conflict { border-color: var(--text-warning); }
 .manager-container .bpm-item-conflict {
     display: inline-flex;
@@ -15228,9 +15328,9 @@ body .manager-container.manager-container--main .manager-overview-heading.bpm-re
     white-space: nowrap;
 }
 .manager-container .bpm-item-conflict span { flex: 0 0 auto; }
-.manager-container .manager-sync-notice__icon { display: inline-flex; flex: 0 0 auto; }
-.manager-container .manager-sync-notice__icon svg { width: var(--icon-size); height: var(--icon-size); }
-.manager-container .manager-sync-notice__text { flex: 0 0 auto; white-space: nowrap; }
+.manager-sync-notice__icon { display: inline-flex; flex: 0 0 auto; }
+.manager-sync-notice__icon svg { width: var(--icon-size); height: var(--icon-size); }
+.manager-sync-notice__text { flex: 0 0 auto; white-space: nowrap; }
 .manager-container .bpm-item-conflict[data-source=local] { color: var(--color-blue); border-color: var(--color-blue); }
 .manager-container .bpm-item-conflict[data-source=incoming] { color: var(--color-purple); border-color: var(--color-purple); }
 .manager-container .manager-overview-heading > .bpm-list-source {

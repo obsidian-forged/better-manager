@@ -45,6 +45,13 @@ class Element {
     removeAttribute(name) { delete this.attributes[name]; }
     setText(value) { this.text = value; }
     empty() { this.children = []; }
+    insertBefore(child, reference) {
+        if (child.parentElement) child.parentElement.children = child.parentElement.children.filter(item => item !== child);
+        const index = this.children.indexOf(reference);
+        this.children.splice(index < 0 ? this.children.length : index, 0, child);
+        child.parentElement = this;
+        return child;
+    }
     addEventListener(name, callback) { this.listeners[name] = callback; }
     removeEventListener(name) { delete this.listeners[name]; }
     remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter(child => child !== this); }
@@ -72,7 +79,7 @@ class Menu {
     items = [];
     constructor() { lastMenu = this; }
     addItem(callback) {
-        const item = { setTitle(value) { this.title = value; return this; }, setIcon() { return this; }, onClick(value) { this.click = value; return this; },
+        const item = { setTitle(value) { this.title = value; return this; }, setIcon() { return this; }, setDisabled(value) { this.disabled = value; return this; }, onClick(value) { this.click = value; return this; },
             setSubmenu() { this.submenu = new Menu(); return this.submenu; } };
         callback(item); this.items.push(item); return this;
     }
@@ -196,6 +203,33 @@ test('Ribbon status counts are disjoint and filtering retains group scope and se
     assert.deepEqual(panel.getFilteredRibbonItems().map(item => item.bpmUniqueId), ['disabled', 'disabled#2']);
 });
 
+test('Ribbon shared status dropdown keeps search mounted and synchronizes desktop buttons and All', () => {
+    const panel = statusFixture(), host = new Element(), page = new Element();
+    panel.setExternalFilterBar(true); panel.mountFilterBar(host); panel.display(page, false);
+    const input = host.querySelector('.ribbon-search-input');
+    const menu = host.querySelector('.ribbon-manager-state-menu');
+    const options = menu.querySelector('.manager-multiselect-filter__menu').children.filter(child => child.tag === 'button');
+    const selected = () => buttons(host).map(button => button.attributes['aria-pressed']);
+    const count = () => menu.querySelector('.manager-multiselect-filter__count').text;
+    const choose = index => options[index].listeners.click({ detail: 0 });
+    assert.ok(menu); assert.equal(count(), '6');
+    choose(1);
+    assert.deepEqual(selected(), ['false', 'true', 'false', 'false']); assert.equal(count(), '2');
+    assert.deepEqual(panel.getFilteredRibbonItems().map(item => item.bpmUniqueId), ['enabled', 'core']);
+    choose(2);
+    assert.deepEqual(selected(), ['false', 'true', 'true', 'false']); assert.equal(count(), '4');
+    assert.equal(host.querySelector('.ribbon-search-input'), input);
+    assert.equal(host.querySelector('.ribbon-manager-state-menu'), menu);
+    choose(3);
+    assert.deepEqual(selected(), ['true', 'false', 'false', 'false']); assert.equal(count(), '6');
+    buttons(host)[3].click();
+    assert.equal(options[3].attributes['aria-selected'], 'true'); assert.equal(count(), '2');
+    choose(0);
+    input.input('visible');
+    assert.equal(host.querySelector('.ribbon-search-input'), input);
+    assert.deepEqual(panel.getFilteredRibbonItems().map(item => item.bpmUniqueId), ['enabled', 'disabled']);
+});
+
 test('compact menu icons follow selection and summary menus keep their entry icon', async () => {
     const built = await build({ entryPoints: ['src/ui/scope-select.ts'], bundle: true, platform: 'node', format: 'cjs', write: false, external: ['obsidian'] });
     const loaded = { exports: {} };
@@ -261,7 +295,7 @@ test('mobile page changes synchronize identity and filters without rebuilding ch
     } finally { obsidian.Platform.isMobile = wasMobile; }
 });
 
-test('global toolbar places explicit Save before More and keeps close outside its native menu', async () => {
+test('global toolbar moves settings into More and shows explicit Save only in manual mode', async () => {
     const built = await build({ entryPoints: ['src/modal/manager-modal.ts'], bundle: true, platform: 'node', format: 'cjs', write: false,
         external: ['obsidian', 'electron'], loader: { '.webp': 'dataurl' }, logLevel: 'silent' });
     const loaded = { exports: {} };
@@ -270,25 +304,32 @@ test('global toolbar places explicit Save before More and keeps close outside it
     const host = new Element(), body = new Element(); host.ownerDocument.body = body; body.ownerDocument = host.ownerDocument;
     const actions = [];
     let unsubscribe = 0;
-    modal.manager = { manifest: { id: 'bpm' }, settings: { LANGUAGE: 'en' }, hasUnsavedSettings: false, isSavingSettings: false,
+    modal.manager = { manifest: { id: 'bpm' }, settings: { LANGUAGE: 'en', MANUAL_CONFIG_SAVE: true }, hasUnsavedSettings: false, isSavingSettings: false,
         async savePendingSettings() { actions.push('save'); return true; }, translator: { t: key => key }, tasks: {
         subscribe: () => () => { unsubscribe++; }, runningCount: () => 0, snapshots: () => [],
     } };
     modal.bindLongPressTooltip = () => {};
     modal.refreshConfigConflict = () => {};
+    modal.action = callback => () => { void callback(); };
     modal.openSettingsTab = id => actions.push(id);
     modal.close = () => actions.push('close');
     modal.renderGlobalTools(host);
-    const tools = host.children.filter(child => !child.classes.has('manager-sync-notice'));
-    assert.equal(host.children.find(child => child.classes.has('manager-sync-notice')).classes.has('is-active'), false);
-    assert.deepEqual(tools.map(child => child.icon), ['settings', 'save', 'more-vertical', 'x']);
-    tools[0].listeners.click({}); assert.deepEqual(actions, ['bpm']);
-    assert.equal(tools[1].disabled, false);
-    assert.equal(tools[1].attributes['aria-label'], 'Check and save settings');
+    const getTools = () => host.children.filter(child => !child.classes.has('manager-sync-notice'));
+    const tools = getTools();
+    const notice = host.children.find(child => child.classes.has('manager-sync-notice'));
+    assert.equal(notice.classes.has('is-active'), false);
+    assert.deepEqual(tools.map(child => child.icon), ['save', 'more-vertical', 'x']);
+    assert.ok(tools.every(child => child.classes.has('manager-global-tool')));
+    assert.equal(tools[0].disabled, false);
+    assert.equal(tools[0].attributes['aria-label'], 'Check and save settings');
     modal.manager.hasUnsavedSettings = true; modal.refreshSettingsSaveState();
-    assert.equal(tools[1].classes.has('has-unsaved-settings'), true);
-    tools[1].click(); assert.deepEqual(actions, ['bpm', 'save']);
-    const more = tools[2]; more.listeners.click({});
+    assert.equal(tools[0].classes.has('has-unsaved-settings'), true);
+    tools[0].click(); assert.deepEqual(actions, ['save']);
+    const more = tools[1]; more.listeners.click({});
+    lastMenu.items.find(item => item.title === '管理器_BPM设置_短').click();
+    assert.deepEqual(actions, ['save', 'bpm']);
+    assert.equal(lastMenu.items.some(item => item.title === 'Save changes'), false);
+    assert.equal(more.dataset.bpmFeaturePage, 'settings');
     const contacts = lastMenu.items.find(item => item.title === '管理器_联系方式');
     assert.equal(contacts.submenu.items.length, 3);
     assert.ok(contacts.submenu.items.some(item => item.title === '管理器_GITHUB_描述'));
@@ -296,10 +337,29 @@ test('global toolbar places explicit Save before More and keeps close outside it
     lastMenu.items.find(item => item.title === '任务_标题').click();
     assert.equal(more.attributes['aria-expanded'], 'true');
     assert.equal(lastMenu.items.some(item => item.title === '通用_关闭窗口'), false);
-    tools[3].listeners.click({});
-    assert.deepEqual(actions, ['bpm', 'save', 'close']);
+    modal.manager.settings.MANUAL_CONFIG_SAVE = false;
+    modal.refreshSettingsSaveState();
+    assert.deepEqual(getTools(), [more, tools[2]]);
+    assert.equal(host.children.includes(notice), true);
+    more.listeners.click({});
+    const fallbackSave = lastMenu.items.find(item => item.title === 'Save changes');
+    assert.equal(fallbackSave.disabled, false);
+    fallbackSave.click();
+    await Promise.resolve();
+    assert.deepEqual(actions, ['save', 'bpm', 'save']);
+    modal.manager.isSavingSettings = true;
+    more.listeners.click({});
+    assert.equal(lastMenu.items.find(item => item.title === 'Save changes').disabled, true);
+    modal.manager.isSavingSettings = false;
+    modal.manager.settings.MANUAL_CONFIG_SAVE = true;
+    modal.refreshSettingsSaveState();
+    assert.deepEqual(getTools().map(child => child.icon), ['save', 'more-vertical', 'x']);
+    assert.equal(getTools()[1], more);
+    assert.equal(getTools()[2], tools[2]);
+    tools[2].listeners.click({});
+    assert.deepEqual(actions, ['save', 'bpm', 'save', 'close']);
     modal.taskCenterView.destroy();
-    assert.equal(tools.length, 4); assert.equal(body.children.length, 0); assert.equal(unsubscribe, 1);
+    assert.equal(body.children.length, 0); assert.equal(unsubscribe, 1);
 });
 
 test('recent installs lead the status options and support the shared window, multi-select and exclusion', async () => {

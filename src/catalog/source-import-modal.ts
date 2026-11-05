@@ -36,7 +36,7 @@ export class CatalogSourceImportModal extends Modal {
         this.closed = false;
         this.modalEl.addClass("manager-container", "manager-note__container", "manager-catalog-import");
         this.modalEl.toggleClass("manager-container--mobile", Platform.isMobileApp);
-        this.titleEl.setText(this.t("目录_添加源"));
+        this.titleEl.setText(`${this.t("目录_添加源")} (Preview)`);
         this.contentEl.addClass("manager-note__body", "manager-item-container");
         this.render();
     }

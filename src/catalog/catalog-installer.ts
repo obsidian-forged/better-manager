@@ -52,6 +52,7 @@ export async function installCatalogRelease(manager: Manager, entry: CatalogEntr
     options: Pick<PluginInstallOptions, 'quiet' | 'guard' | 'expectedManifestVersion' | 'onError'> = {}): Promise<boolean> {
     const task = manager.tasks.start({ title: manager.translator.t('任务_获取发布', { name: entry.name }), progress: 0.04 });
     try {
+        if (entry.id === manager.manifest.id) throw new Error(manager.translator.t('更新规则_原因_self'));
         await options.guard?.();
         if (!release.manifest || !release.main) throw new Error('Release must provide manifest.json and main.js URLs');
         // 点击安装后重新读取清单，避免使用过期的缓存作为写盘依据 / Re-read the manifest at installation time.

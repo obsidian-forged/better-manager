@@ -241,12 +241,22 @@ export class ProtectedConfigSession {
         await this.editConflictSelection(selections => selections.toggleList(ids, presetId));
     }
     async selectConflictSection(id: string, side: ConflictSide): Promise<void> { await this.editConflictSelection(selections => selections.selectSection(id, side)); }
-    async confirmConflictChoices(): Promise<void> {
+    async confirmConflictChoices(expectedId?: string): Promise<void> {
         this.noteUserMutation();
         const selections = await this.prepareConflictChoices();
         if (!selections) throw new Error('The configuration conflict is no longer available');
+        await this.confirmPreparedConflictChoices(selections, expectedId ?? selections.id);
+    }
+    async confirmAllConflictChoices(side: ConflictSide, expectedId: string): Promise<void> {
+        this.noteUserMutation();
+        const selections = await this.prepareConflictChoices();
+        if (!selections) throw new Error('The configuration conflict is no longer available');
+        await this.confirmPreparedConflictChoices(selections, expectedId, side);
+    }
+    private async confirmPreparedConflictChoices(selections: ConfigConflictChoices, expectedId: string, allSide?: ConflictSide): Promise<void> {
         await this.queue(async () => {
-            if (this.protection.conflict?.id !== selections.id) throw new Error('The incoming configuration changed; review the new version');
+            if (this.protection.conflict?.id !== expectedId || selections.id !== expectedId) throw new Error('The incoming configuration changed; review the new version');
+            if (allSide) selections.selectAll(allSide);
             const result = selections.result();
             this.resolvedBaseline = this.current();
             this.protection.choose(result.value, result.files);
