@@ -1121,7 +1121,7 @@ export const applyManagerTransferPackage = async (
 			}
 		} else if (!installed && options.installMissing && repo) {
 			const version = getPackageVersionForInstall(options.installVersionStrategy, plugin.version, plugin.source);
-			const ok = await installPluginFromGithub(manager, repo, version, options.applySources && plugin.installedViaBpm);
+			const ok = await installPluginFromGithub(manager, repo, version, options.applySources && plugin.installedViaBpm, plugin.id);
 			await manager.appPlugins.loadManifests();
 			installed = Boolean(manager.appPlugins.manifests[plugin.id]);
 			if (ok && installed) {

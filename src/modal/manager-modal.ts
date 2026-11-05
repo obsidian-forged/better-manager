@@ -7487,7 +7487,7 @@ export class ManagerModal extends Modal {
         }
 
         const wasInstalled = Boolean(this.appPlugins.manifests?.[plugin.id]);
-        const ok = await installPluginFromGithub(this.manager, repo, undefined, false);
+        const ok = await installPluginFromGithub(this.manager, repo, undefined, false, plugin.id);
         await this.appPlugins.loadManifests();
         this.invalidatePluginCaches();
         if (ok && this.appPlugins.manifests?.[plugin.id]) {
