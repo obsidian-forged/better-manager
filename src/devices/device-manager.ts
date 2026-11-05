@@ -921,7 +921,12 @@ export class DeviceManager {
         try {
             const local = snapshotPreset(this.manager.settings, { appearance: this.readLiveAppearance() },
                 { id: target.id, name: target.name, configured: true });
-            const merged = mergeSettings(saved.base, local, target) as unknown as DevicePreset;
+            local.plugins = this.manager.overview.persistentPlugins(local.plugins, target.id);
+            local.appearance = this.manager.overview.persistentAppearance(local.appearance, target.id);
+            // 只合并配置内容，避免预设 revision 整份选择覆盖关闭期间的逐字段改动。
+            const content = (preset: DevicePreset) => ({ plugins: preset.plugins, filters: preset.filters,
+                ribbon: preset.ribbon, ribbonGroups: preset.ribbonGroups, ribbonEnabled: preset.ribbonEnabled, appearance: preset.appearance });
+            const merged = mergeSettings(content(saved.base), content(local), content(target)) as ReturnType<typeof content>;
             const before = JSON.stringify([target.plugins, target.filters, target.ribbon, target.ribbonGroups, target.ribbonEnabled, target.appearance]);
             target.plugins = merged.plugins;
             target.filters = merged.filters;
@@ -929,6 +934,7 @@ export class DeviceManager {
             target.ribbonGroups = merged.ribbonGroups;
             target.ribbonEnabled = merged.ribbonEnabled;
             target.appearance = merged.appearance;
+            this.manager.overview.reconcileSavedState(target.id, target.plugins, target.appearance);
             const changed = before !== JSON.stringify([target.plugins, target.filters, target.ribbon, target.ribbonGroups, target.ribbonEnabled, target.appearance]);
             if (changed) {
                 target.configured = true;

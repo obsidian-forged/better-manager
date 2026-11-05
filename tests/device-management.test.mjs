@@ -1021,15 +1021,132 @@ test('remote name and type updates win only when their revision is newer', async
     assert.equal(record.type, 'phone');
 });
 
-test('re-enabling device management merges changes made while it was off', async () => {
+test('re-enabling device management merges local changes into an already revised preset', async () => {
     const { manager, settings } = await fixture();
     await manager.devices.setEnabled(true);
+    const preset = firstOf(settings, 'computer');
+    preset.configured = true;
+    preset.updatedAt = 100;
     await manager.devices.setEnabled(false);
     settings.Plugins.find(plugin => plugin.id === 'a').enabled = false;
     await manager.devices.setEnabled(true);
     assert.equal(settings.Plugins.find(plugin => plugin.id === 'a').enabled, false);
-    assert.equal(firstOf(settings, 'computer').plugins.a.enabled, false);
+    assert.equal(preset.plugins.a.enabled, false);
+    assert.ok(preset.updatedAt > 100);
     assert.equal(manager.appPlugins.enabledPlugins.has('a'), false);
+});
+
+test('re-enabling merges independent local and remote preset content while preserving remote metadata', async () => {
+    const { manager, settings } = await fixture();
+    const css = { theme: 'Original', enabledSnippets: new Set(['base']),
+        async loadTheme() {}, async loadSnippets() {},
+        setTheme(theme) { this.theme = theme; },
+        setCssEnabledStatus(id, enabled) { if (enabled) this.enabledSnippets.add(id); else this.enabledSnippets.delete(id); },
+    };
+    manager.app.customCss = css;
+    const preset = firstOf(settings, 'computer');
+    preset.appearance = { theme: 'Original', snippets: { base: true } };
+    await manager.devices.setEnabled(true);
+    preset.updatedAt = 100;
+    await manager.devices.setEnabled(false);
+    settings.Plugins.find(plugin => plugin.id === 'a').enabled = false;
+    css.theme = 'Local';
+    preset.plugins.a.delay = 'remote-delay';
+    preset.plugins.b.enabled = true;
+    preset.filters.search = 'remote search';
+    preset.ribbon[0].visible = false;
+    preset.appearance.snippets.remote = true;
+    preset.name = 'Remote name';
+    preset.updatedAt = 200;
+    await manager.devices.setEnabled(true);
+    assert.deepEqual(preset.plugins.a, { enabled: false, delay: 'remote-delay' });
+    assert.equal(preset.plugins.b.enabled, true);
+    assert.equal(settings.Plugins.find(plugin => plugin.id === 'b').enabled, true);
+    assert.equal(preset.filters.search, 'remote search');
+    assert.equal(settings.FILTER_SEARCH, 'remote search');
+    assert.equal(settings.RIBBON_SETTINGS[0].visible, false);
+    assert.equal(preset.name, 'Remote name');
+    assert.equal(preset.appearance.theme, 'Local');
+    assert.equal(css.theme, 'Local');
+    assert.equal(css.enabledSnippets.has('remote'), true);
+    assert.ok(preset.updatedAt > 200);
+});
+
+test('local edits win conflicting preset fields when device management is re-enabled', async () => {
+    const { manager, settings } = await fixture();
+    await manager.devices.setEnabled(true);
+    const preset = firstOf(settings, 'computer');
+    preset.updatedAt = 100;
+    await manager.devices.setEnabled(false);
+    settings.Plugins.find(plugin => plugin.id === 'a').delay = 'local-delay';
+    settings.FILTER_SEARCH = 'local search';
+    preset.plugins.a.delay = 'remote-delay';
+    preset.filters.search = 'remote search';
+    preset.updatedAt = 200;
+    await manager.devices.setEnabled(true);
+    assert.equal(preset.plugins.a.delay, 'local-delay');
+    assert.equal(settings.Plugins.find(plugin => plugin.id === 'a').delay, 'local-delay');
+    assert.equal(preset.filters.search, 'local search');
+    assert.equal(settings.FILTER_SEARCH, 'local search');
+});
+
+test('re-enabling without local edits preserves the current preset revision and remote content', async () => {
+    for (const remoteChanged of [false, true]) {
+        const { manager, settings } = await fixture();
+        await manager.devices.setEnabled(true);
+        const preset = firstOf(settings, 'computer');
+        preset.updatedAt = 100;
+        await manager.devices.setEnabled(false);
+        if (remoteChanged) {
+            preset.plugins.b.enabled = true;
+            preset.updatedAt = 200;
+        }
+        const expected = model.clonePreset(preset);
+        notices.length = 0;
+        await manager.devices.setEnabled(true);
+        assert.deepEqual(preset, expected);
+        assert.equal(settings.Plugins.find(plugin => plugin.id === 'b').enabled, remoteChanged);
+        assert.equal(notices.some(message => String(message).includes('设备_关闭期间已合并')), false);
+    }
+});
+
+test('re-enabling rebases session overrides without saving them or losing permanent and remote edits', async () => {
+    const { manager, settings } = await fixture();
+    const css = { theme: 'Original', enabledSnippets: new Set(['base']),
+        async loadTheme() {}, async loadSnippets() {},
+        setTheme(theme) { this.theme = theme; },
+        setCssEnabledStatus(id, enabled) { if (enabled) this.enabledSnippets.add(id); else this.enabledSnippets.delete(id); },
+    };
+    manager.app.customCss = css;
+    const preset = firstOf(settings, 'computer');
+    preset.appearance = { theme: 'Original', snippets: { base: true } };
+    await manager.devices.setEnabled(true);
+    preset.updatedAt = 100;
+    await manager.devices.setEnabled(false);
+    manager.overview.setMode('plugins', 'session');
+    await manager.overview.setPluginState('a', { enabled: false });
+    manager.overview.setMode('themes', 'session');
+    await manager.devices.writeAppearance('themes', { theme: 'Temporary', snippets: { temporary: true } });
+    manager.overview.setMode('plugins', 'persistent');
+    await manager.overview.setPluginState('b', { delay: 'local-delay' });
+    manager.overview.setMode('themes', 'persistent');
+    await manager.devices.writeAppearance('themes', { snippets: { saved: true } });
+    preset.plugins.a.delay = 'remote-delay';
+    preset.appearance.snippets.remote = true;
+    preset.updatedAt = 200;
+    await manager.devices.setEnabled(true);
+    assert.deepEqual(preset.plugins.a, { enabled: true, delay: 'remote-delay' });
+    assert.equal(preset.plugins.b.delay, 'local-delay');
+    assert.equal(settings.Plugins.find(plugin => plugin.id === 'a').enabled, false);
+    assert.equal(settings.Plugins.find(plugin => plugin.id === 'a').delay, 'remote-delay');
+    assert.equal(preset.appearance.theme, 'Original');
+    assert.equal(preset.appearance.snippets.temporary, undefined);
+    assert.equal(preset.appearance.snippets.saved, true);
+    assert.equal(preset.appearance.snippets.remote, true);
+    assert.equal(css.theme, 'Temporary');
+    assert.equal(css.enabledSnippets.has('temporary'), true);
+    assert.equal(css.enabledSnippets.has('saved'), true);
+    assert.equal(css.enabledSnippets.has('remote'), true);
 });
 
 test('scope selections are remembered per page', async () => {
