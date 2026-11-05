@@ -45,6 +45,7 @@ class ValueComponent {
 }
 class Setting {
     constructor(parent) { this.settingEl = parent.createDiv('setting-item'); this.nameEl = this.settingEl.createDiv('setting-item-name'); this.controlEl = this.settingEl.createDiv(); }
+    setClass(value) { this.settingEl.addClass(value); return this; }
     setName(value) { this.nameEl.setText(value); return this; }
     setDesc() { return this; }
     setHeading() { return this; }
@@ -77,6 +78,9 @@ test('rollback Preview labels are visible while automatic backups remain disable
     const names = descendants(f.modal.contentEl).filter(element => element.classes.has('setting-item-name'));
     assert.equal(names[0].textContent, '回退_开启 Preview');
     assert.equal(descendants(names[0]).filter(element => element.classes.has('flair')).length, 1);
+    const optIn = descendants(f.modal.contentEl).find(element => element.classes.has('bpm-rollback-opt-in'));
+    assert.ok(optIn?.classes.has('setting-item'));
+    assert.equal(optIn.querySelector('.setting-item-name'), names[0]);
     const create = descendants(f.modal.contentEl).find(element => element.click && element.textContent === '回退_创建');
     assert.equal(create.disabled, true); assert.equal(f.manager.settings.PLUGIN_ROLLBACK_ENABLED, false);
     f.modal.close(); assert.equal(f.editors.size, 0);

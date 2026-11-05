@@ -217,7 +217,7 @@ class ManagerSettingTab extends PluginSettingTab {
         const navigationLabel = this.manager.translator.t('设置_切换设置');
         const label = navigationHost.createSpan('manager-setting__brand');
         setIcon(label.createSpan({ cls: 'manager-setting__brand-icon', attr: { 'aria-hidden': 'true' } }), 'settings');
-        label.createSpan({ text: navigationLabel });
+        label.createSpan({ cls: 'manager-setting__brand-label', text: navigationLabel });
         this.syncNoticeView = new SyncNoticeView(this.manager, topbar, () => {
             if (this.manager.configProtection?.protection.paused) this.manager.openConfigConflict();
             else this.manager.showPrivateCacheWarning();
@@ -254,6 +254,7 @@ class ManagerSettingTab extends PluginSettingTab {
         this.activeTabIndex = Math.min(this.activeTabIndex, pages.length - 1);
         this.navigation = ScopeSelect.compact(navigationHost, navigationLabel,
             `${this.activeTabIndex}`, pages.map((page, index) => ({ value: `${index}`, label: page.label, icon: page.icon })), activate);
+        this.navigation.field.addClass('manager-setting__page-select');
         activate(`${this.activeTabIndex}`);
         this.scrollbars = new FloatingScrollbars(containerEl);
         restore();

@@ -3093,9 +3093,8 @@ export class ManagerModal extends Modal {
                 const svg = host.querySelector('svg');
                 return svg ? number(getComputedStyle(svg).width) : host.getBoundingClientRect().width;
             };
-            const warning = button.querySelector<HTMLElement>(':scope > .bpm-feature-difference');
-            const minimum = iconWidth(icon) + iconWidth(chevron) + (warning ? iconWidth(warning) : 0)
-                + number(style.columnGap) * (warning ? 2 : 1) + number(style.paddingLeft) + number(style.paddingRight)
+            const minimum = iconWidth(icon) + iconWidth(chevron)
+                + number(style.columnGap) + number(style.paddingLeft) + number(style.paddingRight)
                 + number(style.borderLeftWidth) + number(style.borderRightWidth);
             const gap = number(getComputedStyle(row).columnGap);
             const fullAvailable = row.clientWidth - actions.getBoundingClientRect().width - gap;
@@ -8600,24 +8599,22 @@ export class ManagerModal extends Modal {
         const visiblePages = new Set(items.map(item => this.conflictFeaturePage(item.page)));
         this.modalEl.querySelectorAll<HTMLElement>('.manager-toolbar__tab[data-page]').forEach(tab => {
             const item = items.find(item => item.page === tab.dataset.page);
-            this.markFeatureDifference(tab, Boolean(item && differences.has(this.conflictFeaturePage(item.page))));
+            this.describeFeatureDifference(tab, Boolean(item && differences.has(this.conflictFeaturePage(item.page))));
         });
         const changedLabels = items.filter(item => differences.has(this.conflictFeaturePage(item.page))).map(item => item.label);
         for (const item of items) this.pageTabBar?.setOptionLabel(item.page, differences.has(this.conflictFeaturePage(item.page))
             ? `${item.label} · ${protectionText(this.manager, 'differences')}` : item.label);
-        if (this.pageTabBar) this.markFeatureDifference(this.pageTabBar.trigger, changedLabels.length > 0, changedLabels.join(' · '));
+        if (this.pageTabBar) this.describeFeatureDifference(this.pageTabBar.trigger, changedLabels.length > 0, changedLabels.join(' · '));
         this.modalEl.querySelectorAll<HTMLElement>('.manager-mobile-page-switch').forEach(button =>
-            this.markFeatureDifference(button, changedLabels.length > 0, changedLabels.join(' · ')));
+            this.describeFeatureDifference(button, changedLabels.length > 0, changedLabels.join(' · ')));
         const hiddenDifferences = [...differences].filter(page => !visiblePages.has(page));
         this.modalEl.querySelectorAll<HTMLElement>('[data-bpm-feature-page="settings"]').forEach(button =>
-            this.markFeatureDifference(button, hiddenDifferences.length > 0));
+            this.describeFeatureDifference(button, hiddenDifferences.length > 0));
     }
 
-    private markFeatureDifference(control: HTMLElement, changed: boolean, details?: string): void {
-        const marker = control.querySelector<HTMLElement>(':scope > .bpm-feature-difference');
-        control.toggleClass('has-feature-difference', changed);
+    /** 差异保留文字说明，警告图标只放通知区域；Describe differences in text; the notice owns the warning glyph. */
+    private describeFeatureDifference(control: HTMLElement, changed: boolean, details?: string): void {
         if (!changed) {
-            marker?.remove();
             for (const [attribute, key] of [['title', 'conflictNavTitle'], ['aria-label', 'conflictNavAria']] as const) {
                 const original = control.dataset[key];
                 if (original === undefined) continue;
@@ -8626,12 +8623,6 @@ export class ManagerModal extends Modal {
                 delete control.dataset[key];
             }
             return;
-        }
-        if (!marker) {
-            const warning = control.createSpan({ cls: 'bpm-feature-difference', attr: { 'aria-hidden': 'true' } });
-            setIcon(warning, 'triangle-alert');
-            const chevron = control.querySelector<HTMLElement>(':scope > .manager-mobile-page-switch__chevron');
-            if (chevron) control.insertBefore(warning, chevron);
         }
         control.dataset.conflictNavTitle ??= control.getAttribute('title') ?? '';
         control.dataset.conflictNavAria ??= control.getAttribute('aria-label') ?? control.dataset.label ?? '';

@@ -74,20 +74,34 @@ function fixture() {
     return { modal, manager, choices, calls, editing, closed: () => closed };
 }
 const sourceButtons = modal => descendants(modal.contentEl).filter(el => el.classes.has('bpm-config-conflict__choice'));
+const allSourceButtons = modal => sourceButtons(modal).filter(el => el.classes.has('bpm-config-conflict__choice--all'));
+const sectionSourceButtons = modal => sourceButtons(modal).filter(el => el.parentElement.classes.has('bpm-config-conflict__choices'));
 
 test('conflict dialog uses source-labelled all-settings actions and preserves mounted choices on refresh', async () => {
     const f = fixture(); await settle();
     assert.equal(f.modal.titleEl.textContent, 'Configuration conflict');
-    const buttons = sourceButtons(f.modal);
-    assert.deepEqual(buttons.map(button => button.textContent), ['Local version', 'Remote version', 'Local version', 'Remote version']);
-    assert.equal(buttons[1].tooltip, 'Resolve all conflicts with remote settings and save');
+    const buttons = sectionSourceButtons(f.modal), allButtons = allSourceButtons(f.modal);
+    assert.deepEqual(buttons.map(button => button.textContent), ['Local version', 'Remote version']);
+    assert.deepEqual(allButtons.map(button => button.textContent), ['Local versionAll settings', 'Remote versionAll settings']);
+    assert.equal(allButtons[1].tooltip, 'Resolve all conflicts with remote settings and save');
+    assert.equal(allButtons[1].attributes['aria-label'], 'Resolve all conflicts with remote settings and save');
+    assert.equal(f.modal.contentEl.querySelector('.bpm-config-conflict__heading'), null);
+    const footer = f.modal.contentEl.querySelector('.bpm-config-conflict__footer');
+    assert.equal(f.modal.contentEl.children.at(-1), footer);
+    assert.equal(footer.children.at(-1), allButtons[0].parentElement);
+    const save = allButtons[0].parentElement.children.at(-1);
+    assert.deepEqual(allButtons[0].parentElement.children, [...allButtons, save]);
+    assert.equal(save.textContent, 'Save changes');
+    assert.ok(save.classes.has('bpm-config-conflict__choice'));
+    assert.ok(save.classes.has('bpm-config-conflict__choice--save'));
+    assert.equal(allButtons[0].querySelector('.bpm-config-conflict__all-label').textContent, 'All settings');
     const content = f.modal.contentEl.querySelector('.bpm-config-conflict__content');
-    content.scrollTop = 91; buttons[3].focus();
+    content.scrollTop = 91; buttons[1].focus();
     f.choices.selectSection('settings', 'incoming'); f.modal.refresh(); await settle();
-    assert.equal(sourceButtons(f.modal)[3], buttons[3]);
+    assert.equal(sectionSourceButtons(f.modal)[1], buttons[1]);
     assert.equal(content.scrollTop, 91);
-    assert.equal(buttons[3].ownerDocument.activeElement, buttons[3]);
-    assert.equal(buttons[1].attributes['aria-pressed'], 'true');
+    assert.equal(buttons[1].ownerDocument.activeElement, buttons[1]);
+    assert.equal(allButtons[1].attributes['aria-pressed'], 'true');
     assert.equal(descendants(f.modal.contentEl).some(el => /secret-local|secret-remote/.test(el.textContent)), false);
     assert.deepEqual(f.calls, []);
     f.modal.close(); assert.equal(f.editing.size, 0);
@@ -98,11 +112,11 @@ test('either all-settings source applies and saves once, blocking repeated click
         const f = fixture(); await settle();
         let finish;
         f.manager.savePendingSettings = () => { f.calls.push(['save']); return new Promise(resolve => { finish = resolve; }); };
-        const buttons = sourceButtons(f.modal);
+        const buttons = allSourceButtons(f.modal);
         assert.equal(buttons[index].click(), undefined);
         await settle();
         assert.deepEqual(f.calls, [['all', side, 'conflict-one'], ['save']]);
-        assert.ok(buttons.every(button => button.disabled));
+        assert.ok(sourceButtons(f.modal).every(button => button.disabled));
         buttons[index].click(); await settle();
         assert.equal(f.calls.length, 2);
         finish(true); await settle();
@@ -112,7 +126,7 @@ test('either all-settings source applies and saves once, blocking repeated click
 
 test('section choices remain individual until Save confirms them through the shared save entry', async () => {
     const f = fixture(); await settle();
-    sourceButtons(f.modal)[3].click(); await settle();
+    sectionSourceButtons(f.modal)[1].click(); await settle();
     assert.deepEqual(f.calls, []);
     const save = descendants(f.modal.contentEl).find(el => el.textContent === 'Save changes' && typeof el.click === 'function');
     assert.equal(save.click(), undefined); await settle();
@@ -123,7 +137,7 @@ test('section choices remain individual until Save confirms them through the sha
 test('a stale source action stays open with a readable error and never reaches Save', async () => {
     const f = fixture(); await settle();
     f.manager.configProtection.confirmAllConflictChoices = async () => { throw new Error('Incoming version changed'); };
-    sourceButtons(f.modal)[1].click(); await settle();
+    allSourceButtons(f.modal)[1].click(); await settle();
     assert.deepEqual(f.calls, []); assert.equal(f.closed(), 0);
     assert.ok(sourceButtons(f.modal).every(button => !button.disabled));
     assert.ok(notices.includes('Configuration protection failed: Incoming version changed'));

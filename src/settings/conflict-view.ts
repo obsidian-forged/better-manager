@@ -71,22 +71,26 @@ class ConfigConflictView {
         this.syncChoices = [];
         this.controls = [];
         this.host.empty();
-        const heading = this.host.createDiv('bpm-config-conflict__heading');
-        heading.createSpan({ text: this.t('allSettings') });
-        const allSources = heading.createDiv('bpm-config-conflict__choices');
-        for (const side of ['local', 'incoming'] as const) this.renderSourceButton(allSources, side,
-            () => this.manager.configProtection?.conflictChoices?.allSide(),
-            () => { void this.apply(side); }, this.t(side === 'local' ? 'applyAllLocal' : 'applyAllRemote'));
-        this.refreshPrivateWarning();
         this.host.setAttribute('aria-label', this.t('title'));
         const content = this.host.createDiv('bpm-config-conflict__content');
         if (conflict.reason === 'stale-replayed') content.createEl('p', { text: this.t('stale'), cls: 'mod-warning' });
         const footer = this.host.createDiv('bpm-config-conflict__footer');
         this.status = footer.createDiv({ attr: { role: 'status', 'aria-live': 'polite' } });
-        const confirm = this.labelledButton(footer, this.t('saveSettings'), 'save').setCta();
-        this.confirm = confirm;
+        footer.createDiv('bpm-config-conflict__private-actions');
+        const actions = footer.createDiv('bpm-config-conflict__actions');
         for (const section of sections) this.renderSection(content, section);
-        confirm.onClick(() => { void this.apply(); });
+        for (const side of ['local', 'incoming'] as const) {
+            const label = this.t(side === 'local' ? 'applyAllLocal' : 'applyAllRemote');
+            const button = this.renderSourceButton(actions, side,
+                () => this.manager.configProtection?.conflictChoices?.allSide(),
+                () => { void this.apply(side); }, label);
+            button.buttonEl.addClass('bpm-config-conflict__choice--all');
+            button.buttonEl.createSpan({ cls: 'flair bpm-config-conflict__all-label', text: this.t('allSettings') });
+            button.buttonEl.setAttribute('aria-label', label);
+        }
+        this.confirm = this.labelledButton(actions, this.t('saveSettings'), 'save').onClick(() => { void this.apply(); });
+        this.confirm.buttonEl.addClass('bpm-config-conflict__choice', 'bpm-config-conflict__choice--save');
+        this.refreshPrivateWarning();
         this.setBusy(this.busy);
         content.scrollTop = 0;
     }
@@ -122,12 +126,12 @@ class ConfigConflictView {
         } finally { this.setBusy(false); }
     }
     private refreshPrivateWarning(): void {
-        const heading = this.host.querySelector<HTMLElement>('.bpm-config-conflict__heading');
-        if (!heading) return;
-        const existing = heading.querySelector('.bpm-private-cache-warning');
+        const actions = this.host.querySelector<HTMLElement>('.bpm-config-conflict__private-actions');
+        if (!actions) return;
+        const existing = actions.querySelector('.bpm-private-cache-warning');
         if (!this.manager.configProtection?.privateCacheModified) { existing?.remove(); return; }
         if (existing) return;
-        const warning = this.labelledButton(heading, this.t('privateCacheShort'), 'folder')
+        const warning = this.labelledButton(actions, this.t('privateCacheShort'), 'folder')
             .setTooltip(this.t('privateCacheChanged')).onClick(() => this.manager.showPrivateCacheWarning());
         warning.buttonEl.addClass('bpm-config-conflict__choice', 'bpm-private-cache-warning', 'mod-warning');
     }
@@ -148,7 +152,7 @@ class ConfigConflictView {
     }
 
     private renderSourceButton(parent: HTMLElement, side: ConflictSide,
-        selected: () => ConflictSide | 'mixed' | undefined, choose: () => void, tooltip?: string): void {
+        selected: () => ConflictSide | 'mixed' | undefined, choose: () => void, tooltip?: string): ButtonComponent {
         const button = this.labelledButton(parent, this.t(side), side === 'local' ? 'monitor-smartphone' : 'cloud-download').onClick(choose);
         button.buttonEl.addClass('bpm-config-conflict__choice', `bpm-config-conflict__choice--${side}`);
         button.setTooltip(tooltip ?? this.t(side));
@@ -160,6 +164,7 @@ class ConfigConflictView {
         this.controls.push(button);
         this.syncChoices.push(sync);
         sync();
+        return button;
     }
 
     private labelledButton(parent: HTMLElement, label: string, icon: string): ButtonComponent {

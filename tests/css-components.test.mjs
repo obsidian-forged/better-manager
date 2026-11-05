@@ -158,10 +158,12 @@ test('mobile toolbar dropdowns own full rows before actions even when the expand
         }
         for (const key of ['statChip', 'switcher', 'appearanceTabs']) assert.equal(style(nodes.get(key), 'display'), 'none');
         assert.equal(style(nodes.get('head'), 'flex-wrap'), 'wrap');
-        assert.equal(style(nodes.get('settingNavigation'), 'width'), '100%');
+        nodes.get('settingsMenu').classes.add('manager-setting__page-select');
+        assert.notEqual(style(nodes.get('settingNavigation'), 'width'), '100%');
         assert.equal(style(nodes.get('settingNavigation'), 'display'), 'flex');
-        assert.equal(style(nodes.get('settingsMenu'), 'flex'), '1 1 auto');
-        assert.equal(style(nodes.get('settingsMenu'), 'width'), 'auto');
+        assert.equal(style(nodes.get('settingNavigation'), 'flex'), '1 1 0');
+        assert.equal(style(nodes.get('settingsMenu'), 'flex'), '0 1 auto');
+        assert.equal(style(nodes.get('settingsMenu'), 'width'), 'max-content');
         assert.equal(style(nodes.get('settingsMenu'), 'height'), '44px');
         assert.equal(style(nodes.get('appearanceToolbar'), 'flex-direction'), 'column');
         assert.equal(style(nodes.get('appearanceToolbar'), 'flex'), '0 0 auto');
@@ -175,18 +177,47 @@ test('mobile toolbar dropdowns own full rows before actions even when the expand
     for (const key of ['overviewMenu', 'sourceNavigation', 'sourceSummary', 'appearanceMenu']) assert.equal(style(desktop.get(key), 'display'), 'none');
 });
 
-test('mobile Ribbon status and group menus fill separate rows and retain fixed menu positioning', () => {
+test('settings navigation shrinks within one mobile row while search and save retain their touch targets', () => {
+    const body = fixtureElement('body', 'is-mobile is-phone'), settings = fixtureElement('div', 'manager-setting__container', body),
+        topbar = fixtureElement('div', 'manager-setting__topbar', settings), navigation = fixtureElement('div', 'manager-setting__navigation', topbar),
+        brand = fixtureElement('span', 'manager-setting__brand', navigation), brandIcon = fixtureElement('span', 'manager-setting__brand-icon', brand),
+        brandLabel = fixtureElement('span', 'manager-setting__brand-label', brand), field = fixtureElement('div', 'manager-scope-select--compact manager-setting__page-select', navigation),
+        root = fixtureElement('div', 'manager-multiselect-filter', field), trigger = fixtureElement('button', 'manager-multiselect-filter__trigger', root),
+        icon = fixtureElement('span', 'manager-multiselect-filter__check manager-scope-select__icon', trigger), summary = fixtureElement('span', 'manager-multiselect-filter__summary', trigger),
+        chevron = fixtureElement('span', 'manager-multiselect-filter__chevron', trigger), search = fixtureElement('button', 'manager-setting-search__trigger', topbar),
+        save = fixtureElement('button', 'bpm-settings-save has-unsaved-settings', topbar);
+    const native = 'body.is-mobile button:not(.clickable-icon) { width: 100%; height: auto; min-width: 100px; padding: 10px; }';
+    const style = componentStyles(native + '\n' + css, { phone: true });
+    assert.equal(style(topbar, 'flex-wrap'), 'nowrap');
+    assert.equal(style(navigation, 'flex'), '1 1 0');
+    assert.notEqual(style(navigation, 'width'), '100%');
+    assert.equal(style(field, 'flex'), '0 1 auto');
+    assert.equal(style(field, 'max-width'), '10rem');
+    assert.equal(style(brand, 'flex'), '0 1 auto');
+    for (const label of [brandLabel, summary]) { assert.equal(style(label, 'min-width'), '0'); assert.equal(style(label, 'text-overflow'), 'ellipsis'); }
+    assert.equal(style(brandIcon, 'flex'), '0 0 18px');
+    for (const glyph of [icon, chevron]) assert.equal(style(glyph, 'flex'), '0 0 auto');
+    for (const control of [search, save]) {
+        assert.equal(style(control, 'flex'), '0 0 44px');
+        for (const property of ['width', 'height', 'min-width', 'min-height', 'max-width', 'max-height']) assert.equal(style(control, property), '44px');
+        assert.equal(style(control, 'box-sizing'), 'border-box'); assert.equal(style(control, 'padding'), '0');
+    }
+    assert.equal(style(save, 'color'), 'var(--text-accent)');
+});
+
+test('mobile Ribbon status and group menus share one row and retain fixed menu positioning', () => {
     const native = 'body.is-mobile button:not(.clickable-icon) { padding: 10px; border-radius: 44px; background: native-button; }';
     const nodes = componentFixture({ phone: true }), style = componentStyles(native + '\n' + css, { phone: true });
     assert.equal(style(nodes.get('filterbutton'), 'display'), 'none');
     assert.equal(style(nodes.get('filtergroup'), 'width'), '100%');
-    assert.equal(style(nodes.get('filtergroup'), 'flex-wrap'), 'wrap');
+    assert.equal(style(nodes.get('filtergroup'), 'flex-wrap'), 'nowrap');
     assert.equal(style(nodes.get('filterbar'), 'overflow'), 'visible');
     for (const key of ['ribbonState', 'ribbonGroup']) {
         assert.equal(style(nodes.get(key), 'display'), 'inline-flex');
-        assert.equal(style(nodes.get(key), 'width'), '100%');
+        assert.equal(style(nodes.get(key), 'width'), '0');
+        assert.equal(style(nodes.get(key), 'min-width'), '0');
         assert.equal(style(nodes.get(key), 'height'), '44px');
-        assert.equal(style(nodes.get(key), 'flex'), '0 0 auto');
+        assert.equal(style(nodes.get(key), 'flex'), '1 1 0');
     }
     for (const key of ['ribbonStateTrigger', 'ribbonGroup/trigger']) {
         assert.equal(style(nodes.get(key), 'height'), '100%');
@@ -197,6 +228,28 @@ test('mobile Ribbon status and group menus fill separate rows and retain fixed m
     const desktop = componentFixture(), desktopStyle = componentStyles(css);
     assert.equal(desktopStyle(desktop.get('ribbonState'), 'display'), 'none');
     assert.equal(desktopStyle(desktop.get('filterbutton'), 'display'), 'flex');
+});
+
+test('multi-select counts and disclosure icons stay in normal flow for triggers and menu options', () => {
+    for (const phone of [false, true]) {
+        const nodes = componentFixture({ phone }), style = componentStyles(css, { phone });
+        for (const selected of [false, true]) {
+            const trigger = nodes.get('ribbonStateTrigger');
+            if (selected) trigger.classes.add('has-selection');
+            else trigger.classes.delete('has-selection');
+            const count = fixtureElement('span', 'manager-multiselect-filter__count', trigger);
+            const chevron = fixtureElement('span', 'manager-multiselect-filter__chevron', trigger);
+            const option = fixtureElement('button', 'manager-multiselect-filter__option', nodes.get('ribbonStateMenu'));
+            const optionCount = fixtureElement('span', 'manager-multiselect-filter__count', option);
+            for (const item of [count, optionCount]) {
+                assert.notEqual(style(item, 'position'), 'absolute');
+                assert.equal(style(item, 'flex'), '0 0 auto');
+                assert.notEqual(style(item, 'opacity'), '0');
+            }
+            assert.notEqual(style(chevron, 'opacity'), '0');
+            assert.equal(style(chevron, 'flex'), '0 0 auto');
+        }
+    }
 });
 
 test('standalone mobile Ribbon menus share geometry without depending on the manager container', () => {
@@ -217,7 +270,24 @@ test('standalone mobile Ribbon menus share geometry without depending on the man
     assert.equal(style(menu, 'position'), 'fixed');
 });
 
-test('conflict choices use a native modal with a scrolling middle and visible heading and save action', () => {
+test('mobile Ribbon search fills the same available width as its filter row', () => {
+    for (const phone of [false, true]) {
+        const nodes = componentFixture({ phone }), style = componentStyles(css, { phone });
+        assert.equal(style(nodes.get('ribbonsearch'), 'width'), phone ? '100%' : '200px');
+        if (phone) {
+            const wrapper = nodes.get('ribbonsearch').parent;
+            const container = fixtureElement('div', 'ribbon-manager-search-container', nodes.get('filterright'));
+            assert.equal(style(wrapper, 'width'), '100%');
+            assert.equal(style(wrapper, 'min-width'), '0');
+            assert.equal(style(container, 'width'), '100%');
+            assert.equal(style(container, 'min-width'), '0');
+            assert.equal(style(nodes.get('ribbonsearch'), 'height'), '44px');
+            assert.equal(style(nodes.get('ribbonsearch'), 'box-sizing'), 'border-box');
+        }
+    }
+});
+
+test('conflict choices keep all-source actions in a fixed footer with labels inside shrinkable buttons', () => {
     const native = '.modal-content { overflow: auto; } body.is-mobile .modal-content { overflow: auto; } body.is-mobile button:not(.clickable-icon) { padding: 10px; border-radius: 44px; background: native-button; }';
     for (const phone of [false, true]) {
         const nodes = componentFixture({ phone }), style = componentStyles(native + '\n' + css, { phone });
@@ -231,11 +301,24 @@ test('conflict choices use a native modal with a scrolling middle and visible he
         for (const property of ['position', 'inset', 'z-index', 'height']) assert.equal(style(host, property), undefined, property);
         assert.equal(style(nodes.get('conflictContent'), 'overflow-y'), 'auto');
         assert.equal(style(nodes.get('conflictContent'), 'min-height'), '0');
-        for (const key of ['conflictHeading', 'conflictFooter']) assert.equal(style(nodes.get(key), 'flex'), '0 0 auto');
+        assert.equal(style(nodes.get('conflictFooter'), 'flex'), '0 0 auto');
+        assert.equal(style(nodes.get('conflictFooter'), 'flex-direction'), 'column');
+        assert.equal(style(nodes.get('conflictActions'), 'display'), 'grid');
+        assert.equal(style(nodes.get('conflictActions'), 'grid-template-columns'), 'repeat(3, minmax(0, 1fr))');
+        assert.equal(style(nodes.get('conflictPrivateActions'), 'display'), 'none');
+        for (const key of ['conflictLocal', 'conflictIncoming', 'conflictSave']) {
+            assert.equal(style(nodes.get(key), 'width'), '100%');
+            assert.equal(style(nodes.get(key), 'min-width'), '0');
+            assert.equal(style(nodes.get(key), 'flex-wrap'), 'wrap');
+            assert.equal(style(nodes.get(key), 'white-space'), 'normal');
+            assert.equal(style(nodes.get(key), 'border-radius'), '999px');
+        }
+        assert.equal(style(nodes.get('conflictAllLabel'), 'white-space'), 'normal');
         for (const key of ['conflictLocal', 'conflictIncoming', 'conflictSave']) assert.equal(style(nodes.get(key), 'min-height'), phone ? '44px' : '34px');
-        for (const key of ['conflictLocal', 'conflictIncoming']) assert.equal(style(nodes.get(key), 'border-radius'), 'var(--radius-rounded)');
         assert.equal(style(nodes.get('conflictLocal'), 'color'), 'var(--color-blue)');
         assert.equal(style(nodes.get('conflictIncoming'), 'color'), 'var(--color-purple)');
+        assert.equal(style(nodes.get('conflictSave'), 'color'), 'var(--interactive-accent)');
+        assert.equal(style(nodes.get('conflictSave'), 'background'), 'transparent');
         assert.equal(style(nodes.get('conflictLocal'), 'background'), 'var(--background-modifier-hover)');
         assert.equal(style(nodes.get('conflictIncoming'), 'background'), 'transparent');
     }
@@ -290,4 +373,36 @@ test('managed native scrollbar tracks reserve no height and floating thumbs reta
     assert.equal(style(nodes.get('thumb'),'background'),'var(--background-modifier-border)');
     const theme=componentStyles(`${css}\nbody { --scrollbar-thumb-bg: var(--text-muted); }`);
     assert.equal(theme(nodes.get('thumb'),'background'),'var(--text-muted)');
+});
+
+test('mobile rollback opt-in keeps readable text and complete Preview tags before wrapping long actions', () => {
+    const native = '.setting-item { display: flex; flex-wrap: nowrap; } .setting-item-info { min-width: 0; } .setting-item-control { display: flex; flex-wrap: nowrap; } .checkbox-container { width: 40px; height: 24px; }';
+    for (const inHistory of [false, true]) {
+        const body = fixtureElement('body', 'is-mobile');
+        const host = fixtureElement('div', inHistory ? 'modal manager-container manager-history' : 'manager-setting__container', body);
+        const row = fixtureElement('div', 'setting-item bpm-rollback-opt-in', host);
+        const info = fixtureElement('div', 'setting-item-info', row);
+        const name = fixtureElement('div', 'setting-item-name', info);
+        const flair = fixtureElement('span', 'flair', name);
+        const description = fixtureElement('div', 'setting-item-description', info);
+        const control = fixtureElement('div', 'setting-item-control', row);
+        const toggle = fixtureElement('div', 'checkbox-container', control);
+        const action = fixtureElement('button', '', control);
+        const style = componentStyles(native + '\n' + css, { phone: true });
+        assert.equal(style(row, 'flex-wrap'), 'wrap');
+        assert.equal(style(info, 'flex'), '1 1 14rem');
+        assert.equal(style(info, 'min-width'), 'min(100%, 14rem)');
+        assert.equal(style(name, 'white-space'), 'normal');
+        assert.equal(style(description, 'white-space'), 'normal');
+        assert.equal(style(flair, 'flex-shrink'), '0');
+        assert.equal(style(flair, 'max-width'), 'none');
+        assert.equal(style(flair, 'white-space'), 'nowrap');
+        assert.equal(style(control, 'flex-wrap'), 'wrap');
+        assert.equal(style(control, 'min-height'), '44px');
+        assert.equal(style(action, 'min-height'), '44px');
+        assert.equal(style(action, 'max-width'), '100%');
+        assert.equal(style(action, 'white-space'), 'normal');
+        assert.equal(style(action, 'height'), 'auto');
+        assert.equal(style(toggle, 'height'), '24px');
+    }
 });

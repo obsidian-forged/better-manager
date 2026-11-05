@@ -228,7 +228,7 @@ export default class ManagerBasis extends BaseSetting {
 
         heading("设置_基础设置_分组_更新来源");
         if (this.manager.history.available) {
-            addSettingTags(new Setting(this.containerEl).setName(t0('回退_开启')).setDesc(t0('回退_开启说明')), ['Preview'])
+            addSettingTags(new Setting(this.containerEl).setClass('bpm-rollback-opt-in').setName(t0('回退_开启')).setDesc(t0('回退_开启说明')), ['Preview'])
                 .addToggle(toggle => toggle.setValue(this.settings.PLUGIN_ROLLBACK_ENABLED === true).onChange(value => {
                     this.settings.PLUGIN_ROLLBACK_ENABLED = value; void this.manager.saveSettings();
                 }))

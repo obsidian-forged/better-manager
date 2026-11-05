@@ -395,3 +395,41 @@ test('recent installs lead the status options and support the shared window, mul
     assert.equal(labels[0].allLabel, '筛选_全部_描述');
     assert.equal(labels[0].options[0][0], 'recently-installed');
 });
+
+test('conflict warnings use one notice icon while navigation keeps accessible text without duplicate glyphs', async () => {
+    const built = await build({ stdin: { contents: "export { ManagerModal } from './src/modal/manager-modal'; export { SyncNoticeView } from './src/ui/sync-notice-view';", resolveDir: process.cwd() },
+        bundle: true, platform: 'node', format: 'cjs', write: false, external: ['obsidian', 'electron'], loader: { '.webp': 'dataurl' }, logLevel: 'silent' });
+    const loaded = { exports: {} };
+    new Function('require', 'module', 'exports', built.outputFiles[0].text)(name => name === 'obsidian' ? obsidian : name === 'electron' ? {} : nativeRequire(name), loaded, loaded.exports);
+    const modal = Object.create(loaded.exports.ManagerModal.prototype), host = new Element();
+    modal.manager = { settings: { LANGUAGE: 'en' }, configProtection: { protection: { paused: true } } };
+    let differences = new Set(['plugins', 'settings']);
+    modal.getConflictFeaturePages = () => differences;
+    modal.getPageNavigationItems = () => [{ page: 'plugins', label: 'Plugins' }, { page: 'ribbon', label: 'Ribbon' }];
+    const pluginTab = host.createEl('button'), ribbonTab = host.createEl('button'), compact = host.createEl('button'), mobile = host.createEl('button'), more = host.createEl('button');
+    pluginTab.dataset.page = 'plugins'; ribbonTab.dataset.page = 'ribbon';
+    pluginTab.setAttribute('title', 'Plugins'); pluginTab.setAttribute('aria-label', 'Open plugins');
+    pluginTab.createSpan().icon = 'list'; ribbonTab.createSpan().icon = 'list';
+    compact.createSpan().icon = 'list'; mobile.createSpan().icon = 'list'; more.createSpan().icon = 'more-vertical';
+    const controls = [pluginTab, ribbonTab, compact, mobile, more], children = controls.map(control => [...control.children]);
+    const labels = new Map();
+    modal.pageTabBar = { trigger: compact, setOptionLabel: (page, label) => labels.set(page, label) };
+    modal.modalEl = { querySelectorAll: selector => selector.startsWith('.manager-toolbar__tab') ? [pluginTab, ribbonTab]
+        : selector === '.manager-mobile-page-switch' ? [mobile] : [more] };
+    modal.syncConflictNavigation(); modal.syncConflictNavigation();
+    assert.equal(labels.get('plugins'), 'Plugins · Differences'); assert.equal(labels.get('ribbon'), 'Ribbon');
+    assert.equal(pluginTab.attributes.title, 'Plugins · This feature has different settings');
+    assert.equal(pluginTab.attributes['aria-label'], 'Open plugins · This feature has different settings');
+    assert.ok(controls.every((control, index) => control.children.length === children[index].length
+        && control.children.every((child, childIndex) => child === children[index][childIndex])));
+    const notice = new loaded.exports.SyncNoticeView(modal.manager, host, () => {});
+    const all = element => element.children.flatMap(child => [child, ...all(child)]);
+    assert.equal(all(host).filter(element => element.icon === 'triangle-alert').length, 1);
+    assert.equal(all(host).some(element => element.classes.has('bpm-feature-difference')), false);
+    differences = new Set(); modal.syncConflictNavigation();
+    assert.equal(labels.get('plugins'), 'Plugins');
+    assert.equal(pluginTab.attributes.title, 'Plugins'); assert.equal(pluginTab.attributes['aria-label'], 'Open plugins');
+    modal.manager.configProtection.protection.paused = false; notice.refresh();
+    assert.equal(all(host).filter(element => element.icon === 'triangle-alert').length, 0);
+    notice.destroy();
+});

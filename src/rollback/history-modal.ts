@@ -39,7 +39,7 @@ export class HistoryModal extends Modal {
         const generation = ++this.generation;
         this.contentEl.empty();
         this.contentEl.createEl('p', { text: this.t('回退_说明'), cls: 'setting-item-description' });
-        addSettingTags(new Setting(this.contentEl).setName(this.t('回退_开启')), ['Preview']).setDesc(this.t('回退_开启说明')).addToggle(toggle => toggle
+        addSettingTags(new Setting(this.contentEl).setClass('bpm-rollback-opt-in').setName(this.t('回退_开启')), ['Preview']).setDesc(this.t('回退_开启说明')).addToggle(toggle => toggle
             .setValue(this.manager.history.enabled()).onChange(value => this.run(async () => {
                 this.manager.settings.PLUGIN_ROLLBACK_ENABLED = value; await this.manager.saveSettings(); await this.load();
             })));
