@@ -165,6 +165,9 @@ export class RibbonModal extends Modal {
         if (!item.bpmUniqueId || item.bpmUniqueId.startsWith(RIBBON_GROUP_ITEM_PREFIX)) return false;
         const pluginId = SystemRibbonManager.pluginPrefixOf(item.bpmUniqueId);
         if (!pluginId || this.manager.appPlugins.manifests[pluginId]) return false;
+        // Obsidian 核心插件不提供 manifest，不能按社区插件缺失处理。
+        const core = (this.manager.app as { internalPlugins?: { plugins?: Record<string, unknown> } }).internalPlugins?.plugins;
+        if (core && Object.prototype.hasOwnProperty.call(core, pluginId)) return false;
         // 系统 Ribbon 项没有插件映射；只有带插件前缀映射的条目才判为未加载。
         return Object.values(item.ribbonIdMap || {}).some(id => typeof id === 'string' && id.startsWith(`${pluginId}:`));
     }
