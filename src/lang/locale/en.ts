@@ -96,6 +96,7 @@ export default {
     "同步_缓存更新失败": "BPM could not read or cache an external settings update. Your current interface has been kept. Pause real-time sync and try again.",
     "设置_搜索_标题": "Search settings",
     "设置_切换设置": "Switch settings",
+    "设置_全部分类": "All settings",
     "设置_搜索_占位": "Search setting names and descriptions",
     "设置_搜索_关闭": "Close search",
     "设置_搜索_结果": "Matching settings",
@@ -708,6 +709,7 @@ export default {
     设置_导航_分组管理描述: 'Manage plugin group names, colors, and assignments.',
     设置_导航_标签管理描述: 'Manage plugin tag names, colors, and categories.',
     设置_导航_延迟启动描述: 'Manage delayed startup presets and wait times.',
+    设置_延迟启动_开启: 'Enable delayed startup',
 
     设置_基础设置_分组_常规: 'General',
     设置_基础设置_分组_启动接管: 'Startup & takeover',
@@ -1026,6 +1028,7 @@ export default {
     Ribbon_无项目: 'No configurable ribbon icons found.',
     Ribbon_隐藏: 'Hide',
     Ribbon_插件被禁用: 'Plugin disabled',
+    Ribbon_插件未加载: 'Plugin unavailable',
     Ribbon_全部分组: 'All groups',
     Ribbon_分组筛选: 'Group',
     Ribbon_显示: 'Show',

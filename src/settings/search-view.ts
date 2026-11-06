@@ -8,6 +8,8 @@ export interface SettingsSearchPage {
     icon?: string;
     /** Stable settings page key used for direct navigation. */
     key?: string;
+    /** 页面依赖的功能尚未开启；Page depends on a feature that is not enabled. */
+    disabled?: boolean;
     render(container: HTMLElement): void;
 }
 export interface SettingsSearchItem extends SearchableSetting { page: number; ordinal: number; }

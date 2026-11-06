@@ -1100,6 +1100,12 @@ export default class Manager extends Plugin {
         return this.publishPendingSettings();
     }
 
+    /** 用户明确选择不保存后丢弃草稿；Discard the local draft after an explicit decline. */
+    public async discardPendingSettings(): Promise<void> {
+        await this.configProtection?.discardDraft();
+        this.refreshSettingsSaveState();
+    }
+
     private async publishPendingSettings(allowed: () => boolean = () => true, notifySuccess = true): Promise<boolean> {
         if (this.settingsSaveRunning || this.isUnloaded || !allowed()) return false;
         this.settingsSaveRunning = true;

@@ -1,7 +1,7 @@
 import { FloatingScrollbars } from '../ui/floating-scrollbars';
 import { SettingsSaveButton } from '../ui/settings-save-button';
 import { ScopeSelect } from '../ui/scope-select';
-import { App, ButtonComponent, PluginSettingTab, requireApiVersion, setIcon } from 'obsidian';
+import { App, ButtonComponent, PluginSettingTab, requireApiVersion, setIcon, Setting, ToggleComponent } from 'obsidian';
 import type { SettingDefinitionItem, SettingDefinitionPage } from 'obsidian';
 import { SettingsSearch, SettingsSearchPage } from './search-view';
 import { SyncNoticeView } from '../ui/sync-notice-view';
@@ -72,6 +72,17 @@ class ManagerSettingTab extends PluginSettingTab {
         const summary = (doc.defaultView ?? window).createDiv({ cls: 'manager-setting-navigation__summary' });
         summary.setAttribute('data-bpm-setting-icon', page.icon ?? 'settings-2');
         summary.setText(page.description);
+        if (page.disabled) {
+            summary.addClass('manager-setting-navigation__summary--disabled');
+            const toggle = new ToggleComponent(summary);
+            toggle.setValue(false);
+            toggle.setTooltip(this.manager.translator.t('设置_延迟启动_开启'));
+            toggle.toggleEl.addEventListener('click', (event) => event.stopPropagation());
+            toggle.onChange((value) => {
+                if (!value) return;
+                this.enableDelayFromNavigation().catch(error => this.manager.devices?.report(error));
+            });
+        }
         fragment.append(summary);
         return fragment;
     }
@@ -94,6 +105,9 @@ class ManagerSettingTab extends PluginSettingTab {
                 const row = summary.closest<HTMLElement>('.setting-item.mod-navigable');
                 if (!row || row.hasClass('manager-setting-navigation__entry')) return;
                 row.addClass('manager-setting-navigation__entry');
+                if (summary.hasClass('manager-setting-navigation__summary--disabled')) {
+                    row.addClass('manager-setting-navigation__entry--disabled');
+                }
                 const icon = row.createSpan({ cls: 'manager-setting-navigation__icon', attr: { 'aria-hidden': 'true' } });
                 setIcon(icon, summary.getAttribute('data-bpm-setting-icon') ?? 'settings-2');
                 row.prepend(icon);
@@ -246,6 +260,12 @@ class ManagerSettingTab extends PluginSettingTab {
 
         const pages = this.searchPages();
         const activate = (value: string) => {
+            if (value === 'overview') {
+                this.activeTabIndex = -1;
+                this.contentEl.empty();
+                this.renderOverview(this.contentEl);
+                return;
+            }
             const index = Number(value), page = pages[index];
             if (!page) return;
             this.activeTabIndex = index;
@@ -254,32 +274,87 @@ class ManagerSettingTab extends PluginSettingTab {
             syncNativeSettingsPageTitle(this.nativeContainer, page.label, this.app);
         };
         this.activeTabIndex = Math.min(this.activeTabIndex, pages.length - 1);
-        this.navigation = ScopeSelect.compact(navigationHost, navigationLabel,
-            `${this.activeTabIndex}`, pages.map((page, index) => ({ value: `${index}`, label: page.label, icon: page.icon })), activate);
+        const initial = this.activeTabIndex < 0 ? 'overview' : `${this.activeTabIndex}`;
+        this.navigation = ScopeSelect.compact(navigationHost, navigationLabel, initial, [
+            { value: 'overview', label: this.manager.translator.t('设置_全部分类'), icon: 'layout-grid' },
+            ...pages.map((page, index) => ({ value: `${index}`, label: page.label, icon: page.icon })),
+        ], activate);
         this.navigation.field.addClass('manager-setting__page-select');
-        activate(`${this.activeTabIndex}`);
+        activate(initial);
         this.scrollbars = new FloatingScrollbars(containerEl);
         restore();
     }
+    /** 类似原生分类列表的设置总览；A settings overview equivalent to the native category list. */
+    private renderOverview(container: HTMLElement): void {
+        const t = (key: string) => this.manager.translator.t(key);
+        const page = container.createDiv('manager-setting__overview');
+        const title = page.createDiv('manager-setting__overview-title');
+        setIcon(title.createSpan('manager-setting__overview-title-icon'), 'settings');
+        title.createSpan({ text: t('管理器_BPM设置_短') });
+        const list = page.createDiv('manager-setting__overview-list');
+        this.searchPages().forEach((item, index) => {
+            const row = new Setting(list).setName(item.label).setDesc(item.description);
+            row.settingEl.addClass('manager-setting__overview-entry');
+            const icon = row.nameEl.createSpan('manager-setting__overview-icon');
+            setIcon(icon, item.icon ?? 'settings-2');
+            row.nameEl.prepend(icon);
+            const arrow = row.controlEl.createSpan('manager-setting__overview-arrow');
+            setIcon(arrow, 'chevron-right');
+            if (item.disabled) row.settingEl.addClass('manager-setting__overview-entry--disabled');
+            row.settingEl.addEventListener('click', (event) => {
+                if (event.target instanceof Element && event.target.closest('.checkbox-container')) return;
+                this.activeTabIndex = index;
+                this.renderSettings();
+            });
+            if (item.disabled) {
+                const toggle = new ToggleComponent(row.controlEl);
+                toggle.setValue(false);
+                toggle.setTooltip(t('设置_延迟启动_开启'));
+                toggle.toggleEl.addEventListener('click', (event) => event.stopPropagation());
+                toggle.onChange((value) => {
+                    if (value) this.enableDelayFromNavigation().catch(error => this.manager.devices?.report(error));
+                });
+            }
+        });
+        syncNativeSettingsPageTitle(this.nativeContainer, t('管理器_BPM设置_短'), this.app);
+    }
+
     /** 从管理器筛选下拉直接打开分组/标签/延迟设置；Open a filter-related settings category. */
     public openFilterPage(page: 'group' | 'tag' | 'delay'): void {
         const key = page === 'group' ? '设置_分组设置_前缀' : page === 'tag' ? '设置_标签设置_前缀' : '设置_延迟设置_前缀';
         const index = this.searchPages().findIndex(item => item.key === key);
         if (index < 0) return;
+        // 优先走原生设置页入口，保留原生返回栏与侧栏；Use native page navigation when available.
+        const icon = page === 'group' ? 'folder-tree' : page === 'tag' ? 'tags' : 'timer';
+        const summary = this.containerEl.querySelector<HTMLElement>(`[data-bpm-setting-icon="${icon}"]`);
+        const row = summary?.closest<HTMLElement>('.setting-item');
+        if (row) {
+            row.click();
+            return;
+        }
         this.activeTabIndex = index;
         this.renderSettings();
     }
 
+    /** 从分类列表直接开启延迟启动；Enable delay management from the category list. */
+    private async enableDelayFromNavigation(): Promise<void> {
+        if (this.manager.settings.DELAY) return;
+        this.manager.settings.DELAY = true;
+        await this.manager.enableDelaysForAllPlugins();
+        await this.manager.saveSettings();
+        this.renderSettings();
+    }
+
     private searchPages(): SettingsSearchPage[] {
-        const pages: Array<{ key: string; descriptionKey: string; icon: string; view: new (tab: ManagerSettingTab, container?: HTMLElement) => BaseSetting }> = [
+        const pages: Array<{ key: string; descriptionKey: string; icon: string; view: new (tab: ManagerSettingTab, container?: HTMLElement) => BaseSetting; disabled?: boolean }> = [
             { key: '设置_基础设置_前缀', descriptionKey: '设置_导航_基础配置描述', icon: 'settings-2', view: ManagerBasis },
             { key: '设置_主页面功能_前缀', descriptionKey: '设置_导航_功能入口描述', icon: 'mouse-pointer-click', view: ManagerMainPage },
             { key: '设置_样式设置_前缀', descriptionKey: '设置_导航_界面样式描述', icon: 'palette', view: ManagerStyle },
             { key: '设置_分组设置_前缀', descriptionKey: '设置_导航_分组管理描述', icon: 'folder-tree', view: ManagerGroup },
             { key: '设置_标签设置_前缀', descriptionKey: '设置_导航_标签管理描述', icon: 'tags', view: ManagerTag },
+            { key: '设置_延迟设置_前缀', descriptionKey: '设置_导航_延迟启动描述', icon: 'timer', view: ManagerDelay, disabled: !this.manager.settings.DELAY },
         ];
-        if (this.manager.settings.DELAY) pages.push({ key: '设置_延迟设置_前缀', descriptionKey: '设置_导航_延迟启动描述', icon: 'timer', view: ManagerDelay });
-        return pages.map(page => ({ key: page.key, label: this.manager.translator.t(page.key), description: this.manager.translator.t(page.descriptionKey), icon: page.icon, render: container => new page.view(this, container).render() }));
+        return pages.map(page => ({ key: page.key, label: this.manager.translator.t(page.key), description: this.manager.translator.t(page.descriptionKey), icon: page.icon, disabled: page.disabled, render: container => new page.view(this, container).render() }));
     }
     basisDisplay() { this.contentEl.empty(); new ManagerBasis(this).render(); }
     mainPageDisplay() { this.contentEl.empty(); new ManagerMainPage(this).render(); }

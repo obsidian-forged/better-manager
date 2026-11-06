@@ -230,6 +230,13 @@ export class ProtectedConfigSession {
             await this.protection.stage(value);
         });
     }
+    /** 放弃本机草稿；Discard the local draft without publishing. */
+    async discardDraft(): Promise<void> {
+        await this.queue(async () => {
+            await this.protection.discardDraft();
+            this.changed();
+        });
+    }
     async prepareConflictChoices(): Promise<ConfigConflictChoices | undefined> {
         const conflict = this.protection.conflict, selections = this.conflictChoices;
         if (!conflict || !selections || selections.ready) return selections;

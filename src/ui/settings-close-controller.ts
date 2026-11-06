@@ -3,6 +3,7 @@ interface SettingsCloseHost {
     readonly hasUnsavedSettings: boolean;
     readonly isSavingSettings: boolean;
     savePendingSettings(): Promise<boolean>;
+    discardPendingSettings(): Promise<void>;
 }
 
 interface SettingsCloseActions {
@@ -26,11 +27,14 @@ export class SettingsCloseController {
             if (manual && this.host.isSavingSettings) { this.actions.saving(); return; }
             await this.actions.prepareDraft();
             if (!this.actions.isOpen()) return;
-            if (manual && this.host.hasUnsavedSettings) {
-                const save = await this.actions.confirmSave();
+            const hadUnsaved = manual && this.host.hasUnsavedSettings;
+            let save = false;
+            if (hadUnsaved) {
+                save = await this.actions.confirmSave();
                 if (!this.actions.isOpen()) return;
                 if (save && (!await this.host.savePendingSettings() || this.host.hasUnsavedSettings)) return;
             }
+            if (manual && hadUnsaved && !save) await this.host.discardPendingSettings();
             if (this.actions.isOpen()) this.actions.close(!manual);
         } finally { this.pending = false; }
     }

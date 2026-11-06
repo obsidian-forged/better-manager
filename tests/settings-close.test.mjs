@@ -16,7 +16,8 @@ function fixture({ manual = true, dirty = true, saving = false, decision = false
             calls.push('save');
             if (saveSucceeds) host.hasUnsavedSettings = false;
             return saveSucceeds;
-        } };
+        },
+        async discardPendingSettings() { calls.push('discard'); host.hasUnsavedSettings = false; } };
     const actions = {
         isOpen: () => open,
         async prepareDraft() { calls.push('draft'); },
@@ -34,11 +35,11 @@ test('clean and session-only editors close without asking to save', async () => 
     assert.deepEqual(f.calls, ['draft', ['close', false]]);
 });
 
-test('Don’t save, including dismissing the confirmation, retains the draft without publishing', async () => {
+test('Don’t save, including dismissing the confirmation, discards the local draft', async () => {
     const f = fixture();
     await f.controller.request();
-    assert.deepEqual(f.calls, ['draft', 'confirm', ['close', false]]);
-    assert.equal(f.host.hasUnsavedSettings, true);
+    assert.deepEqual(f.calls, ['draft', 'confirm', 'discard', ['close', false]]);
+    assert.equal(f.host.hasUnsavedSettings, false);
 });
 
 test('Save and close uses the shared save entry and closes only once it is clean', async () => {
@@ -94,15 +95,15 @@ test('Don’t save stays authoritative if another editor changes the saving mode
     const f = fixture();
     f.actions.confirmSave = async () => { f.host.settings.MANUAL_CONFIG_SAVE = false; return false; };
     await f.controller.request();
-    assert.deepEqual(f.calls, ['draft', ['close', false]]);
-    assert.equal(f.host.hasUnsavedSettings, true);
+    assert.deepEqual(f.calls, ['draft', 'discard', ['close', false]]);
+    assert.equal(f.host.hasUnsavedSettings, false);
 });
 
 test('a debounced search draft is captured before deciding whether to ask', async () => {
     const f = fixture({ dirty: false });
     f.actions.prepareDraft = async () => { f.calls.push('draft'); f.host.hasUnsavedSettings = true; };
     await f.controller.request();
-    assert.deepEqual(f.calls, ['draft', 'confirm', ['close', false]]);
+    assert.deepEqual(f.calls, ['draft', 'confirm', 'discard', ['close', false]]);
 });
 
 test('a pending explicit save cannot be interrupted by closing', async () => {
@@ -119,5 +120,5 @@ test('draft preparation failure leaves the editor open and permits retry', async
     assert.equal(f.isOpen(), true); assert.deepEqual(f.calls, []);
     f.actions.prepareDraft = async () => {};
     await f.controller.request();
-    assert.deepEqual(f.calls, ['confirm', ['close', false]]);
+    assert.deepEqual(f.calls, ['confirm', 'discard', ['close', false]]);
 });

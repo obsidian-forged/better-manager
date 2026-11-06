@@ -15787,8 +15787,37 @@ body.theme-dark :is(.manager-setting__tabs, .manager-toolbar__tabs, .manager-rep
 .manager-setting__container { background: var(--background-primary); }
 .manager-setting__container :is(.setting-items, .setting-group-search) { background: transparent; }
 
-/* BPM 设置页根容器跟随主背景，原生灰色 setting 面板透明；Scope the BPM settings background to the primary theme surface. */
+/* BPM 设置页根容器跟随设置弹窗背景，与原生头栏一致；Match the settings modal background and header. */
 body .vertical-tab-content.manager-setting__root,
 body.is-tablet .vertical-tab-content.manager-setting__root,
-body.is-mobile .modal.mod-settings .vertical-tab-content.manager-setting__root { background-color: var(--background-primary); }
+body.is-mobile .modal.mod-settings .vertical-tab-content.manager-setting__root { background-color: var(--modal-background); }
 .manager-setting__root :is(.setting-items, .setting-group-search) { background-color: transparent; }
+
+/* 延迟启动分类未启用时变灰，并在分类行内提供开关；Gray the disabled delay category and expose its switch. */
+.manager-setting-navigation__entry--disabled { opacity: .62; }
+.manager-setting-navigation__summary--disabled { display: inline-flex; align-items: center; gap: var(--size-4-2); color: var(--text-muted); }
+.manager-setting-navigation__summary--disabled .checkbox-container { flex: 0 0 auto; }
+
+/* Ribbon 条目所属插件已卸载/未加载；Saved Ribbon item whose plugin manifest is missing. */
+.ribbon-manager-missing-chip { display: inline-flex; align-items: center; padding: 1px 7px; border: 1px solid var(--background-modifier-border); border-radius: 999px; color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+.is-plugin-missing .setting-item-icon { opacity: .7; }
+
+/* 新建外观方案按钮只保留图标，不再叠加外层边框；The appearance create action uses a bare icon. */
+.manager-container .manager-bar__action .manager-tool--appearance-profile { border-color: transparent; background: transparent; }
+.manager-container .manager-bar__action .manager-tool--appearance-profile:hover { border-color: var(--bpm-border); background: var(--background-modifier-hover); }
+
+/* BPM 设置总览：与原生分类列表一致并可返回；Settings overview with native-like rows. */
+.manager-setting__overview { display: flex; flex-direction: column; gap: var(--size-4-4); padding: var(--size-4-4) var(--size-4-2) var(--size-4-8); }
+.manager-setting__overview-title { display: inline-flex; align-items: center; gap: var(--size-4-2); color: var(--text-normal); font-size: var(--font-ui-large); font-weight: var(--font-semibold); }
+.manager-setting__overview-title-icon { display: inline-flex; color: var(--text-accent); }
+.manager-setting__overview-title-icon svg { width: var(--icon-m); height: var(--icon-m); }
+.manager-setting__overview-list { display: flex; flex-direction: column; }
+.manager-setting__overview-entry { cursor: pointer; border-bottom: 1px solid var(--background-modifier-border); }
+.manager-setting__overview-entry:last-child { border-bottom: 0; }
+.manager-setting__overview-entry:hover { background: var(--background-modifier-hover); }
+.manager-setting__overview-entry--disabled { opacity: .62; }
+.manager-setting__overview-icon { display: inline-flex; flex: 0 0 var(--icon-m); align-items: center; justify-content: center; color: var(--text-muted); }
+.manager-setting__overview-icon svg { width: var(--icon-m); height: var(--icon-m); }
+.manager-setting__overview-arrow { display: inline-flex; align-items: center; color: var(--text-faint); }
+.manager-setting__overview-entry .setting-item-info { gap: var(--size-4-2); }
+.manager-setting__overview-entry .setting-item-name { display: inline-flex; align-items: center; gap: var(--size-4-2); }

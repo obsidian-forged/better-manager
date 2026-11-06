@@ -499,7 +499,7 @@ export class ManagerModal extends Modal {
         if (this.searchSaveTimer !== undefined) window.clearTimeout(this.searchSaveTimer);
         this.searchSaveTimer = window.setTimeout(() => {
             this.searchSaveTimer = undefined;
-            this.action(async () => { await this.manager.saveSettings(); })();
+            this.action(async () => { await this.manager.saveSettings({ automatic: true }); })();
         }, 350);
     }
 
@@ -594,7 +594,8 @@ export class ManagerModal extends Modal {
 
     private async setPluginOverviewSort(value: string) {
         this.settings.PLUGIN_OVERVIEW_SORT = this.normalizePluginOverviewSort(value);
-        await this.manager.saveSettings();
+        // 排序属于视图状态，不进入用户配置草稿；Sorting is view state, not a settings draft.
+        await this.manager.saveSettings({ automatic: true });
         await this.reloadShowData();
     }
 
@@ -858,7 +859,7 @@ export class ManagerModal extends Modal {
         this.settings.FILTER_TAG = tagValues[0] || "";
         this.settings.FILTER_DELAY_VALUES = delayValues;
         this.settings.FILTER_DELAY = delayValues[0] || "";
-        this.action(async () => { await this.manager.saveSettings(); })();
+        this.action(async () => { await this.manager.saveSettings({ automatic: true }); })();
     }
 
     private setStatusFilterValues(values: string[]) {
@@ -866,7 +867,7 @@ export class ManagerModal extends Modal {
         if (this.settings.PERSISTENCE) {
             this.settings.FILTER_STATUS_VALUES = next;
             this.settings.FILTER_STATUS = next[0] || "all";
-            this.action(async () => { await this.manager.saveSettings(); })();
+            this.action(async () => { await this.manager.saveSettings({ automatic: true }); })();
         } else {
             this.statusFilters = next;
             this.filter = next[0] || "all";
@@ -881,7 +882,7 @@ export class ManagerModal extends Modal {
         const next = this.normalizeFilterOperator(value);
         if (this.settings.PERSISTENCE) {
             this.settings.FILTER_STATUS_OPERATOR = next;
-            this.action(async () => { await this.manager.saveSettings(); })();
+            this.action(async () => { await this.manager.saveSettings({ automatic: true }); })();
         } else {
             this.statusOperator = next;
         }
@@ -905,7 +906,7 @@ export class ManagerModal extends Modal {
         if (this.settings.PERSISTENCE) {
             this.settings.FILTER_GROUP_VALUES = next;
             this.settings.FILTER_GROUP = next[0] || "";
-            this.action(async () => { await this.manager.saveSettings(); })();
+            this.action(async () => { await this.manager.saveSettings({ automatic: true }); })();
         } else {
             this.groups = next;
             this.group = next[0] || "";
@@ -920,7 +921,7 @@ export class ManagerModal extends Modal {
         const next = this.normalizeFilterOperator(value);
         if (this.settings.PERSISTENCE) {
             this.settings.FILTER_GROUP_OPERATOR = next;
-            this.action(async () => { await this.manager.saveSettings(); })();
+            this.action(async () => { await this.manager.saveSettings({ automatic: true }); })();
         } else {
             this.groupOperator = next;
         }
@@ -931,7 +932,7 @@ export class ManagerModal extends Modal {
         if (this.settings.PERSISTENCE) {
             this.settings.FILTER_TAG_VALUES = next;
             this.settings.FILTER_TAG = next[0] || "";
-            this.action(async () => { await this.manager.saveSettings(); })();
+            this.action(async () => { await this.manager.saveSettings({ automatic: true }); })();
         } else {
             this.tags = next;
             this.tag = next[0] || "";
@@ -946,7 +947,7 @@ export class ManagerModal extends Modal {
         const next = this.normalizeFilterOperator(value);
         if (this.settings.PERSISTENCE) {
             this.settings.FILTER_TAG_OPERATOR = next;
-            this.action(async () => { await this.manager.saveSettings(); })();
+            this.action(async () => { await this.manager.saveSettings({ automatic: true }); })();
         } else {
             this.tagOperator = next;
         }
@@ -957,7 +958,7 @@ export class ManagerModal extends Modal {
         if (this.settings.PERSISTENCE) {
             this.settings.FILTER_DELAY_VALUES = next;
             this.settings.FILTER_DELAY = next[0] || "";
-            this.action(async () => { await this.manager.saveSettings(); })();
+            this.action(async () => { await this.manager.saveSettings({ automatic: true }); })();
         } else {
             this.delays = next;
             this.delay = next[0] || "";
@@ -972,7 +973,7 @@ export class ManagerModal extends Modal {
         const next = this.normalizeFilterOperator(value);
         if (this.settings.PERSISTENCE) {
             this.settings.FILTER_DELAY_OPERATOR = next;
-            this.action(async () => { await this.manager.saveSettings(); })();
+            this.action(async () => { await this.manager.saveSettings({ automatic: true }); })();
         } else {
             this.delayOperator = next;
         }
@@ -1926,7 +1927,11 @@ export class ManagerModal extends Modal {
         this.action(async () => {
             await this.appSetting.open();
             await this.appSetting.openTabById(tabId);
-            if (page) this.manager.openSettingsCategory(page);
+            if (page) {
+                // 等原生分类列表完成一帧，优先点击原生入口保留返回栏。
+                await new Promise<void>(resolve => window.setTimeout(resolve, 50));
+                this.manager.openSettingsCategory(page);
+            }
         })();
     }
 
@@ -2484,7 +2489,7 @@ export class ManagerModal extends Modal {
                 if (this.searchSaveTimer === undefined) return;
                 window.clearTimeout(this.searchSaveTimer);
                 this.searchSaveTimer = undefined;
-                await this.manager.saveSettings();
+                await this.manager.saveSettings({ automatic: true });
             },
             confirmSave: () => confirmWithModal(this.app, this.manager, {
                 message: protectionText(this.manager, 'closeUnsaved'),
@@ -2500,11 +2505,14 @@ export class ManagerModal extends Modal {
         });
         this.basePath = normalizePath(`${this.app.vault.configDir}`);
         // 首次启动运行下 避免有新加入的插件
-        manager.synchronizePlugins(
+        const synchronized = manager.synchronizePlugins(
             Object.values(this.appPlugins.manifests).filter(
                 (pm: PluginManifest) => pm.id !== manager.manifest.id
-            )
+            ),
+            { save: false }
         );
+        // 打开管理器只同步内部插件记录，不制造用户草稿；Opening the manager must not create a user draft.
+        if (synchronized) void manager.saveSettings({ automatic: true });
 
         // this.manager.registerEvent(
         // 	this.app.workspace.on("file-menu", (menu, file) => {
@@ -8833,7 +8841,7 @@ export class ManagerModal extends Modal {
             .catch(error => this.manager.devices.report(error));
         if (this.settings.PERSISTENCE && this.settings.FILTER_SEARCH !== this.searchText) {
             this.settings.FILTER_SEARCH = this.searchText;
-            this.action(async () => { await this.manager.saveSettings(); })();
+            this.action(async () => { await this.manager.saveSettings({ automatic: true }); })();
         }
         this.contentEl.empty();
         this.modalChromeEl = undefined;

@@ -291,6 +291,17 @@ export class ConfigProtection {
         return this.complete(target, current, 'saved');
     }
 
+    /** 用户明确选择“不保存”时丢弃本机草稿，避免下次打开继续提示；Discard an explicit unsaved draft. */
+    async discardDraft(): Promise<void> {
+        await this.io.removeDraft();
+        this.draft = undefined;
+        this.lastDraft = '';
+        this.fileEdits = false;
+        this.recoveredEdits = false;
+        for (const key of Object.keys(this.stagedFiles)) delete this.stagedFiles[key];
+        this.changed();
+    }
+
     private async complete(snapshot: ConfigSnapshot, current: () => boolean, status: 'saved' | 'noop'): Promise<ConfigPublication> {
         this.head = snapshot;
         this.openingHead = snapshot;

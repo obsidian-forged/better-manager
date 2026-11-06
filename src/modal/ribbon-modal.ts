@@ -160,6 +160,15 @@ export class RibbonModal extends Modal {
         return Boolean(plugin && plugin.enabled === false);
     }
 
+    /** 已保存但插件 manifest 不存在：插件被卸载/删除后仍可从配置中识别。 */
+    private isRibbonItemPluginMissing(item: RibbonItem): boolean {
+        if (!item.bpmUniqueId || item.bpmUniqueId.startsWith(RIBBON_GROUP_ITEM_PREFIX)) return false;
+        const pluginId = SystemRibbonManager.pluginPrefixOf(item.bpmUniqueId);
+        if (!pluginId || this.manager.appPlugins.manifests[pluginId]) return false;
+        // 系统 Ribbon 项没有插件映射；只有带插件前缀映射的条目才判为未加载。
+        return Object.values(item.ribbonIdMap || {}).some(id => typeof id === 'string' && id.startsWith(`${pluginId}:`));
+    }
+
     /** Disabled plugins form a separate state, regardless of their saved visibility. */
     private getRibbonItemStatus(item: RibbonItem): RibbonStatusFilter {
         if (this.isRibbonItemPluginDisabled(item)) return "disabled";
@@ -626,11 +635,12 @@ export class RibbonModal extends Modal {
 
             // 图标
             const pluginDisabled = this.isRibbonItemPluginDisabled(item);
+            const pluginMissing = this.isRibbonItemPluginMissing(item);
             const iconEl = itemContent.createDiv({ cls: "setting-item-icon" });
             this.renderRibbonItemIcon(iconEl, item);
-            if (pluginDisabled) {
+            if (pluginDisabled || pluginMissing) {
                 iconEl.addClass("ribbon-manager-item-icon--disabled");
-                itemEl.addClass("is-plugin-disabled");
+                itemEl.addClass(pluginMissing ? "is-plugin-missing" : "is-plugin-disabled");
             }
 
             const textWrap = itemContent.createDiv({ cls: "ribbon-manager-item-text" });
@@ -644,6 +654,7 @@ export class RibbonModal extends Modal {
                 cls: `ribbon-manager-item-state ${item.visible ? "is-visible" : "is-hidden"}`
             });
             if (pluginDisabled) titleLine.createSpan({ cls: "ribbon-manager-disabled-chip", text: t("Ribbon_插件被禁用") });
+            if (pluginMissing) titleLine.createSpan({ cls: "ribbon-manager-missing-chip", text: t("Ribbon_插件未加载") });
             const groupOfItem = this.manager.settings.RIBBON_GROUPS.find(group => group.members.includes(item.bpmUniqueId));
             if (groupOfItem) {
                 itemEl.addClass("is-grouped-item");
