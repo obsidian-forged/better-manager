@@ -117,7 +117,7 @@ test('card content, native Setting padding and close accents retain their compon
         assert.equal(style(nodes.get('content'),'display'),'block');
         assert.equal(style(nodes.get('desc-hidden'),'display'),'none');
         assert.equal(style(nodes.get('viewtoggle'),'width'),'16px');
-        assert.equal(style(nodes.get('action'),'width'),phone?'44px':'34px');
+        assert.equal(style(nodes.get('action'),'width'),phone?'32px':'34px');
         assert.equal(style(nodes.get('close'),'border-color'),'color-mix(in srgb, var(--text-error) 55%, var(--background-modifier-border))');
         assert.equal(style(nodes.get('orderinput'),'padding'),'0');
     }
@@ -128,7 +128,7 @@ test('global save, more and close controls share one size on mobile and desktop'
     for (const phone of [false, true]) {
         const nodes = componentFixture({ phone }), style = componentStyles(native + '\n' + css, { phone });
         for (const key of ['save', 'more', 'close']) {
-            const control = nodes.get(key), size = phone ? '44px' : '34px';
+            const control = nodes.get(key), size = phone ? '32px' : '34px';
             for (const property of ['width', 'height', 'min-width', 'min-height', 'max-width', 'max-height']) {
                 assert.equal(style(control, property), size, `${phone}/${key}/${property}`);
             }
@@ -137,8 +137,8 @@ test('global save, more and close controls share one size on mobile and desktop'
             assert.equal(style(control, 'box-sizing'), 'border-box');
             assert.equal(style(control, 'box-shadow'), 'none');
             assert.equal(style(control, 'border-radius'), style(nodes.get('more'), 'border-radius'));
-            assert.equal(style(nodes.get(`${key}/icon`), 'width'), '18px');
-            assert.equal(style(nodes.get(`${key}/icon`), 'height'), '18px');
+            assert.equal(style(nodes.get(`${key}/icon`), 'width'), phone ? '16px' : '18px');
+            assert.equal(style(nodes.get(`${key}/icon`), 'height'), phone ? '16px' : '18px');
         }
     }
 });
@@ -152,8 +152,8 @@ test('mobile toolbar dropdowns own full rows before actions even when the expand
             assert.equal(style(field, 'width'), '100%', `${state}/${key}/width`);
             assert.equal(style(field, 'max-width'), '100%', `${state}/${key}/max-width`);
             assert.equal(style(field, 'flex'), '0 0 auto', `${state}/${key}/flex`);
-            assert.equal(style(field, 'height'), '44px');
-            assert.equal(style(field, 'min-height'), '44px');
+            assert.equal(style(field, 'height'), 'calc(34px - 4px)');
+            assert.equal(style(field, 'min-height'), 'calc(34px - 4px)');
             assert.equal(style(nodes.get(`${key}/trigger`), 'width'), '100%');
         }
         for (const key of ['statChip', 'switcher', 'appearanceTabs']) assert.equal(style(nodes.get(key), 'display'), 'none');
@@ -164,7 +164,7 @@ test('mobile toolbar dropdowns own full rows before actions even when the expand
         assert.equal(style(nodes.get('settingNavigation'), 'flex'), '1 1 0');
         assert.equal(style(nodes.get('settingsMenu'), 'flex'), '0 1 auto');
         assert.equal(style(nodes.get('settingsMenu'), 'width'), 'max-content');
-        assert.equal(style(nodes.get('settingsMenu'), 'height'), '44px');
+        assert.equal(style(nodes.get('settingsMenu'), 'height'), 'calc(34px - 4px)');
         assert.equal(style(nodes.get('appearanceToolbar'), 'flex-direction'), 'column');
         assert.equal(style(nodes.get('appearanceToolbar'), 'flex'), '0 0 auto');
         const fallback = componentStyles(css, { phone: true, contents: false });
@@ -177,7 +177,7 @@ test('mobile toolbar dropdowns own full rows before actions even when the expand
     for (const key of ['overviewMenu', 'sourceNavigation', 'sourceSummary', 'appearanceMenu']) assert.equal(style(desktop.get(key), 'display'), 'none');
 });
 
-test('settings navigation shrinks within one mobile row while search and save retain their touch targets', () => {
+test('settings navigation shares one mobile row with compact search and save controls', () => {
     const body = fixtureElement('body', 'is-mobile is-phone'), settings = fixtureElement('div', 'manager-setting__container', body),
         topbar = fixtureElement('div', 'manager-setting__topbar', settings), navigation = fixtureElement('div', 'manager-setting__navigation', topbar),
         brand = fixtureElement('span', 'manager-setting__brand', navigation), brandIcon = fixtureElement('span', 'manager-setting__brand-icon', brand),
@@ -198,8 +198,8 @@ test('settings navigation shrinks within one mobile row while search and save re
     assert.equal(style(brandIcon, 'flex'), '0 0 18px');
     for (const glyph of [icon, chevron]) assert.equal(style(glyph, 'flex'), '0 0 auto');
     for (const control of [search, save]) {
-        assert.equal(style(control, 'flex'), '0 0 44px');
-        for (const property of ['width', 'height', 'min-width', 'min-height', 'max-width', 'max-height']) assert.equal(style(control, property), '44px');
+        assert.equal(style(control, 'flex'), '0 0 32px');
+        for (const property of ['width', 'height', 'min-width', 'min-height', 'max-width', 'max-height']) assert.equal(style(control, property), '32px');
         assert.equal(style(control, 'box-sizing'), 'border-box'); assert.equal(style(control, 'padding'), '0');
     }
     assert.equal(style(save, 'color'), 'var(--text-accent)');
@@ -216,7 +216,7 @@ test('mobile Ribbon status and group menus share one row and retain fixed menu p
         assert.equal(style(nodes.get(key), 'display'), 'inline-flex');
         assert.equal(style(nodes.get(key), 'width'), '0');
         assert.equal(style(nodes.get(key), 'min-width'), '0');
-        assert.equal(style(nodes.get(key), 'height'), '44px');
+        assert.equal(style(nodes.get(key), 'height'), 'calc(34px - 4px)');
         assert.equal(style(nodes.get(key), 'flex'), '1 1 0');
     }
     for (const key of ['ribbonStateTrigger', 'ribbonGroup/trigger']) {
@@ -263,7 +263,7 @@ test('standalone mobile Ribbon menus share geometry without depending on the man
     const style = componentStyles('body.is-mobile button:not(.clickable-icon) { border-radius: 44px; background: native-button; }\n' + css, { phone: true });
     assert.equal(style(group, 'width'), '100%');
     assert.equal(style(status, 'display'), 'inline-flex');
-    assert.equal(style(status, 'height'), '44px');
+    assert.equal(style(status, 'height'), 'calc(34px - 4px)');
     assert.equal(style(trigger, 'height'), '100%');
     assert.equal(style(trigger, 'background'), style(componentFixture({ phone: true }).get('ribbonStateTrigger'), 'background'));
     assert.notEqual(style(trigger, 'border-radius'), '44px');
@@ -334,8 +334,8 @@ test('sync notices share their component outside the manager and follow each too
             assert.equal(style(nodes.get(key), 'box-sizing'), 'border-box');
             assert.equal(style(nodes.get(key), 'border-radius'), 'var(--radius-rounded)');
         }
-        assert.equal(style(nodes.get('globalNotice'), 'height'), phone ? '44px' : '34px');
-        assert.equal(style(nodes.get('settingNotice'), 'height'), phone ? '44px' : '30px');
+        assert.equal(style(nodes.get('globalNotice'), 'height'), phone ? '32px' : '34px');
+        assert.equal(style(nodes.get('settingNotice'), 'height'), phone ? '32px' : '30px');
         assert.equal(style(nodes.get('settingNoticeIcon'), 'display'), 'inline-flex');
         assert.equal(style(nodes.get('settingNoticeSvg'), 'width'), 'var(--icon-size)');
         assert.equal(style(nodes.get('settingNoticeSvg'), 'height'), 'var(--icon-size)');
@@ -347,7 +347,7 @@ test('only the Preview tool expands for its native flair while personalization a
     for (const phone of [false, true]) {
         const nodes = componentFixture({ phone }), style = componentStyles(native + '\n' + css, { phone });
         const standard = nodes.get('personalbutton'), preview = nodes.get('previewtool');
-        assert.equal(style(standard, 'width'), phone ? '44px' : '30px');
+        assert.equal(style(standard, 'width'), phone ? '32px' : '30px');
         assert.equal(style(standard, 'padding'), '0');
         assert.equal(style(preview, 'width'), 'auto');
         assert.equal(style(preview, 'padding'), '0 var(--size-4-2)');

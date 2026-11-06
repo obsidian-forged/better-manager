@@ -37,6 +37,7 @@ body {
     --bpm-ui-action-size: 34px;
     --bpm-ui-touch-size: 44px;
     --bpm-ui-icon-tile: 32px;
+    --bpm-ui-icon-button-size: var(--bpm-ui-icon-tile);
     --bpm-ui-icon-size: 16px;
     --bpm-ui-chip-height: 20px;
     --bpm-ui-chip-padding: 0 6px;
@@ -9591,10 +9592,13 @@ body.is-tablet .ribbon-manager-control-visibility button {
 .manager-container--mobile .manager-plugin-card__actions button,
 .manager-container--mobile .ribbon-manager-control-visibility,
 .manager-container--mobile .ribbon-manager-control-drag {
-    width: var(--bpm-touch-size);
-    height: var(--bpm-touch-size);
-    min-width: var(--bpm-touch-size);
-    min-height: var(--bpm-touch-size);
+    box-sizing: border-box;
+    flex-basis: var(--bpm-ui-icon-button-size);
+    width: var(--bpm-ui-icon-button-size);
+    height: var(--bpm-ui-icon-button-size);
+    min-width: var(--bpm-ui-icon-button-size);
+    min-height: var(--bpm-ui-icon-button-size);
+    padding: 0;
 }
 
 .manager-container--mobile .manager-source-page__actions button,
@@ -13002,9 +13006,13 @@ body.is-tablet button.manager-device-scope__quick-apply {
 .manager-container .manager-feature-disabled { display: none; }
 .manager-global-tools {
     --bpm-global-tool-size: var(--bpm-action-size);
+    --bpm-global-tool-icon-size: 18px;
     display: flex; flex: 0 1 auto; min-width: 0; align-items: center; gap: var(--size-4-2); overflow-x: auto;
 }
-.manager-container--mobile .manager-global-tools { --bpm-global-tool-size: var(--bpm-touch-size); }
+.manager-container--mobile .manager-global-tools {
+    --bpm-global-tool-size: var(--bpm-ui-icon-button-size);
+    --bpm-global-tool-icon-size: var(--bpm-icon-size);
+}
 .manager-container .manager-page-tools {
     width: auto; height: auto; margin: 0; margin-inline-start: auto; flex: 0 1 auto; justify-content: flex-end; gap: var(--size-4-2);
 }
@@ -13147,7 +13155,7 @@ body.is-phone .manager-container--mobile .manager-page-tools .setting-item-contr
 }
 .manager-container--mobile .manager-global-tools--mobile { align-self: center; flex-wrap: nowrap; }
 .manager-container--mobile .manager-page-tools .manager-tool {
-    min-width: var(--bpm-touch-size); min-height: var(--bpm-touch-size);
+    min-width: var(--bpm-ui-icon-button-size); min-height: var(--bpm-ui-icon-button-size);
 }
 
 /* 平板保持桌面统计与操作布局、设备和生效方式同行；Tablet overview retains desktop alignment. */
@@ -13169,9 +13177,13 @@ body.is-tablet .manager-container--mobile .manager-page-tools .setting-item-cont
 
 /* 避免旧版移动工具网格拉伸图标按钮；Keep touch actions compact and right-aligned. */
 .manager-container--mobile .manager-page-tools .manager-bar__action .setting-item-control > .manager-tool {
-    flex: 0 0 var(--bpm-touch-size); width: var(--bpm-touch-size); height: var(--bpm-touch-size);
-    min-width: var(--bpm-touch-size); min-height: var(--bpm-touch-size);
+    flex: 0 0 var(--bpm-ui-icon-button-size); width: var(--bpm-ui-icon-button-size); height: var(--bpm-ui-icon-button-size);
+    min-width: var(--bpm-ui-icon-button-size); min-height: var(--bpm-ui-icon-button-size);
+    box-sizing: border-box;
+    padding: 0;
+    margin-inline-start: var(--bpm-tool-margin-start, 0);
 }
+.manager-container--mobile .manager-page-tools .manager-tool--mobile-more { --bpm-tool-margin-start: auto; }
 
 /* 当前栏目和固定全局入口保持同一行；Current-page selector shares a row with global controls. */
 .manager-container--mobile .bpm-mobile-header__top {
@@ -13229,15 +13241,34 @@ body.is-tablet .manager-container--mobile .manager-page-tools .setting-item-cont
 }
 
 /* 行内单选复用 BPM 菜单，仅省略字段标签；Compact selects share the BPM menu and interaction styles. */
+.manager-scope-select--compact,
+.ribbon-manager-state-menu {
+    /* 下拉菜单比普通控件再矮 4px，图标方格同步收窄；Compact menus sit 4px below the control height. */
+    --bpm-compact-select-size: calc(var(--bpm-control-size, var(--bpm-ui-control-size)) - 4px);
+}
 .manager-scope-select--compact {
-    display: inline-flex; flex: 0 1 auto; min-width: 0; max-width: 100%; height: var(--bpm-control-size);
+    display: inline-flex; flex: 0 1 auto; min-width: 0; max-width: 100%; height: var(--bpm-compact-select-size);
 }
 .manager-scope-select--compact > .manager-multiselect-filter > button.manager-multiselect-filter__trigger,
 .ribbon-manager-filter-group > .ribbon-manager-state-menu > button.manager-multiselect-filter__trigger {
-    height: 100%; min-height: 0; padding: 0 var(--size-4-2); margin: 0;
+    box-sizing: border-box;
+    height: 100%; min-height: 0; padding: 0; margin: 0; gap: 0;
     border: var(--bpm-scope-select-border, 1px solid var(--bpm-border)); border-radius: var(--bpm-radius-sm);
     background: var(--bpm-card); box-shadow: none;
 }
+/* 透明方格与控件等高，左右图形居中；Invisible square slots balance icons against the full control height. */
+:is(.manager-scope-select--compact > .manager-multiselect-filter, .ribbon-manager-state-menu) > button.manager-multiselect-filter__trigger > :is(.manager-scope-select__icon, .manager-multiselect-filter__chevron) {
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: var(--bpm-compact-select-size);
+    height: var(--bpm-compact-select-size);
+}
+/* 方格后再留约 6px，图标与标签不贴在一起；Keep about 6px between the icon slot and label. */
+:is(.manager-scope-select--compact > .manager-multiselect-filter, .ribbon-manager-state-menu) > button.manager-multiselect-filter__trigger > .manager-scope-select__icon { margin-inline-end: calc(var(--size-4-1) + 2px); }
+:is(.manager-scope-select--compact > .manager-multiselect-filter, .ribbon-manager-state-menu) > button.manager-multiselect-filter__trigger > :is(.manager-multiselect-filter__count, .manager-multiselect-filter__chevron) { margin-inline-start: var(--size-4-1); }
+:is(.manager-scope-select--compact > .manager-multiselect-filter, .ribbon-manager-state-menu) > button.manager-multiselect-filter__trigger > .manager-multiselect-filter__summary:first-child,
+:is(.manager-scope-select--compact > .manager-multiselect-filter, .ribbon-manager-state-menu) > button.manager-multiselect-filter__trigger > .manager-scope-select__icon[hidden] + .manager-multiselect-filter__summary { padding-inline-start: var(--size-4-2); }
 .manager-scope-select--compact > .manager-multiselect-filter > button.manager-multiselect-filter__trigger:hover,
 .manager-scope-select--compact > .manager-multiselect-filter > button.manager-multiselect-filter__trigger:focus-visible,
 .ribbon-manager-filter-group > .ribbon-manager-state-menu > button.manager-multiselect-filter__trigger:hover,
@@ -13249,7 +13280,7 @@ body.is-tablet .manager-container--mobile .manager-page-tools .setting-item-cont
     position: fixed; right: auto; max-height: min(280px, 48vh); overscroll-behavior: contain; z-index: var(--layer-modal);
 }
 .ribbon-manager-modal .ribbon-manager-group-select { flex: 0 1 8rem; width: 8rem; }
-body.is-mobile .manager-scope-select--compact { height: var(--bpm-touch-size); }
+body.is-mobile .manager-scope-select--compact { height: var(--bpm-compact-select-size); }
 /* 序号输入在移动端沿用组件尺寸、零内边距与主题样式；Order inputs retain component sizing and zero padding on mobile. */
 body.is-mobile .ribbon-manager-modal .ribbon-manager-item-order {
     flex-basis: var(--bpm-touch-size); width: var(--bpm-touch-size); height: var(--bpm-touch-size);
@@ -13364,10 +13395,6 @@ body .manager-setting__tabs .manager-setting__tabs-item[data-state="active"] .ma
     min-width: calc(var(--size-4-6) * 2);
     max-width: 10rem;
 }
-.manager-setting__navigation .manager-setting__page-select > .manager-multiselect-filter > button.manager-multiselect-filter__trigger {
-    gap: var(--size-4-1);
-    padding: 0 var(--size-4-1);
-}
 .manager-setting-navigation__entry.setting-item { gap: var(--size-4-3); }
 .manager-setting-navigation__icon {
     display: inline-flex;
@@ -13460,8 +13487,8 @@ body .manager-setting__tabs .manager-setting__tabs-item[data-state="active"] .ma
 }
 
 .manager-container .manager-global-tools > .manager-global-tool svg {
-    width: 18px;
-    height: 18px;
+    width: var(--bpm-global-tool-icon-size);
+    height: var(--bpm-global-tool-icon-size);
 }
 
 /* 设置分页：悬停与选中同样式，带过渡 */
@@ -13979,9 +14006,9 @@ body.is-phone .manager-container.manager-container--main.manager-container--mobi
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    width: var(--bpm-personalize-tool-width, var(--input-height));
-    height: var(--input-height);
-    min-width: var(--input-height);
+    width: var(--bpm-personalize-tool-width, var(--bpm-personalize-tool-size, var(--input-height)));
+    height: var(--bpm-personalize-tool-size, var(--input-height));
+    min-width: var(--bpm-personalize-tool-size, var(--input-height));
     max-width: 100%;
     gap: var(--size-4-1);
     padding: var(--bpm-personalize-tool-padding, 0);
@@ -14130,7 +14157,7 @@ body .manager-personalize .manager-personalize__feature.is-active,
 .manager-setting-search__field .manager-setting-search__input {
     width: 100%;
     min-width: 0;
-    height: var(--bpm-setting-search-size);
+    height: var(--bpm-setting-input-height, var(--bpm-setting-search-size));
 }
 .manager-setting-search__close {
     display: inline-flex;
@@ -14599,8 +14626,6 @@ button.manager-setting-search__result:hover { background: var(--background-modif
 }
 
 .ribbon-manager-filter-group > .manager-scope-select--compact .manager-multiselect-filter__trigger {
-    height: var(--bpm-ribbon-filter-height, 30px);
-    padding-inline: 10px;
     border: var(--bpm-ribbon-filter-border, 0);
     background: var(--bpm-ribbon-filter-background, transparent);
     color: var(--text-muted);
@@ -14614,7 +14639,6 @@ button.manager-setting-search__result:hover { background: var(--background-modif
 .ribbon-manager-state-menu { display: none; }
 /* 手机端状态与分组并排，摘要可收缩；Touch filters share one row with shrinkable labels. */
 :is(.manager-container--mobile, body.is-mobile) .ribbon-manager-filter-bar {
-    --bpm-ribbon-filter-height: 100%;
     --bpm-ribbon-filter-border: 1px solid var(--bpm-border);
     --bpm-ribbon-filter-background: var(--bpm-card);
     --bpm-ribbon-search-width: 100%;
@@ -14640,8 +14664,8 @@ button.manager-setting-search__result:hover { background: var(--background-modif
     width: 0;
     min-width: 0;
     max-width: 100%;
-    height: var(--bpm-ui-touch-size);
-    min-height: var(--bpm-ui-touch-size);
+    height: var(--bpm-compact-select-size);
+    min-height: var(--bpm-compact-select-size);
 }
 :is(.manager-container--mobile, body.is-mobile) .ribbon-manager-filter-right {
     flex: 1 1 auto;
@@ -15129,12 +15153,8 @@ body .manager-container.manager-container--main .manager-overview-heading.bpm-re
     width: var(--bpm-toolbar-menu-width, auto);
     max-width: var(--bpm-toolbar-overview-max-width, calc(100% - 4 * (var(--bpm-touch-size) + var(--size-2-2))));
 }
-.manager-overview-stats-menu.manager-scope-select--compact > .manager-multiselect-filter > button.manager-multiselect-filter__trigger {
-    gap: var(--size-2-2);
-    padding-inline: var(--size-2-2);
-}
 
-/* 移动端工具栏菜单各占一行，操作组从下一行开始；Mobile menus own complete rows before page actions. */
+/* 手机菜单各占一行，平板菜单按内容收窄；Phone menus fill rows, tablet menus keep their intrinsic width. */
 .manager-container--mobile .bpm-responsive-toolbar {
     --bpm-toolbar-wrap: wrap;
     --bpm-toolbar-menu-flex: 0 0 auto;
@@ -15144,16 +15164,97 @@ body .manager-container.manager-container--main .manager-overview-heading.bpm-re
 }
 :is(.manager-container--mobile, body.is-mobile) :is(.manager-overview-stats-menu, .manager-repo-page__navigation-menu, .manager-repo-page__summary-menu, .manager-appearance-navigation-menu) {
     box-sizing: border-box;
-    flex: 0 0 auto;
-    width: 100%;
+    flex: var(--bpm-toolbar-menu-flex, 0 0 auto);
+    width: var(--bpm-toolbar-menu-width, 100%);
     min-width: 0;
     max-width: 100%;
-    height: var(--bpm-ui-touch-size);
-    min-height: var(--bpm-ui-touch-size);
+    height: var(--bpm-compact-select-size);
+    min-height: var(--bpm-compact-select-size);
 }
 .manager-container--mobile .manager-appearance-navigation-menu { display: inline-flex; }
 .manager-container--mobile .manager-theme-overview .manager-appearance-tabs { display: none; }
-body.is-mobile .manager-setting__topbar { --bpm-setting-search-size: var(--bpm-ui-touch-size); }
+body.is-mobile .manager-setting__topbar {
+    --bpm-setting-search-size: var(--bpm-ui-icon-button-size);
+    --bpm-setting-input-height: var(--bpm-ui-touch-size);
+}
+body.is-mobile .manager-setting__topbar :is(.manager-setting-search__trigger, .manager-setting-search__close, .bpm-settings-save) svg {
+    width: var(--bpm-ui-icon-size);
+    height: var(--bpm-ui-icon-size);
+}
+body.is-mobile .manager-personalize { --bpm-personalize-tool-size: var(--bpm-ui-icon-button-size); }
+body.is-mobile :is(.manager-catalog-card__actions button, .manager-delete__close-button.clickable-icon, .manager-note__close-button.clickable-icon, .manager-bulk-status-confirm__close.clickable-icon) {
+    box-sizing: border-box;
+    width: var(--bpm-ui-icon-button-size);
+    height: var(--bpm-ui-icon-button-size);
+    min-width: var(--bpm-ui-icon-button-size);
+    min-height: var(--bpm-ui-icon-button-size);
+    inline-size: var(--bpm-ui-icon-button-size);
+    min-inline-size: var(--bpm-ui-icon-button-size);
+    block-size: var(--bpm-ui-icon-button-size);
+    padding: 0;
+}
+body.is-mobile .ribbon-manager-modal :is(.ribbon-manager-control-visibility, .ribbon-manager-control-drag) {
+    box-sizing: border-box;
+    flex-basis: var(--bpm-ui-icon-button-size);
+    width: var(--bpm-ui-icon-button-size);
+    height: var(--bpm-ui-icon-button-size);
+    min-width: var(--bpm-ui-icon-button-size);
+    min-height: var(--bpm-ui-icon-button-size);
+}
+
+body.is-tablet .manager-container--mobile,
+body.is-tablet .manager-container--mobile .bpm-responsive-toolbar {
+    --bpm-toolbar-wrap: nowrap;
+    --bpm-toolbar-menu-flex: 0 1 auto;
+    --bpm-toolbar-menu-width: auto;
+}
+body.is-tablet .manager-container.manager-container--main.manager-container--mobile :is(.bpm-responsive-toolbar, .manager-appearance-toolbar) {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    justify-content: space-between;
+}
+/* 平板恢复左右两个实体分组，space-between 不会把每个按钮分散；Keep two real groups instead of spacing every action apart. */
+body.is-tablet .manager-container.manager-container--main.manager-container--mobile .manager-overview-heading.bpm-responsive-toolbar:not(.is-measuring) :is(.manager-food, .manager-page-tools, .manager-bar__action, .setting-item-control) {
+    display: flex;
+    flex: 0 1 auto;
+    flex-wrap: nowrap;
+    width: auto;
+}
+body.is-tablet .manager-container--mobile :is(.manager-overview-heading, .manager-appearance-toolbar) .manager-page-tools {
+    margin-inline-start: auto;
+    overflow: visible;
+}
+body.is-tablet .manager-container--mobile :is(.manager-overview-heading, .manager-appearance-toolbar) .manager-bar__action {
+    min-height: 0;
+    padding: 0;
+}
+body.is-tablet .manager-setting__topbar { justify-content: space-between; }
+
+/* 平板 Ribbon 筛选与搜索同行，手机继续使用满宽搜索；Tablet filters share a row with search without changing phone sizing. */
+body.is-tablet :is(.manager-container--mobile, .ribbon-manager-modal) .ribbon-manager-filter-bar {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    justify-content: space-between;
+}
+body.is-tablet :is(.manager-container--mobile, .ribbon-manager-modal) .ribbon-manager-filter-group {
+    flex: 0 1 auto;
+    width: auto;
+}
+body.is-tablet :is(.manager-container--mobile, .ribbon-manager-modal) .ribbon-manager-filter-group > :is(.ribbon-manager-state-menu, .manager-scope-select--compact) {
+    flex: 0 1 auto;
+    width: auto;
+}
+body.is-tablet :is(.manager-container--mobile, .ribbon-manager-modal) .ribbon-manager-filter-right {
+    flex: 1 1 12rem;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    width: auto;
+    margin-inline-start: auto;
+}
+body.is-tablet :is(.manager-container--mobile, .ribbon-manager-modal) .ribbon-manager-grouped-toggle { width: auto; }
 
 /* 商店远程文档继承原生 Markdown 样式 / Store documents inherit native Markdown styles. */
 .manager-catalog-document {
@@ -15657,3 +15758,37 @@ body.theme-dark :is(.manager-setting__tabs, .manager-toolbar__tabs, .manager-rep
     width: max-content; max-width: none; inset-inline-start: 0; inset-block-start: 0;
 }
 .manager-toolbar.bpm-responsive-tabs > .bpm-responsive-tabs__select { grid-column: 2; grid-row: 1; justify-self: center; }
+
+/* Ribbon 嵌入页：搜索框与设备作用域紧贴，搜索框圆角跟随 BPM 组件；Ribbon search meets the device scope and shares the BPM radius. */
+.ribbon-manager-modal input.ribbon-search-input { border-radius: var(--bpm-radius-sm); }
+.manager-container.manager-container--main .manager-overview-heading[data-page="ribbon"] { padding-bottom: 0; }
+.manager-container .manager-overview-heading[data-page="ribbon"] .ribbon-manager-filter-bar { margin-bottom: 0; }
+.manager-container .manager-ribbon-scope { margin: 0; }
+
+/* 外观总览四项统计等宽，避免较长主题名把最后一格撑宽；Appearance summary chips share equal widths. */
+.manager-food.manager-appearance-stats { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; }
+.manager-food.manager-appearance-stats .bpm-stat-chip { min-width: 0; }
+.manager-food.manager-appearance-stats .bpm-stat-chip__value { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* 桌面端五个筛选字段保持一行；Five desktop filter fields stay on one row. */
+.manager-container:not(.manager-container--mobile) .manager-filter-control-group { display: flex; flex-wrap: nowrap; align-items: stretch; gap: 8px; }
+.manager-container:not(.manager-container--mobile) .manager-filter-control-group > .manager-filter-field { flex: 1 1 0; min-width: 0; max-width: none; }
+.manager-container:not(.manager-container--mobile) .manager-filter-control-group > .manager-filter-field--sort { flex: 0 1 11rem; }
+/* 筛选字段的图标+标签可作为设置入口；The filter label can open its settings. */
+.manager-filter-field__label--clickable { cursor: pointer; }
+.manager-filter-field__label--clickable:hover,
+.manager-filter-field__label--clickable:focus-visible { color: var(--text-accent); background: var(--background-modifier-hover); outline: none; }
+/* 多选菜单底部的设置跳转；Settings jump at the bottom of a multi-select menu. */
+.manager-multiselect-filter__separator { height: 1px; margin: 4px 0; background: var(--background-modifier-border); }
+.manager-multiselect-filter__settings { color: var(--text-muted); }
+.manager-multiselect-filter__settings:hover { color: var(--text-normal); }
+
+/* 设置页使用主题主背景，避免原生灰色面板与纯黑背景割裂；Settings use the theme primary background instead of a gray sheet. */
+.manager-setting__container { background: var(--background-primary); }
+.manager-setting__container :is(.setting-items, .setting-group-search) { background: transparent; }
+
+/* BPM 设置页根容器跟随主背景，原生灰色 setting 面板透明；Scope the BPM settings background to the primary theme surface. */
+body .vertical-tab-content.manager-setting__root,
+body.is-tablet .vertical-tab-content.manager-setting__root,
+body.is-mobile .modal.mod-settings .vertical-tab-content.manager-setting__root { background-color: var(--background-primary); }
+.manager-setting__root :is(.setting-items, .setting-group-search) { background-color: transparent; }

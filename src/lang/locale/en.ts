@@ -1154,6 +1154,8 @@ export default {
     筛选_分组_标签: 'Group filter',
     筛选_标签_标签: 'Tag filter',
     筛选_延迟_标签: 'Delay filter',
+    筛选_跳转到设置: 'Go to settings',
+    筛选_跳转到设置_说明: 'Open {target} settings',
     筛选_搜索插件_标签: 'Search plugins',
     筛选_状态取反_标签: 'Include or exclude status',
     筛选_分组取反_标签: 'Include or exclude group',

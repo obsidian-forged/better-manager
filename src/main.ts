@@ -989,6 +989,11 @@ export default class Manager extends Plugin {
         this.refreshSettingsSaveState();
     }
 
+    /** 筛选下拉跳转到对应设置分类；Open the matching settings category from a filter dropdown. */
+    public openSettingsCategory(page: 'group' | 'tag' | 'delay'): void {
+        this.settingsTab?.openFilterPage(page);
+    }
+
     public openConfigConflict(): void {
         if (this.isUnloaded || !this.configProtection?.protection?.conflict) return;
         if (this.configConflictModal) {
@@ -1039,7 +1044,7 @@ export default class Manager extends Plugin {
         if (first) this.configProtection?.begin();
     }
 
-    public endSettingsEditing(editor: object): void {
+    public endSettingsEditing(editor: object, options: { allowAutomaticSave?: boolean } = {}): void {
         if (!this.settingsEditors.delete(editor)) return;
         const epoch = ++this.settingsEditorEpoch;
         if (this.settingsEditors.size || this.isUnloaded) return;
@@ -1053,7 +1058,7 @@ export default class Manager extends Plugin {
         }).then(async () => {
             // Only the opted-in close action may publish. Reopening invalidates the action,
             // including a reopen/close cycle while an earlier commit is still awaiting I/O.
-            if (!stillClosed() || this.settings.MANUAL_CONFIG_SAVE !== false || !this.hasUnsavedSettings) return;
+            if (options.allowAutomaticSave === false || !stillClosed() || this.settings.MANUAL_CONFIG_SAVE !== false || !this.hasUnsavedSettings) return;
             await this.publishPendingSettings(() => stillClosed() && this.settings.MANUAL_CONFIG_SAVE === false, false);
         }).catch(error => {
             this.reportError("Retaining the settings draft failed", error);

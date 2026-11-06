@@ -131,6 +131,8 @@ class ManagerSettingTab extends PluginSettingTab {
         super(app, manager);
         this.manager = manager;
         this.app = app;
+        // 只修饰 BPM 设置页根容器，避免原生灰色面板与黑底割裂；Scope the background fix to BPM settings.
+        this.containerEl.addClass('manager-setting__root');
         if (requireApiVersion('1.11.0')) this.icon = 'settings';
         manager.register(() => { this.clearRestoreFrames(); this.closeObserver?.disconnect(); this.syncNoticeView?.destroy(); this.settingsSaveButton?.destroy(); this.navigation?.close(); this.navigationObserver?.disconnect(); });
     }
@@ -259,6 +261,15 @@ class ManagerSettingTab extends PluginSettingTab {
         this.scrollbars = new FloatingScrollbars(containerEl);
         restore();
     }
+    /** 从管理器筛选下拉直接打开分组/标签/延迟设置；Open a filter-related settings category. */
+    public openFilterPage(page: 'group' | 'tag' | 'delay'): void {
+        const key = page === 'group' ? '设置_分组设置_前缀' : page === 'tag' ? '设置_标签设置_前缀' : '设置_延迟设置_前缀';
+        const index = this.searchPages().findIndex(item => item.key === key);
+        if (index < 0) return;
+        this.activeTabIndex = index;
+        this.renderSettings();
+    }
+
     private searchPages(): SettingsSearchPage[] {
         const pages: Array<{ key: string; descriptionKey: string; icon: string; view: new (tab: ManagerSettingTab, container?: HTMLElement) => BaseSetting }> = [
             { key: '设置_基础设置_前缀', descriptionKey: '设置_导航_基础配置描述', icon: 'settings-2', view: ManagerBasis },
@@ -268,7 +279,7 @@ class ManagerSettingTab extends PluginSettingTab {
             { key: '设置_标签设置_前缀', descriptionKey: '设置_导航_标签管理描述', icon: 'tags', view: ManagerTag },
         ];
         if (this.manager.settings.DELAY) pages.push({ key: '设置_延迟设置_前缀', descriptionKey: '设置_导航_延迟启动描述', icon: 'timer', view: ManagerDelay });
-        return pages.map(page => ({ label: this.manager.translator.t(page.key), description: this.manager.translator.t(page.descriptionKey), icon: page.icon, render: container => new page.view(this, container).render() }));
+        return pages.map(page => ({ key: page.key, label: this.manager.translator.t(page.key), description: this.manager.translator.t(page.descriptionKey), icon: page.icon, render: container => new page.view(this, container).render() }));
     }
     basisDisplay() { this.contentEl.empty(); new ManagerBasis(this).render(); }
     mainPageDisplay() { this.contentEl.empty(); new ManagerMainPage(this).render(); }

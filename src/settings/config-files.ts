@@ -363,6 +363,12 @@ export class ConfigFiles implements ConfigProtectionIO {
         await this.privateJson(`states/${snapshot.id}.json`, state, true);
         this.states.set(snapshot.id, state);
         if (!stillClosed()) throw new ConfigEditorReopened();
+        // An equivalent remote revision may be accepted without presenting a conflict. Its
+        // exact bytes still form the transaction's before-image and must survive interruption.
+        const before = this.states.get(current.id);
+        if (!before) throw new Error('The BPM transaction baseline is unavailable');
+        await this.privateJson(`states/${current.id}.json`, before, true);
+        if (!stillClosed()) throw new ConfigEditorReopened();
         // Keep a prepared copy before touching any public file. The primary marker is written last.
         const transaction = await this.hash(settingsFingerprint({ before: current.id, after: snapshot.id }));
         await this.privateJson(`transactions/${transaction}.json`, { owner: this.owner, before: current.id, after: snapshot.id }, true);

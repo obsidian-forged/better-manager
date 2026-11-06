@@ -70,7 +70,7 @@ test('personalization icon actions avoid native full-width buttons and column-on
             control=fixtureElement('div','setting-item-control',row),
             button=fixtureElement('button','clickable-icon manager-personalize__tool',control),
             style=componentStyles(native+'\n'+css,{phone});
-        assert.equal(style(button,'width'),phone?'44px':'34px');
+        assert.equal(style(button,'width'),phone?'32px':'34px');
         assert.equal(style(button,'padding'),'0');
         assert.notEqual(style(row,'flex-direction'),'column');
         assert.notEqual(style(control,'flex-direction'),'column');

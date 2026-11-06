@@ -17,6 +17,8 @@ export interface MultiSelectFilterOptions {
     icon?: string;
     collapseAllSelected?: boolean;
     fixed?: boolean;
+    /** 菜单底部的设置跳转；A settings jump appended after the options. */
+    settingsAction?: { label: string; icon?: string; onClick: () => void };
 }
 
 /** 共用多选筛选菜单；Shared multi-select with owner-window positioning and touch-safe selection. */
@@ -159,6 +161,20 @@ export class MultiSelectFilter {
                 // 不重建选项，键盘焦点与滚动位置保持不变；Keep option focus and scroll stable during multi-selection.
                 this.updateSelection();
                 this.config.onChange([...this.values]);
+            });
+        }
+        if (this.config.settingsAction) {
+            this.menuEl.createDiv('manager-multiselect-filter__separator');
+            const settings = this.menuEl.createEl('button', {
+                cls: 'manager-multiselect-filter__option manager-multiselect-filter__settings',
+                attr: { type: 'button', role: 'menuitem' },
+            });
+            setIcon(settings.createSpan('manager-multiselect-filter__check manager-scope-select__option-icon'),
+                this.config.settingsAction.icon ?? 'settings-2');
+            settings.createSpan({ cls: 'manager-multiselect-filter__option-label', text: this.config.settingsAction.label });
+            settings.addEventListener('click', () => {
+                this.close();
+                this.config.settingsAction?.onClick();
             });
         }
     }

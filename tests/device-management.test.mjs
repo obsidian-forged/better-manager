@@ -237,6 +237,20 @@ test('optional close saving waits for the last editor and retains the explicit S
     assert.equal(await manager.savePendingSettings(), true);
 });
 
+test('declining the close prompt suppresses only this close-save action and retains the draft', async () => {
+    const { adapter, manager, path } = await closeSaveFixture(), editor = {};
+    const original = adapter.files[path];
+    manager.beginSettingsEditing(editor);
+    manager.settings.RECENT_INSTALL_DAYS = 19; await manager.saveSettings({ captureDevice: false });
+    manager.endSettingsEditing(editor, { allowAutomaticSave: false }); await drainEditorClose(manager);
+    assert.equal(adapter.files[path], original);
+    assert.equal(manager.hasUnsavedSettings, true);
+    const reopened = {};
+    manager.beginSettingsEditing(reopened); manager.endSettingsEditing(reopened); await drainEditorClose(manager);
+    assert.equal(JSON.parse(adapter.files[path]).RECENT_INSTALL_DAYS, 19);
+    assert.equal(manager.hasUnsavedSettings, false);
+});
+
 test('optional close saving preserves both conflicting versions and never adopts external settings', async () => {
     const { adapter, manager, path, conflictDialogOpens } = await closeSaveFixture(), editor = {};
     manager.beginSettingsEditing(editor);

@@ -4,6 +4,7 @@ import { TaskCenterView } from '../ui/task-center-view';
 import { protectionText } from '../settings/protection-text';
 import { SyncNoticeView } from '../ui/sync-notice-view';
 import { SettingsSaveButton } from '../ui/settings-save-button';
+import { SettingsCloseController } from '../ui/settings-close-controller';
 import { ConfigConflictMarkers } from '../settings/conflict-markers';
 import { conflictFeaturePages, ConflictFeaturePage } from '../settings/conflict-features';
 import { isToolInPage, ToolScope } from '../ui/tool-visibility';
@@ -418,6 +419,8 @@ export class ManagerModal extends Modal {
     private conflictMarkerFrame?: { view: Window; id: number };
     private readonly renderFrames = new Set<{ view: Window; id: number; finish: () => void }>();
     private opened = false;
+    private readonly settingsClose: SettingsCloseController;
+    private allowAutomaticSaveOnClose = true;
     private shortcutDocument?: Document;
     private hiddenDragDocument?: Document;
     private readonly onShortcut = (event: KeyboardEvent): void => {
@@ -1040,11 +1043,12 @@ export class ManagerModal extends Modal {
         allValue: string,
         allLabel: string,
         ariaLabel: string,
-        onChange: (values: string[]) => void
+        onChange: (values: string[]) => void,
+        settingsAction?: { label: string; icon?: string; onClick: () => void }
     ): MultiSelectFilterControl {
         const control = new MultiSelectFilter(container, {
             options: options.map(([value, label]) => ({ value, label })),
-            values, allValue, allLabel, label: ariaLabel, onChange,
+            values, allValue, allLabel, label: ariaLabel, onChange, settingsAction,
         });
         return {
             rootEl: control.rootEl,
@@ -1123,11 +1127,18 @@ export class ManagerModal extends Modal {
             const operatorControl = createOperatorToggle(container, getOperator(), operatorLabel, setOperator);
             if (type === "status") this.statusOperatorControl = operatorControl;
             const allLabel = options.find(([value]) => value === allValue)?.[1] || t("筛选_全部_描述");
+            const settingsLabel = t("筛选_跳转到设置");
+            const settingsAction = type === "status" ? undefined : {
+                label: settingsLabel,
+                icon: "settings-2",
+                onClick: () => this.openSettingsTab(this.manager.manifest.id, type),
+            };
             const control = this.createMultiSelectFilter(container, options, getValues(), allValue, allLabel, ariaLabel, values => {
                 setValues(values);
                 refreshLayout();
                 this.action(async () => { await this.reloadShowData(); })();
-            });
+            }, settingsAction);
+            if (type !== "status") this.bindFilterFieldSettings(container, type);
             if (type === "status") this.statusMultiSelect = control;
             else if (type === "group") this.groupMultiSelect = control;
             else if (type === "tag") this.tagMultiSelect = control;
@@ -1145,6 +1156,31 @@ export class ManagerModal extends Modal {
             createFilter("delay", controls.delay, this.getDelayFilterOptions(allLabel, true), "", t("筛选_延迟_标签"), t("筛选_延迟取反_标签"),
                 () => this.getDelayFilterValues(), () => this.getDelayFilterOperator(), values => this.setDelayFilterValues(values), value => this.setDelayFilterOperator(value));
         }
+    }
+
+    /** 图标+标签本身作为设置入口；The filter label doubles as a settings shortcut. */
+    private bindFilterFieldSettings(container: HTMLElement, page: 'group' | 'tag' | 'delay'): void {
+        const field = container.closest<HTMLElement>('.manager-filter-field');
+        const label = field?.querySelector<HTMLElement>('.manager-filter-field__label');
+        if (!label) return;
+        const t = (key: string, vars?: Record<string, string>) => this.manager.translator.t(key, vars);
+        const target = page === 'group' ? t('通用_分组_文本') : page === 'tag' ? t('通用_标签_文本') : t('通用_延迟_文本');
+        const hint = t('筛选_跳转到设置_说明', { target });
+        label.addClass('manager-filter-field__label--clickable');
+        label.setAttribute('role', 'button');
+        label.setAttribute('tabindex', '0');
+        label.setAttribute('title', hint);
+        label.setAttribute('aria-label', hint);
+        const open = (event?: Event) => {
+            event?.preventDefault();
+            event?.stopPropagation();
+            this.openSettingsTab(this.manager.manifest.id, page);
+        };
+        label.addEventListener('click', open);
+        label.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            open(event);
+        });
     }
 
     private openSupportQQGroup() {
@@ -1885,11 +1921,12 @@ export class ManagerModal extends Modal {
         tab.searchComponent.inputEl.blur();
     }
 
-    private openSettingsTab(tabId: string) {
+    private openSettingsTab(tabId: string, page?: 'group' | 'tag' | 'delay') {
         // 打开插件设置只读展示本机配置，不属于外域预设的写入操作。 / Opening settings is read-only and stays available in a foreign preset.
         this.action(async () => {
             await this.appSetting.open();
             await this.appSetting.openTabById(tabId);
+            if (page) this.manager.openSettingsCategory(page);
         })();
     }
 
@@ -2441,6 +2478,26 @@ export class ManagerModal extends Modal {
         this.appPlugins = (this.app as ObsidianAppWithInternals).plugins;
         this.manager = manager;
         this.settings = manager.settings;
+        this.settingsClose = new SettingsCloseController(manager, {
+            isOpen: () => this.opened,
+            prepareDraft: async () => {
+                if (this.searchSaveTimer === undefined) return;
+                window.clearTimeout(this.searchSaveTimer);
+                this.searchSaveTimer = undefined;
+                await this.manager.saveSettings();
+            },
+            confirmSave: () => confirmWithModal(this.app, this.manager, {
+                message: protectionText(this.manager, 'closeUnsaved'),
+                confirmText: protectionText(this.manager, 'saveAndClose'),
+                cancelText: protectionText(this.manager, 'closeWithoutSaving'),
+                tone: 'default',
+            }),
+            saving: () => { new Notice(protectionText(this.manager, 'saving')); },
+            close: allowAutomaticSave => {
+                this.allowAutomaticSaveOnClose = allowAutomaticSave;
+                this.close();
+            },
+        });
         this.basePath = normalizePath(`${this.app.vault.configDir}`);
         // 首次启动运行下 避免有新加入的插件
         manager.synchronizePlugins(
@@ -2765,7 +2822,7 @@ export class ManagerModal extends Modal {
         more.dataset.bpmFeaturePage = 'settings';
         this.taskCenterView = new TaskCenterView(this.manager, parent, more);
         this.refreshConfigConflict();
-        const close = createIconTool('x', t('通用_关闭窗口'), () => this.close());
+        const close = createIconTool('x', t('通用_关闭窗口'), this.action(() => this.settingsClose.request()));
         close.addClass('manager-modal-close');
     }
 
@@ -3027,7 +3084,9 @@ export class ManagerModal extends Modal {
         bar.querySelector('.manager-food')?.remove();
         bar.querySelector('.manager-page-tools')?.remove();
         if (this.footEl) bar.appendChild(this.footEl);
-        if (this.pageToolsEl) bar.appendChild(this.pageToolsEl);
+        const toolsHost = Platform.isTablet && this.activePage === 'themes'
+            ? this.pageEl.querySelector<HTMLElement>('.manager-appearance-toolbar') ?? bar : bar;
+        if (this.pageToolsEl) toolsHost.appendChild(this.pageToolsEl);
         this.syncToolVisibility();
         this.observeOverviewToolbar(bar);
     }
@@ -4646,6 +4705,7 @@ export class ManagerModal extends Modal {
         const activeStatusFilters = this.getStatusFilterValues();
 
         this.footEl.empty();
+        this.footEl.removeClass("manager-appearance-stats");
         const statItems: Array<{ cls: string; icon: string; label: string; value: number; filter: StatusFilterValue }> = [
             { cls: "bpm-stat-chip--total", icon: "layout-grid", label: totalLabel, value: totalCount, filter: "all" },
             { cls: "bpm-stat-chip--enabled", icon: "circle-check", label: enabledLabel, value: enabledCount, filter: "enabled" },
@@ -5733,6 +5793,7 @@ export class ManagerModal extends Modal {
         const trackedCount = themes.filter((theme) => Boolean(theme.repo || theme.source)).length;
         const enabledSnippetCount = snippets.filter((snippet) => snippet.enabled).length;
         this.footEl.empty();
+        this.footEl.addClass("manager-appearance-stats");
         const t = (key: string, vars?: Record<string, string | number | boolean | null | undefined>) => this.manager.translator.t(key, vars);
         [
             { cls: "bpm-stat-chip--total", icon: "palette", label: t("外观总览_统计_主题"), value: themes.length },
@@ -5844,6 +5905,7 @@ export class ManagerModal extends Modal {
         if (toolEnabled(this.settings, 'appearanceProfiles')) createAppearanceTab("profiles", "layers-3", t("外观总览_分区_外观方案"), visibleProfiles.length);
         createAppearanceTab("themes", "palette", t("外观总览_分区_主题"), visibleThemes.length);
         createAppearanceTab("snippets", "file-code-2", t("外观总览_分区_CSS片段"), visibleSnippets.length);
+        if (Platform.isTablet) this.mountOverviewBar();
         const body = workspace.createDiv("manager-repo-page__body manager-appearance-body");
 
         if (this.appearanceView === "profiles") {
@@ -8676,6 +8738,7 @@ export class ManagerModal extends Modal {
 
     public onOpen(): void {
         this.opened = true;
+        this.allowAutomaticSaveOnClose = true;
         this.manager.beginSettingsEditing(this);
         this.conflictMarkers = new ConfigConflictMarkers(this.manager, this.modalEl, (row, value) => this.previewConflictPlugin(row, value));
         this.conflictObserver = new MutationObserver(() => {
@@ -8765,7 +8828,8 @@ export class ManagerModal extends Modal {
         this.catalogModal = undefined;
         this.clearScheduledSearchWork();
         // 关闭时结束外域投影，避免预览中的其他预设值留在内存里。
-        void this.manager.devices.flushProjection().then(() => this.manager.endSettingsEditing(this))
+        const allowAutomaticSave = this.allowAutomaticSaveOnClose;
+        void this.manager.devices.flushProjection().then(() => this.manager.endSettingsEditing(this, { allowAutomaticSave }))
             .catch(error => this.manager.devices.report(error));
         if (this.settings.PERSISTENCE && this.settings.FILTER_SEARCH !== this.searchText) {
             this.settings.FILTER_SEARCH = this.searchText;

@@ -162,3 +162,15 @@ test('option refresh removes unavailable values and keeps current option focus w
     select.setValues([]); assert.equal(summary(), 'All');
     select.close();
 });
+
+test('settings action sits after the options and closes the menu before navigating', () => {
+    let opened = 0;
+    const { select, choices } = fixture({ settingsAction: { label: 'Go to settings', icon: 'settings-2', onClick: () => { opened++; } } });
+    select.buttonEl.dispatch('click');
+    const settings = choices().find(button => button.classes.has('manager-multiselect-filter__settings'));
+    assert.ok(settings);
+    assert.equal(settings.children.find(child => child.classes.has('manager-multiselect-filter__option-label'))?.text, 'Go to settings');
+    settings.dispatch('click');
+    assert.equal(opened, 1);
+    assert.equal(select.buttonEl.getAttribute('aria-expanded'), 'false');
+});

@@ -19,6 +19,7 @@ export interface ConfigPublication {
     status: 'saved' | 'noop' | 'conflict' | 'cancelled' | 'saved-pending';
     value?: ConfigRecord;
 }
+type ConfigComparisonPurpose = 'conflict' | 'publication';
 export interface ConfigProtectionIO {
     readShared(): Promise<ConfigSnapshot>;
     readHead(): Promise<ConfigSnapshot | undefined>;
@@ -30,6 +31,8 @@ export interface ConfigProtectionIO {
     readConflict?(): Promise<ConfigConflict | undefined>;
     clearConflict?(): Promise<void>;
     claimRepair?(key: string): Promise<boolean>;
+    sameContent?(value: ConfigRecord, files: Record<string, string | null>, base: ConfigSnapshot, incoming: ConfigSnapshot,
+        purpose: ConfigComparisonPurpose): Promise<boolean>;
     writeShared(value: ConfigSnapshot, files: Record<string, string | null>, stillClosed: () => boolean): Promise<void>;
 }
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -84,12 +87,28 @@ export class ConfigProtection {
     constructor(private readonly io: ConfigProtectionIO, private readonly device: string, private readonly hash: DigestText,
         private readonly changed: () => void = () => {}) {}
 
+    private async sameContent(value: ConfigRecord, files: Record<string, string | null>, base: ConfigSnapshot,
+        incoming: ConfigSnapshot, purpose: ConfigComparisonPurpose = 'conflict'): Promise<boolean> {
+        if (this.io.sameContent) return this.io.sameContent(value, files, base, incoming, purpose);
+        const digests = { ...base.files };
+        for (const [path, text] of Object.entries(files)) digests[path] = text === null ? null : await this.hash(text);
+        const snapshot = await createConfigRevision(value, this.device, [base], digests, this.hash);
+        return sameConfigContent(snapshot, incoming);
+    }
+
     async load(): Promise<ConfigRecord> {
         const disk = await this.io.readShared();
         this.head = await this.io.readHead() ?? disk;
         this.baseline = clone(this.head.value);
         this.draft = await this.io.readDraft();
         this.conflictValue = await this.io.readConflict?.();
+        // Old builds could preserve a raw-only conflict which the normalized editor cannot show.
+        // Clear only its private marker; receiving a synced file never authorizes a shared write.
+        if (this.conflictValue && await this.sameContent(this.conflictValue.local, this.conflictValue.localFiles,
+            this.conflictValue.base, this.conflictValue.incoming)) {
+            await this.io.clearConflict?.();
+            this.conflictValue = undefined;
+        }
         if (this.draft && !this.draft.userEdited && this.draft.base !== this.head.id) {
             await this.io.removeDraft(); this.draft = undefined;
         }
@@ -172,7 +191,7 @@ export class ConfigProtection {
             return clone(local);
         }
         const relation = compareConfig(this.head, disk);
-        if (relation === 'same') return clone(local);
+        if (relation === 'same' || await this.sameContent(this.head.value, {}, this.head, disk)) return clone(local);
         if (relation === 'ancestor') { this.incoming = disk; return clone(local); }
         if (relation === 'descendant') {
             if (this.editing && this.baseline && !equal(local, this.baseline) || this.draft?.userEdited) {
@@ -194,6 +213,16 @@ export class ConfigProtection {
 
     private async pause(incoming: ConfigSnapshot, local: ConfigRecord, reason: ConfigConflict['reason'],
         localFiles: Record<string, string | null> = this.stagedFiles): Promise<void> {
+        if (await this.sameContent(local, localFiles, this.head, incoming)) {
+            if (this.conflictValue) {
+                await this.io.clearConflict?.();
+                this.conflictValue = undefined;
+                this.resolution = undefined;
+                this.changed();
+            }
+            this.incoming = incoming;
+            return;
+        }
         const files = clone(localFiles);
         const id = await this.hash(settingsFingerprint({ base: this.head.id, local, incoming: incoming.id, files }));
         const conflict: ConfigConflict = { id, reason, base: clone(this.head), local: clone(local), incoming: clone(incoming), localFiles: files };
@@ -226,26 +255,33 @@ export class ConfigProtection {
         const disk = await this.io.readShared();
         if (!current()) return { status: 'cancelled' };
         const selected = clone(this.resolution?.value ?? value), files = this.pendingFiles;
-        const parents = this.resolution && this.conflictValue ? [this.head, this.conflictValue.incoming] : [this.head];
-        const next = await createConfigRevision(selected, this.device, parents, fileDigests, this.hash);
-        if (!current()) return { status: 'cancelled' };
-        if (sameConfigContent(next, disk)) {
+        const sameEffective = await this.sameContent(selected, files, this.head, disk);
+        if (sameEffective && await this.sameContent(selected, files, this.head, disk, 'publication')) {
+            if (!current()) return { status: 'cancelled' };
             await this.io.writeHead(disk);
             return this.complete(disk, current, 'noop');
         }
         const relation = compareConfig(this.head, disk);
-        if (this.conflictValue) {
-            const reviewed = compareConfig(this.conflictValue.incoming, disk) === 'same' || relation === 'same';
+        const sameBase = relation === 'same' || await this.sameContent(this.head.value, {}, this.head, disk);
+        if (!current()) return { status: 'cancelled' };
+        if (this.conflictValue && !sameEffective) {
+            const reviewed = compareConfig(this.conflictValue.incoming, disk) === 'same' || relation === 'same'
+                || await this.sameContent(this.conflictValue.incoming.value, {}, this.conflictValue.incoming, disk);
+            if (!current()) return { status: 'cancelled' };
             if (!reviewed) {
                 await this.pause(disk, selected, 'concurrent', files);
                 await this.stage(selected);
                 return { status: 'conflict' };
             }
             if (!this.resolution) return { status: 'conflict' };
-        } else if (relation !== 'same' && relation !== 'ancestor') {
+        } else if (!sameEffective && !sameBase && relation !== 'ancestor') {
             await this.pause(disk, selected, 'concurrent', files);
             return { status: 'conflict' };
         }
+        const parents = this.conflictValue && (this.resolution || sameEffective) ? [this.head, this.conflictValue.incoming,
+            ...(disk.id !== this.head.id && disk.id !== this.conflictValue.incoming.id ? [disk] : [])]
+            : (sameBase || sameEffective) && disk.id !== this.head.id ? [this.head, disk] : [this.head];
+        const next = await createConfigRevision(selected, this.device, parents, fileDigests, this.hash);
         // Re-saving an unchanged local version after an old sync replay restores its existing
         // revision. Repeated explicit clicks are authorized; there is no automatic repair loop.
         const target = !this.resolution && sameConfigContent(next, this.head) ? this.head : next;

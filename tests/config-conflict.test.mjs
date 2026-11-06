@@ -154,3 +154,89 @@ test('all-source actions wait for file copies and report no source when there ar
     const equal=new ConfigConflictChoices('same',{enabled:true},{enabled:true});equal.setFiles({},{});
     assert.equal(equal.allSide(),undefined);equal.selectAll('incoming');assert.equal(equal.allSide(),undefined);
 });
+
+test('known bookkeeping differences do not manufacture duplicate presets, settings or feature markers',()=>{
+    const local=config([{id:'p1',name:'Phone',updatedAt:1,plugins:{tasks:{enabled:true}}}]);
+    local.Plugins=[{id:'tasks',enabled:true,version:'1',latestVersion:'2',error:'old check'}];
+    local.DEVICE_MANAGEMENT.devices=[{id:'phone',name:'Phone',lastSeen:1,updatedAt:1}];
+    local.MIGRATION_VERSION='1';local._bpmRevision={id:'old'};
+    const remote=structuredClone(local);remote.Plugins[0].version='2';remote.Plugins[0].error='new check';
+    remote.DEVICE_MANAGEMENT.presets.phone[0].updatedAt=2;remote.DEVICE_MANAGEMENT.devices[0].lastSeen=2;
+    remote.DEVICE_MANAGEMENT.devices[0].updatedAt=2;remote.MIGRATION_VERSION='2';remote._bpmRevision={id:'new'};
+    const choices=new ConfigConflictChoices('bookkeeping',local,remote);choices.setFiles({},{});
+    assert.deepEqual(choices.sections,[]);assert.deepEqual([...conflictFeaturePages(choices)],[]);
+    assert.equal(choices.itemSide({kind:'field',id:'Plugins'}),undefined);
+    assert.equal(choices.itemSide({kind:'preset',id:'p1'}),undefined);
+});
+
+test('JSON formatting and device heartbeats are equivalent while deletion, invalid JSON and CSS remain real differences',()=>{
+    const path='data/devices/phone.json',local='{"id":"phone","name":"Phone","lastSeen":1,"updatedAt":1}',
+        reordered='{\n  "updatedAt": 2, "name": "Phone", "id": "phone", "lastSeen": 2, "_bpmRevision": {"id":"other"}\n}';
+    assert.deepEqual(conflictSections({}, {}, {[path]:local}, {[path]:reordered}),[]);
+    for(const [left,right] of [[local,null],['null',null],['invalid','"invalid"'],[local,local.replace('Phone','Renamed')]]) {
+        const sections=conflictSections({}, {}, {[path]:left}, {[path]:right});
+        assert.equal(sections.length,1);assert.ok(sections[0].differences.length>0);
+    }
+    assert.equal(conflictSections({}, {}, {'data/icons.css':'svg {}'}, {'data/icons.css':'svg { }'}).length,1);
+});
+
+test('same-named metadata inside source receipts or user settings is never ignored',()=>{
+    const local={PLUGIN_INSTALLATIONS:{tasks:{version:'1',source:{kind:'github',repo:'owner/old'}}},
+        custom:{version:'1',updatedAt:1,lastSeen:1},DEVICE_MANAGEMENT:{presets:{phone:[{id:'p1',name:'Phone',plugins:{tasks:{enabled:true,version:'custom'}}}]}}};
+    const remote=structuredClone(local);remote.PLUGIN_INSTALLATIONS.tasks.version='2';
+    remote.PLUGIN_INSTALLATIONS.tasks.source.repo='owner/new';remote.custom.updatedAt=2;
+    remote.DEVICE_MANAGEMENT.presets.phone[0].plugins.tasks.version='changed custom';
+    const choices=new ConfigConflictChoices('real-fields',local,remote);choices.setFiles({},{});
+    assert.deepEqual(choices.sections.map(section=>section.id),['preset:phone:p1','settings']);
+    assert.ok(choices.sections[1].differences.some(diff=>diff.path.join('.')==='PLUGIN_INSTALLATIONS.tasks.version'));
+    assert.deepEqual([...conflictFeaturePages(choices)].sort(),['install','plugins','settings']);
+});
+
+test('unfamiliar preset shapes and preset ordering remain visible and selectable',()=>{
+    for(const [local,remote] of [
+        [{DEVICE_MANAGEMENT:{presets:{phone:[{id:'a'},{id:'b'}],watch:[{id:'w',version:'one'}]}}},
+            {DEVICE_MANAGEMENT:{presets:{phone:[{id:'b'},{id:'a'}],watch:[{id:'w',version:'one'}]}}}],
+        [{DEVICE_MANAGEMENT:{presets:{watch:[{version:'one'}]}}}, {DEVICE_MANAGEMENT:{presets:{watch:[{version:'two'}]}}}],
+    ]) {
+        const choices=new ConfigConflictChoices('structure',local,remote);choices.setFiles({},{});
+        assert.ok(choices.sections.length>0);assert.ok(choices.sections.every(section=>section.differences.length>0));
+        choices.selectAll('incoming');assert.deepEqual(choices.result().value,remote);
+    }
+});
+
+test('preset structure differences remain selectable beside ordinary settings and preset content changes',()=>{
+    const local={LANGUAGE:'en',DEVICE_MANAGEMENT:{presets:{
+        phone:[{id:'a',name:'A'},{id:'b',name:'B'}],watch:[{id:'w',custom:'local'}],tablet:[{id:'same',name:'One'},{id:'same',name:'Two'}],
+    }}};
+    const remote=structuredClone(local);remote.LANGUAGE='fr';remote.DEVICE_MANAGEMENT.presets.phone.reverse();
+    remote.DEVICE_MANAGEMENT.presets.phone[1].name='Changed A';
+    remote.DEVICE_MANAGEMENT.presets.watch[0].custom='remote';remote.DEVICE_MANAGEMENT.presets.tablet[1].name='Changed Two';
+    const choices=new ConfigConflictChoices('combined',local,remote);choices.setFiles({},{});
+    assert.deepEqual(choices.sections.map(section=>section.id),['preset:phone:a','settings']);
+    assert.ok(choices.sections[1].differences.some(diff=>diff.path.join('.')==='DEVICE_MANAGEMENT.presets.phone'));
+    assert.ok(choices.sections[1].differences.some(diff=>diff.path.join('.')==='DEVICE_MANAGEMENT.presets.watch'));
+    choices.selectAll('incoming');assert.deepEqual(choices.result().value,remote);
+    choices.selectAll('local');assert.deepEqual(choices.result().value,local);
+});
+
+test('the supported legacy single-preset shape is equivalent to its array form without hiding custom state',()=>{
+    const local={DEVICE_MANAGEMENT:{presets:{phone:{id:'phone',name:'Phone',updatedAt:1,plugins:{updatedAt:{enabled:true}}}}}};
+    const remote={DEVICE_MANAGEMENT:{presets:{phone:[{id:'phone',name:'Phone',updatedAt:2,plugins:{updatedAt:{enabled:true}}}]}}};
+    assert.deepEqual(conflictSections(local,remote,{},{}),[]);
+    remote.DEVICE_MANAGEMENT.presets.phone[0].plugins.updatedAt.enabled=false;
+    const sections=conflictSections(local,remote,{},{});
+    assert.equal(sections.length,1);assert.equal(sections[0].id,'preset:phone:phone');
+    assert.ok(sections[0].differences.some(diff=>diff.path.join('.')==='plugins.updatedAt.enabled'));
+});
+
+test('preset additions and removals have one source section and all-source selection retains the source order',()=>{
+    const local=config([{id:'keep',name:'Keep'}]);
+    const remote=config([{id:'new',name:'New'},{id:'keep',name:'Keep'}]);
+    local.DEVICE_MANAGEMENT.defaultPresets.phone='keep';remote.DEVICE_MANAGEMENT.defaultPresets.phone='keep';
+    for (const [a,b] of [[local,remote],[remote,local]]) {
+        const choices=new ConfigConflictChoices('single-change',a,b);choices.setFiles({},{});
+        assert.deepEqual(choices.sections.map(section=>section.id),['preset:phone:new']);
+        choices.selectAll('incoming');assert.deepEqual(choices.result().value,b);
+        choices.selectAll('local');assert.deepEqual(choices.result().value,a);
+    }
+});

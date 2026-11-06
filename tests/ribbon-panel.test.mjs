@@ -312,7 +312,8 @@ test('global toolbar moves settings into More and shows explicit Save only in ma
     modal.refreshConfigConflict = () => {};
     modal.action = callback => () => { void callback(); };
     modal.openSettingsTab = id => actions.push(id);
-    modal.close = () => actions.push('close');
+    modal.close = () => { throw new Error('The close button must request confirmation before closing'); };
+    modal.settingsClose = { async request() { actions.push('request-close'); } };
     modal.renderGlobalTools(host);
     const getTools = () => host.children.filter(child => !child.classes.has('manager-sync-notice'));
     const tools = getTools();
@@ -357,7 +358,7 @@ test('global toolbar moves settings into More and shows explicit Save only in ma
     assert.equal(getTools()[1], more);
     assert.equal(getTools()[2], tools[2]);
     tools[2].listeners.click({});
-    assert.deepEqual(actions, ['save', 'bpm', 'save', 'close']);
+    assert.deepEqual(actions, ['save', 'bpm', 'save', 'request-close']);
     modal.taskCenterView.destroy();
     assert.equal(body.children.length, 0); assert.equal(unsubscribe, 1);
 });

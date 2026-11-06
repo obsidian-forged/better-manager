@@ -6,6 +6,8 @@ export interface SettingsSearchPage {
     label: string;
     description: string;
     icon?: string;
+    /** Stable settings page key used for direct navigation. */
+    key?: string;
     render(container: HTMLElement): void;
 }
 export interface SettingsSearchItem extends SearchableSetting { page: number; ordinal: number; }

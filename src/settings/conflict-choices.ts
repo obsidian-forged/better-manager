@@ -1,5 +1,5 @@
 import { ConfigRecord } from './config-revision';
-import { ConflictSection, ConflictSide, conflictSections, resolveConfiguration } from './conflict-model';
+import { configurationContent, ConflictSection, ConflictSide, conflictSections, resolveConfiguration } from './conflict-model';
 import { settingsFingerprint } from './session-store';
 
 export interface ConflictItem { kind: 'plugin' | 'preset' | 'field'; id: string; presetId?: string; }
@@ -62,6 +62,9 @@ export class ConfigConflictChoices {
         if (!this.filesReady) throw new Error('The configuration copies are not ready');
         this.choices.clear();
         for (const section of this.sections) this.choices.set(section.id, side);
+        // Preserve the complete source's ordering/unknown structure even when every visible
+        // difference belongs to a preset and there is no separate settings section.
+        this.choices.set('settings', side);
         this.overrides.clear();
         this.cached = undefined;
     }
@@ -84,11 +87,14 @@ export class ConfigConflictChoices {
             const section = this.sections.find(item => item.kind === 'preset' && item.presetId === target.id);
             if (section) found.push({ section: section.id });
         } else if (target.kind === 'field') {
-            if (!same(this.local[target.id], this.incoming[target.id])) found.push({ section: 'settings', field: target.id });
+            const left = configurationContent(this.local), right = configurationContent(this.incoming);
+            if (this.sections.some(section => section.id === 'settings') && record(left) && record(right)
+                && !same(left[target.id], right[target.id])) found.push({ section: 'settings', field: target.id });
         } else {
             if (target.presetId && !same(presetPlugin(this.local, target.presetId, target.id), presetPlugin(this.incoming, target.presetId, target.id))) {
                 const preset = findPreset(this.local, target.presetId) ?? findPreset(this.incoming, target.presetId);
-                if (preset) found.push({ section: `preset:${preset.type}:${target.presetId}`, presetId: target.presetId, pluginId: target.id });
+                const section = preset ? `preset:${preset.type}:${target.presetId}` : undefined;
+                if (section && this.sections.some(item => item.id === section)) found.push({ section, presetId: target.presetId, pluginId: target.id });
             }
             if (!same(userPlugin(this.local, target.id), userPlugin(this.incoming, target.id))) found.push({ section: 'settings', pluginId: target.id });
         }

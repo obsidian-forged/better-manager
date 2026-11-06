@@ -5,7 +5,7 @@ import { ConfigEditorReopened, ConfigProtection, ConfigPublication } from './con
 import { ConfigRecord } from './config-revision';
 import { settingsFingerprint } from './session-store';
 import { ConfigConflictChoices, ConflictItem } from './conflict-choices';
-import { ConflictSide } from './conflict-model';
+import { CONFIG_STATE_KEYS, configurationContent, configurationFileDifferences, ConflictSide } from './conflict-model';
 import { PrivateCacheWatch } from './private-cache-watch';
 import { SharedConfigWatch } from './shared-config-watch';
 import { FileChangeAdapter, subscribeFileChanges } from '../storage/file-change-listener';
@@ -73,6 +73,21 @@ export class ProtectedConfigSession {
             writeDraft: value => this.files.writeDraft(value), removeDraft: () => this.files.removeDraft(),
             preserveConflict: value => this.files.preserveConflict(value), readConflict: () => this.files.readConflict(),
             clearConflict: () => this.files.clearConflict(), claimRepair: key => this.files.claimRepair(key),
+            sameContent: async (value, files, base, incoming, purpose) => {
+                const local = this.normalized(value), remote = this.normalized(incoming.value);
+                if (purpose === 'publication') {
+                    const original = this.normalized(base.value);
+                    // Lifecycle acknowledgements are not user conflicts, but a local migration,
+                    // language initialization or dismissed tour must still reach shared storage.
+                    if (CONFIG_STATE_KEYS.some(key => settingsFingerprint(local[key]) !== settingsFingerprint(original[key])
+                        && settingsFingerprint(local[key]) !== settingsFingerprint(remote[key]))) return false;
+                }
+                if (settingsFingerprint(configurationContent(local)) !== settingsFingerprint(configurationContent(remote))) return false;
+                const [baseFiles, incomingFiles] = await Promise.all([this.files.filesFor(base), this.files.filesFor(incoming)]);
+                const localFiles = { ...baseFiles, ...files };
+                return [...new Set([...Object.keys(localFiles), ...Object.keys(incomingFiles)])]
+                    .every(path => configurationFileDifferences(path, localFiles[path] ?? null, incomingFiles[path] ?? null).length === 0);
+            },
             writeShared: (value, files, closed) => this.files.writeShared(value, files, closed),
         }, owner, hash, changed);
     }
