@@ -161,6 +161,7 @@ function statusFixture() {
         { bpmUniqueId: 'disabled', name: 'Disabled visible', visible: true },
         { bpmUniqueId: 'disabled#2', name: 'Disabled hidden', visible: false },
         { bpmUniqueId: 'core', name: 'Core', visible: true },
+        { bpmUniqueId: 'missing', name: 'Missing', visible: true, ribbonIdMap: { en: 'missing:Missing' } },
         { bpmUniqueId: 'bpm-group:tools', name: 'Group', visible: false },
     ];
     return panel;
@@ -175,9 +176,9 @@ test('Ribbon status selections exclude disabled plugins from visible and hidden 
     assert.deepEqual(ids(['visible']), ['enabled', 'core']);
     assert.deepEqual(ids(['hidden']), ['enabled#2', 'bpm-group:tools']);
     assert.deepEqual(ids(['visible', 'hidden']), ['enabled', 'enabled#2', 'core', 'bpm-group:tools']);
-    assert.deepEqual(ids(['disabled']), ['disabled', 'disabled#2']);
-    assert.deepEqual(ids(['visible', 'disabled']), ['enabled', 'disabled', 'disabled#2', 'core']);
-    assert.equal(ids([]).length, 6);
+    assert.deepEqual(ids(['disabled']), ['disabled', 'disabled#2', 'missing']);
+    assert.deepEqual(ids(['visible', 'disabled']), ['enabled', 'disabled', 'disabled#2', 'core', 'missing']);
+    assert.equal(ids([]).length, 7);
     // Filtering never rewrites the visibility restored when the plugin is enabled again.
     panel.manager.settings.Plugins[1].enabled = true;
     assert.deepEqual(ids(['visible']), ['enabled', 'disabled', 'core']);
@@ -188,7 +189,7 @@ test('Ribbon status counts are disjoint and filtering retains group scope and se
     const panel = statusFixture(), host = new Element();
     panel.mountFilterBar(host);
     assert.deepEqual(buttons(host).map(button => button.children.at(-1).text), [
-        '通用_全部_文本 6', 'Ribbon_显示 2', 'Ribbon_隐藏 2', 'Ribbon_插件被禁用 2',
+        '通用_全部_文本 7', 'Ribbon_显示 2', 'Ribbon_隐藏 2', 'Ribbon_插件被禁用 3',
     ]);
     panel.manager.settings.RIBBON_GROUPS = [{ id: 'tools', name: 'Tools', members: ['enabled#2', 'disabled#2'] }];
     panel.groupFilter = 'tools';
@@ -212,7 +213,7 @@ test('Ribbon shared status dropdown keeps search mounted and synchronizes deskto
     const selected = () => buttons(host).map(button => button.attributes['aria-pressed']);
     const count = () => menu.querySelector('.manager-multiselect-filter__count').text;
     const choose = index => options[index].listeners.click({ detail: 0 });
-    assert.ok(menu); assert.equal(count(), '6');
+    assert.ok(menu); assert.equal(count(), '7');
     choose(1);
     assert.deepEqual(selected(), ['false', 'true', 'false', 'false']); assert.equal(count(), '2');
     assert.deepEqual(panel.getFilteredRibbonItems().map(item => item.bpmUniqueId), ['enabled', 'core']);
@@ -221,9 +222,9 @@ test('Ribbon shared status dropdown keeps search mounted and synchronizes deskto
     assert.equal(host.querySelector('.ribbon-search-input'), input);
     assert.equal(host.querySelector('.ribbon-manager-state-menu'), menu);
     choose(3);
-    assert.deepEqual(selected(), ['true', 'false', 'false', 'false']); assert.equal(count(), '6');
+    assert.deepEqual(selected(), ['true', 'false', 'false', 'false']); assert.equal(count(), '7');
     buttons(host)[3].click();
-    assert.equal(options[3].attributes['aria-selected'], 'true'); assert.equal(count(), '2');
+    assert.equal(options[3].attributes['aria-selected'], 'true'); assert.equal(count(), '3');
     choose(0);
     input.input('visible');
     assert.equal(host.querySelector('.ribbon-search-input'), input);

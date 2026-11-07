@@ -1027,7 +1027,7 @@ export default {
     标签_BPM忽略_名称: 'BPM Ignored',
     Ribbon_无项目: 'No configurable ribbon icons found.',
     Ribbon_隐藏: 'Hide',
-    Ribbon_插件被禁用: 'Plugin disabled',
+    Ribbon_插件被禁用: 'Plugin not enabled',
     Ribbon_插件未加载: 'Plugin unavailable',
     Ribbon_全部分组: 'All groups',
     Ribbon_分组筛选: 'Group',

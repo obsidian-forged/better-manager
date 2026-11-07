@@ -164,17 +164,18 @@ export class RibbonModal extends Modal {
     private isRibbonItemPluginMissing(item: RibbonItem): boolean {
         if (!item.bpmUniqueId || item.bpmUniqueId.startsWith(RIBBON_GROUP_ITEM_PREFIX)) return false;
         const pluginId = SystemRibbonManager.pluginPrefixOf(item.bpmUniqueId);
-        if (!pluginId || this.manager.appPlugins.manifests[pluginId]) return false;
+        if (!pluginId || this.manager.appPlugins?.manifests?.[pluginId]) return false;
         // Obsidian 核心插件不提供 manifest，不能按社区插件缺失处理。
-        const core = (this.manager.app as { internalPlugins?: { plugins?: Record<string, unknown> } }).internalPlugins?.plugins;
+        const core = (this.manager.app as { internalPlugins?: { plugins?: Record<string, unknown> } } | undefined)
+            ?.internalPlugins?.plugins;
         if (core && Object.prototype.hasOwnProperty.call(core, pluginId)) return false;
         // 系统 Ribbon 项没有插件映射；只有带插件前缀映射的条目才判为未加载。
         return Object.values(item.ribbonIdMap || {}).some(id => typeof id === 'string' && id.startsWith(`${pluginId}:`));
     }
 
-    /** Disabled plugins form a separate state, regardless of their saved visibility. */
+    /** 未启用或所属插件缺失都归入禁用类，不再算作显示中；Unavailable plugins share the disabled state. */
     private getRibbonItemStatus(item: RibbonItem): RibbonStatusFilter {
-        if (this.isRibbonItemPluginDisabled(item)) return "disabled";
+        if (this.isRibbonItemPluginMissing(item) || this.isRibbonItemPluginDisabled(item)) return "disabled";
         return item.visible ? "visible" : "hidden";
     }
 

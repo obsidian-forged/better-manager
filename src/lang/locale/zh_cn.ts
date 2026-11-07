@@ -1028,7 +1028,7 @@ export default {
     Ribbon_已隐藏: "已隐藏 Ribbon 图标",
     Ribbon_无项目: '没有找到可配置的功能区图标。',
     Ribbon_隐藏: '隐藏',
-    Ribbon_插件被禁用: '插件被禁用',
+    Ribbon_插件被禁用: '插件未启用',
     Ribbon_插件未加载: '插件未加载',
     Ribbon_全部分组: '全部分组',
     Ribbon_分组筛选: '分组',
