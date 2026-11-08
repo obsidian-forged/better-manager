@@ -1118,6 +1118,7 @@ export default {
     批量编辑_已取消隐藏: 'Unhidden {count} plugins',
     菜单_快速添加分组: 'Quick add to group',
     菜单_快速添加标签: 'Quick add to tags',
+    菜单_快速添加到延迟: 'Quick add to delayed startup',
     批量编辑_清空选择: 'Clear selection',
     批量编辑_设置分组: 'Set group',
     批量编辑_清除分组: 'Clear group',

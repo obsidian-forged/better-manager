@@ -1,6 +1,6 @@
 import type Manager from '../main';
 import { Notice } from 'obsidian';
-import { ConfigDiskChanged, ConfigFiles, IncompleteConfigBundle, isManagedConfigFile } from './config-files';
+import { ConfigBundleIssue, ConfigDiskChanged, ConfigFiles, IncompleteConfigBundle, isManagedConfigFile } from './config-files';
 import { ConfigEditorReopened, ConfigProtection, ConfigPublication } from './config-protection';
 import { ConfigRecord } from './config-revision';
 import { settingsFingerprint } from './session-store';
@@ -28,6 +28,7 @@ export class ProtectedConfigSession {
     private initializing = true;
     private userOperations = 0;
     private editEpoch = 0;
+    private readonly fileEditEpochs = new Map<string, number>();
     private resolvedBaseline?: ConfigRecord;
     private selections?: ConfigConflictChoices;
     private readonly privateCache: PrivateCacheWatch;
@@ -89,6 +90,8 @@ export class ProtectedConfigSession {
                     .every(path => configurationFileDifferences(path, localFiles[path] ?? null, incomingFiles[path] ?? null).length === 0);
             },
             writeShared: (value, files, closed) => this.files.writeShared(value, files, closed),
+            preparePublication: (base, files) => this.files.preparePublication(base, files),
+            needsPublication: () => this.files.hasPendingTransaction,
         }, owner, hash, changed);
     }
 
@@ -175,7 +178,7 @@ export class ProtectedConfigSession {
             this.changed();
         });
     }
-    async publish(value: object, current: () => boolean): Promise<ConfigPublication | { status: 'incomplete' }> {
+    async publish(value: object, current: () => boolean): Promise<ConfigPublication | { status: 'incomplete'; issues: ConfigBundleIssue[] }> {
         const copy = configRecord(value);
         return this.queue(async () => {
             const fileDigests = { ...this.protection.current.files,
@@ -196,7 +199,7 @@ export class ProtectedConfigSession {
                 return result;
             } catch (error) {
                 if (error instanceof ConfigEditorReopened) return { status: 'cancelled' };
-                if (error instanceof IncompleteConfigBundle) { this.pendingBundle = true; this.changed(); return { status: 'incomplete' }; }
+                if (error instanceof IncompleteConfigBundle) { this.pendingBundle = true; this.changed(); return { status: 'incomplete', issues: error.issues }; }
                 throw error;
             }
         });
@@ -205,12 +208,13 @@ export class ProtectedConfigSession {
         if (!this.loaded || !isManagedConfigFile(path)) return false;
         const userEdited = this.userOperations > 0;
         if (userEdited) this.noteUserMutation();
+        const epoch = this.editEpoch;
         await this.queue(async () => {
             const existing = this.protection.stagedFile(path);
             const baseline = existing ? existing.value : (await this.files.filesFor(this.protection.current))[path] ?? null;
             if (baseline === text) return;
-            this.protection.stageFile(path, text, userEdited);
-            await this.protection.persistFileDraft();
+            await this.protection.stageFileDraft(path, text, userEdited);
+            if (userEdited) this.fileEditEpochs.set(path, epoch);
             this.changed();
         });
         return true;
@@ -231,10 +235,19 @@ export class ProtectedConfigSession {
         });
     }
     /** 放弃本机草稿；Discard the local draft without publishing. */
-    async discardDraft(): Promise<void> {
-        await this.queue(async () => {
-            await this.protection.discardDraft();
+    async discardDraft(cutoff = this.editEpoch): Promise<ConfigRecord> {
+        this.noteUserMutation();
+        return this.queue(async () => {
+            // Main settings and auxiliary files have separate queues. A later successful
+            // file edit belongs to a new action, even if this discard waited in the main queue.
+            const retained = Object.entries(this.protection.pendingFiles)
+                .filter(([path]) => (this.fileEditEpochs.get(path) ?? -1) > cutoff);
+            await this.protection.discardDraft(Object.fromEntries(retained));
+            for (const [path, epoch] of this.fileEditEpochs) if (epoch <= cutoff) this.fileEditEpochs.delete(path);
+            this.resolvedBaseline = undefined;
+            this.selections = undefined;
             this.changed();
+            return this.normalized(this.protection.current.value);
         });
     }
     async prepareConflictChoices(): Promise<ConfigConflictChoices | undefined> {
@@ -290,5 +303,6 @@ export class ProtectedConfigSession {
         this.stopPrivateWatch?.(); this.stopPrivateWatch = undefined;
         this.privateCache.destroy();
         this.sharedChanges.destroy();
+        this.fileEditEpochs.clear();
     }
 }

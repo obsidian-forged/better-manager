@@ -63,12 +63,14 @@ function fixture() {
     const settings = {
         HIDES: ['b', 'unrelated'], GROUPS: [{ id: 'writing', name: 'Writing' }, { id: 'tools', name: 'Tools' }],
         TAGS: [{ id: 'bpm-install', name: 'Installed by BPM' }, { id: 'favorite', name: 'Favorite' }, { id: 'work', name: 'Work' }],
+        DELAYS: [{ id: 'later', name: 'Later', time: 10 }, { id: 'slow', name: 'Slow', time: 30 }],
         Plugins: ['self', 'a', 'b', 'c'].map(id => ({ id, group: id === 'a' ? 'writing' : '', tags: id === 'a' ? ['favorite'] : [], enabled: true, delay: 'later' })),
     };
     let foreign = false;
     modal.settings = settings;
     modal.manager = { settings, manifest: { id: 'self' }, translator: { t: key => key },
         devices: { isProjectingForeign: () => foreign },
+        overview: { async setPluginState(id, patch) { const plugin = settings.Plugins.find(item => item.id === id); if (plugin) Object.assign(plugin, patch); } },
         async saveSettings() { calls.push(['stage', structuredClone(settings)]); },
     };
     modal.app = {};
@@ -127,25 +129,30 @@ test('selecting the displayed list remains available in More without replacing b
 test('quick organization menus use checked native submenus and stage only an existing group or unassigned tag', async () => {
     const { modal, settings, calls, trigger } = fixture(), menu = new Menu();
     modal.addPluginOrganizationMenu(menu, 'a', new Element());
-    assert.deepEqual(menu.items.map(item => [item.title, item.icon]), [['菜单_快速添加分组', 'folder-tree'], ['菜单_快速添加标签', 'tags']]);
-    const groups = menu.items[0].submenu.items, tags = menu.items[1].submenu.items;
+    assert.deepEqual(menu.items.map(item => [item.title, item.icon]), [['菜单_快速添加分组', 'folder-tree'], ['菜单_快速添加标签', 'tags'], ['菜单_快速添加到延迟', 'timer']]);
+    const groups = menu.items[0].submenu.items, tags = menu.items[1].submenu.items, delays = menu.items[2].submenu.items;
     assert.equal(groups[0].checked, true); assert.equal(groups[0].disabled, true);
     assert.equal(tags[0].checked, true); assert.equal(tags[0].disabled, true);
     assert.deepEqual(tags.map(item => item.title), ['Favorite', 'Work']);
-    await trigger(groups[1].click); await trigger(tags[1].click);
+    assert.deepEqual(delays.map(item => [item.title, item.checked, item.disabled]), [['通用_无延迟_文本', false, false], ['Later (10s)', true, true], ['Slow (30s)', false, false]]);
+    await trigger(groups[1].click); await trigger(tags[1].click); await trigger(delays[2].click);
     const plugin = settings.Plugins.find(item => item.id === 'a');
-    assert.equal(plugin.group, 'tools'); assert.deepEqual(plugin.tags, ['favorite', 'work']);
-    assert.equal(calls.filter(([name]) => name === 'stage').length, 2);
+    assert.equal(plugin.group, 'tools'); assert.deepEqual(plugin.tags, ['favorite', 'work']); assert.equal(plugin.delay, 'slow');
+    assert.equal(calls.filter(([name]) => name === 'stage').length, 3);
     await modal.assignPluginGroup('a', 'tools'); await modal.assignPluginTag('a', 'work');
+    await modal.assignPluginDelay('a', 'slow'); await modal.assignPluginDelay('a', 'deleted');
     await modal.assignPluginGroup('a', 'deleted'); await modal.assignPluginTag('a', 'deleted');
     await modal.assignPluginTag('a', 'bpm-install');
-    assert.equal(calls.filter(([name]) => name === 'stage').length, 2);
-    assert.ok(settings.Plugins.every(item => item.enabled === true && item.delay === 'later'));
+    assert.equal(calls.filter(([name]) => name === 'stage').length, 3);
+    await trigger(delays[0].click);
+    assert.equal(settings.Plugins.find(item => item.id === 'a').delay, '');
+    assert.equal(calls.filter(([name]) => name === 'stage').length, 4);
+    assert.ok(settings.Plugins.every(item => item.enabled === true));
 });
 
 test('quick organization disables empty categories and supports native menu fallback without setSubmenu', async () => {
     const { modal, settings, trigger } = fixture();
-    settings.GROUPS = []; settings.TAGS = [{ id: 'bpm-install', name: 'Automatic' }];
+    settings.GROUPS = []; settings.TAGS = [{ id: 'bpm-install', name: 'Automatic' }]; settings.DELAYS = [];
     const empty = new Menu(); modal.addPluginOrganizationMenu(empty, 'a', new Element());
     assert.ok(empty.items.every(item => item.disabled));
     settings.GROUPS = [{ id: 'tools', name: 'Tools' }];

@@ -89,6 +89,24 @@ test('associated JSON key order, formatting and device heartbeat changes are a n
     assert.equal(f.files[`${root}/${path}`], before.device);
     assert.deepEqual(f.sharedWrites(), []);
 });
+test('a heartbeat drift outside its revision no longer blocks session Save, and real edits retain it', async t => {
+    const path = 'data/devices/phone.json';
+    const original = JSON.stringify({ id: 'phone', name: 'Phone', type: 'phone', updatedAt: 1, lastSeen: 1 });
+    const f = await fixture(t, { LANGUAGE: 'en' }, { [path]: original });
+    f.manager.settings.RECENT_INSTALL_DAYS = 14;
+    assert.equal((await f.current.publish(f.manager.settings, () => true)).status, 'saved');
+    const revision = f.current.protection.current.id, latest = JSON.stringify({ ...JSON.parse(original), lastSeen: 10 });
+    f.files[`${root}/${path}`] = latest; f.writes.length = 0;
+    assert.equal((await f.current.publish(f.manager.settings, () => true)).status, 'noop');
+    assert.equal(f.current.protection.current.id, revision); assert.deepEqual(f.sharedWrites(), []);
+    f.manager.settings.RECENT_INSTALL_DAYS = 21;
+    assert.equal((await f.current.publish(f.manager.settings, () => true)).status, 'saved');
+    assert.deepEqual(f.sharedWrites(), [`${root}/data.json`]);
+    assert.equal(f.files[`${root}/${path}`], latest);
+    assert.equal(f.current.protection.current.files[path], await hash(latest));
+    const reopened = f.session(); await reopened.load();
+    assert.equal(reopened.protection.current.value.RECENT_INSTALL_DAYS, 21);
+});
 
 test('a renamed or deleted device file remains a real conflict with a visible difference', async t => {
     for (const text of ['{"id":"phone","name":"Renamed","lastSeen":2}', null]) {

@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {build} from 'esbuild';
 const compiled=await build({stdin:{contents:`export * from './src/settings/config-files';export * from './src/settings/config-protection';export * from './src/settings/config-revision';`,resolveDir:process.cwd(),sourcefile:'config-file-tests.ts',loader:'ts'},bundle:true,platform:'node',format:'cjs',write:false,logLevel:'silent'});
 const module={exports:{}};new Function('module','exports',compiled.outputFiles[0].text)(module,module.exports);
-const {ConfigFiles,ConfigProtection,ConfigEditorReopened,IncompleteConfigBundle,createConfigRevision,encodeConfig}=module.exports;
+const {ConfigFiles,ConfigProtection,ConfigEditorReopened,ConfigDiskChanged,IncompleteConfigBundle,createConfigRevision,encodeConfig}=module.exports;
 const hash=async text=>createHash('sha256').update(text).digest('hex');
 const root='.obsidian/plugins/bpm';
 function fixture(initial={name:'initial'},icons) {
@@ -67,6 +67,140 @@ test('partially synced auxiliary files cannot be accepted as a complete configur
     f.files.set(`${root}/data.json`,JSON.stringify(encodeConfig(remote)));
     await assert.rejects(f.io.readShared(),IncompleteConfigBundle);assert.equal(f.publicWrites().length,0);
     f.files.set(`${root}/data/icons.css`,'new icons');assert.equal((await f.io.readShared()).id,remote.id);
+});
+const devicePath = 'data/devices/phone.json';
+const deviceText = (lastSeen, fields = {}) => JSON.stringify({ id: 'phone', name: 'Phone', type: 'phone', platform: 'android', updatedAt: 1, lastSeen, ...fields });
+async function committedDeviceFixture() {
+    const f = fixture({ name: 'initial' }, 'icons');
+    f.dirs.add(`${root}/data/devices`);
+    f.files.set(`${root}/${devicePath}`, deviceText(1));
+    const value = await f.store.load(); f.store.begin(value); value.name = 'committed';
+    await f.store.publish(value, f.store.current.files, () => true);
+    f.writes.length = 0;
+    return { ...f, value };
+}
+test('a trusted device heartbeat drift is a no-op without rewriting files or the revision', async () => {
+    const f = await committedDeviceFixture(), id = f.store.current.id;
+    const original = f.files.get(`${root}/data.json`), backup = f.files.get(`${root}/.bpm/device-a/states/${id}.json`);
+    f.files.set(`${root}/${devicePath}`, deviceText(2));
+    assert.equal((await f.store.publish(f.value, f.store.current.files, () => true)).status, 'noop');
+    assert.equal(f.store.current.id, id); assert.equal(f.io.hasPendingBundle, false);
+    assert.equal(f.files.get(`${root}/data.json`), original);
+    assert.equal(f.files.get(`${root}/${devicePath}`), deviceText(2));
+    assert.equal(f.files.get(`${root}/.bpm/device-a/states/${id}.json`), backup);
+    assert.deepEqual(f.publicWrites(), []);
+    const reopened = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-a', hash, f.local);
+    assert.equal((await reopened.readShared()).id, id);
+    assert.equal((await reopened.readHead()).id, id);
+});
+test('a real Save incorporates the latest heartbeat without rewriting its file and remains portable', async () => {
+    const f = await committedDeviceFixture();
+    f.files.set(`${root}/${devicePath}`, deviceText(5)); f.value.name = 'edited';
+    assert.equal((await f.store.publish(f.value, f.store.current.files, () => true)).status, 'saved');
+    assert.deepEqual(f.publicWrites(), [`${root}/data.json`]);
+    assert.equal(f.store.current.files[devicePath], await hash(deviceText(5)));
+    const fresh = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-new', hash, { read: () => undefined, write() {} });
+    assert.equal((await fresh.readShared()).value.name, 'edited');
+});
+test('a selected device rename keeps only the latest heartbeat from disk', async () => {
+    const f = await committedDeviceFixture();
+    f.files.set(`${root}/${devicePath}`, deviceText(10));
+    f.store.stageFile(devicePath, deviceText(1, { name: 'Renamed', type: 'tablet', updatedAt: 2 }), true);
+    assert.equal((await f.store.publish(f.value, f.store.current.files, () => true)).status, 'saved');
+    const saved = f.files.get(`${root}/${devicePath}`), device = JSON.parse(saved);
+    assert.equal(device.name, 'Renamed'); assert.equal(device.type, 'tablet'); assert.equal(device.updatedAt, 2);
+    assert.equal(device.lastSeen, 10); assert.equal(f.store.current.files[devicePath], await hash(saved));
+});
+test('a heartbeat arriving after preparation cannot be rolled back by a selected device rename', async () => {
+    const f = await committedDeviceFixture();
+    f.store.stageFile(devicePath, deviceText(1, { name: 'Renamed', updatedAt: 2 }), true);
+    const write = f.adapter.write;
+    f.adapter.write = async (path, text) => {
+        await write(path, text);
+        if (path.includes('/transactions/')) f.files.set(`${root}/${devicePath}`, deviceText(10));
+    };
+    await assert.rejects(f.store.publish(f.value, f.store.current.files, () => true), ConfigDiskChanged);
+    f.adapter.write = write;
+    assert.equal((await f.store.publish(f.value, f.store.current.files, () => true)).status, 'saved');
+    const saved = JSON.parse(f.files.get(`${root}/${devicePath}`));
+    assert.equal(saved.name, 'Renamed'); assert.equal(saved.updatedAt, 2); assert.equal(saved.lastSeen, 10);
+    const reopened = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-a', hash, f.local);
+    assert.equal((await reopened.readShared()).id, f.store.current.id);
+    assert.equal((await reopened.readHead()).id, f.store.current.id);
+    const fresh = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-new', hash, { read: () => undefined, write() {} });
+    assert.equal((await fresh.readShared()).id, f.store.current.id);
+});
+test('lastSeen cannot hide a meaningful field change, invalid record or missing file', async () => {
+    for (const text of [deviceText(2, { name: 'Renamed' }), deviceText(2, { type: 'tablet' }), deviceText(2, { platform: 'ios' }),
+        deviceText(2, { updatedAt: 2 }), deviceText(2, { custom: true }), deviceText('invalid'), '{invalid', '[]', null]) {
+        const f = await committedDeviceFixture();
+        if (text === null) f.files.delete(`${root}/${devicePath}`); else f.files.set(`${root}/${devicePath}`, text);
+        await assert.rejects(f.io.readShared(), error => error instanceof IncompleteConfigBundle
+            && error.issues.some(issue => issue.path === devicePath && issue.kind === (text === null ? 'missing' : 'different')));
+        assert.deepEqual(f.publicWrites(), []);
+    }
+});
+test('a file expected to be deleted is reported separately and cannot pass the heartbeat exception', async () => {
+    const f = await committedDeviceFixture(); f.store.stageFile(devicePath, null, true);
+    await f.store.publish(f.value, f.store.current.files, () => true); f.writes.length = 0;
+    f.files.set(`${root}/${devicePath}`, deviceText(10));
+    await assert.rejects(f.io.readShared(), error => error instanceof IncompleteConfigBundle
+        && error.issues.some(issue => issue.path === devicePath && issue.kind === 'unexpected'));
+    assert.deepEqual(f.publicWrites(), []);
+});
+test('device metadata compatibility never exempts a mismatched CSS file', async () => {
+    const f = await committedDeviceFixture();
+    f.files.set(`${root}/${devicePath}`, deviceText(2)); f.files.set(`${root}/data/icons.css`, 'changed');
+    await assert.rejects(f.io.readShared(), error => error instanceof IncompleteConfigBundle
+        && error.issues.some(issue => issue.path === 'data/icons.css' && issue.kind === 'different'));
+    assert.deepEqual(f.publicWrites(), []);
+});
+test('without the exact original snapshot a new device cannot guess the intended file contents', async () => {
+    const f = await committedDeviceFixture(); f.files.set(`${root}/${devicePath}`, deviceText(2));
+    const fresh = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-new', hash, { read: () => undefined, write() {} });
+    await assert.rejects(fresh.readShared(), IncompleteConfigBundle); assert.deepEqual(f.publicWrites(), []);
+});
+test('heartbeat drift does not relax verification of immutable recovery snapshots', async () => {
+    const f = await committedDeviceFixture(), path = `${root}/.bpm/device-a/states/${f.store.current.id}.json`;
+    const state = JSON.parse(f.files.get(path)); state.files[devicePath] = deviceText(2); f.files.set(path, JSON.stringify(state));
+    const reopened = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-a', hash, f.local);
+    await assert.rejects(reopened.readHead(), IncompleteConfigBundle); assert.deepEqual(f.publicWrites(), []);
+});
+test('a heartbeat arriving during a commit is retained and the next startup still validates', async () => {
+    const f = await committedDeviceFixture(); f.value.name = 'edited';
+    const write = f.adapter.write;
+    f.adapter.write = async (path, text) => {
+        await write(path, text);
+        if (path.includes('/transactions/')) f.files.set(`${root}/${devicePath}`, deviceText(10));
+    };
+    await assert.rejects(f.store.publish(f.value, f.store.current.files, () => true), ConfigDiskChanged);
+    f.adapter.write = write;
+    assert.equal((await f.store.publish(f.value, f.store.current.files, () => true)).status, 'saved');
+    assert.equal(f.files.get(`${root}/${devicePath}`), deviceText(10));
+    assert.deepEqual(f.publicWrites(), [`${root}/data.json`]);
+    const reopened = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-a', hash, f.local);
+    assert.equal((await reopened.readShared()).value.name, 'edited');
+    assert.equal((await reopened.readHead()).value.name, 'edited');
+    const fresh = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-new', hash, { read: () => undefined, write() {} });
+    assert.equal((await fresh.readShared()).value.name, 'edited');
+});
+test('interrupted commits recover with heartbeat drift in the before/after files', async () => {
+    const f = await committedDeviceFixture(); f.value.name = 'edited';
+    f.store.stageFile('data/icons.css', 'new icons', true);
+    const write = f.adapter.write;
+    f.adapter.write = async (path, text) => {
+        if (path === `${root}/data.json`) { f.files.set(`${root}/${devicePath}`, deviceText(10)); throw new Error('disk busy'); }
+        await write(path, text);
+    };
+    await assert.rejects(f.store.publish(f.value, f.store.current.files, () => true), /disk busy/);
+    f.adapter.write = write;
+    const io = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-a', hash, f.local);
+    await io.recoverPreparedCommit(); const store = new ConfigProtection(io, 'device-a', hash);
+    const value = await store.load(); assert.equal(value.name, 'edited');
+    assert.equal((await store.publish(value, store.current.files, () => true)).status, 'saved');
+    assert.equal(f.files.get(`${root}/${devicePath}`), deviceText(10));
+    assert.equal(store.current.files[devicePath], await hash(deviceText(10)));
+    assert.equal(f.anchor().transaction, undefined);
 });
 test('trusted snapshot corruption is rejected against the local-only anchor',async()=>{
     const f=fixture();await f.store.load();const id=f.anchor().head;
@@ -136,4 +270,177 @@ test('an edit after the primary marker write reports saved-pending and anchors t
     const write=f.adapter.write;f.adapter.write=async(path,text)=>{await write(path,text);if(path===`${root}/data.json`)current=false;};
     const result=await f.store.publish(value,{},()=>current);assert.equal(result.status,'saved-pending');
     assert.equal(f.anchor().head,f.store.current.id);assert.equal(JSON.parse(f.files.get(`${root}/data.json`)).name,'edited');
+});
+
+test('a complete foreign commit arriving during preparation is never damaged by local auxiliary writes', async () => {
+    const f = fixture({ name: 'initial' }, 'initial icons'), value = await f.store.load(), base = f.store.current;
+    f.store.begin(value); value.name = 'local'; f.store.stageFile('data/icons.css', 'local icons', true);
+    const remote = await createConfigRevision({ name: 'remote' }, 'device-b', [base], { 'data/icons.css': await hash('remote icons') }, hash);
+    const write = f.adapter.write; let injected = false;
+    f.adapter.write = async (path, text) => {
+        await write(path, text);
+        if (path.includes('/transactions/') && !injected) {
+            injected = true; f.files.set(`${root}/data/icons.css`, 'remote icons');
+            f.files.set(`${root}/data.json`, JSON.stringify(encodeConfig(remote)));
+        }
+    };
+    await assert.rejects(f.store.publish(value, base.files, () => true), ConfigDiskChanged);
+    assert.deepEqual(f.publicWrites(), []);
+    assert.equal(f.files.get(`${root}/data/icons.css`), 'remote icons');
+    assert.equal((await f.io.readShared()).id, remote.id);
+    assert.equal((await f.store.publish(value, base.files, () => true)).status, 'conflict');
+});
+
+test('foreign auxiliary bytes are protected even when their commit marker has not arrived', async () => {
+    for (const selected of ['local icons', null]) {
+        const f = fixture({ name: 'initial' }, 'initial icons'), value = await f.store.load();
+        f.store.begin(value); value.name = 'local'; f.store.stageFile('data/icons.css', selected, true);
+        const write = f.adapter.write;
+        f.adapter.write = async (path, text) => {
+            await write(path, text);
+            if (path.includes('/transactions/')) f.files.set(`${root}/data/icons.css`, 'foreign icons');
+        };
+        await assert.rejects(f.store.publish(value, f.store.current.files, () => true), ConfigDiskChanged);
+        assert.deepEqual(f.publicWrites(), []);
+        assert.equal(f.files.get(`${root}/data/icons.css`), 'foreign icons');
+        assert.equal(JSON.parse(f.files.get(`${root}/data.json`)).name, 'initial');
+    }
+});
+
+test('a final marker write rechecks its guard after the shared write registration callback', async () => {
+    const f = fixture({ name: 'initial' }, 'icons'); let remote;
+    const io = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-a', hash, f.local, undefined, {
+        write: async (path, text, action) => {
+            if (remote && path === `${root}/data.json`) f.files.set(path, JSON.stringify(encodeConfig(remote)));
+            await action();
+        }, remove: async (path, action) => action(),
+    });
+    const store = new ConfigProtection(io, 'device-a', hash), value = await store.load(); store.begin(value); value.name = 'local';
+    remote = await createConfigRevision({ name: 'remote' }, 'device-b', [store.current], store.current.files, hash);
+    await assert.rejects(store.publish(value, store.current.files, () => true), ConfigDiskChanged);
+    assert.equal(JSON.parse(f.files.get(`${root}/data.json`)).name, 'remote');
+    assert.deepEqual(f.publicWrites(), []);
+});
+
+test('the final raw bundle check rejects a late heartbeat before publishing an unportable marker', async () => {
+    const f = await committedDeviceFixture(); f.value.name = 'next'; f.store.stageFile('data/icons.css', 'new icons', true);
+    const beforeMarker = f.files.get(`${root}/data.json`), read = f.adapter.read; let injected = false;
+    f.adapter.read = async path => {
+        const text = await read(path);
+        if (path === `${root}/data.json` && f.files.get(`${root}/data/icons.css`) === 'new icons' && !injected) {
+            injected = true; f.files.set(`${root}/${devicePath}`, deviceText(20));
+        }
+        return text;
+    };
+    await assert.rejects(f.store.publish(f.value, f.store.current.files, () => true), ConfigDiskChanged);
+    assert.equal(f.files.get(`${root}/data.json`), beforeMarker);
+    f.adapter.read = read;
+    assert.equal((await f.store.publish(f.value, f.store.current.files, () => true)).status, 'saved');
+    const fresh = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-new', hash, { read: () => undefined, write() {} });
+    assert.equal((await fresh.readShared()).value.name, 'next');
+    assert.equal(f.store.current.files[devicePath], await hash(deviceText(20)));
+});
+
+test('discarding a cancelled partial Save still requires an explicit publication to restore shared consistency', async () => {
+    const f = fixture({ name: 'initial' }, 'initial icons'), value = await f.store.load();
+    f.store.begin(value); value.name = 'committed'; await f.store.publish(value, f.store.current.files, () => true);
+    value.name = 'unsaved'; f.store.stageFile('data/icons.css', 'unsaved icons', true);
+    const write = f.adapter.write; let current = true;
+    f.adapter.write = async (path, text) => { await write(path, text); if (path === `${root}/data/icons.css`) current = false; };
+    await assert.rejects(f.store.publish(value, f.store.current.files, () => current), ConfigEditorReopened);
+    f.adapter.write = write; await f.store.discardDraft();
+    const io = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-a', hash, f.local), store = new ConfigProtection(io, 'device-a', hash);
+    const recovered = await store.load();
+    assert.equal(recovered.name, 'committed'); assert.equal(io.hasPendingTransaction, true);
+    assert.equal(f.files.get(`${root}/data/icons.css`), 'unsaved icons');
+    assert.equal((await store.publish(recovered, store.current.files, () => true)).status, 'saved');
+    assert.equal(f.files.get(`${root}/data/icons.css`), 'initial icons'); assert.equal(io.hasPendingTransaction, false);
+    const fresh = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-new', hash, { read: () => undefined, write() {} });
+    assert.equal((await fresh.readShared()).id, store.current.id);
+});
+
+test('cancelling again while restoring a discarded partial transaction preserves its recovery anchor', async () => {
+    const f = fixture({ name: 'initial' }, 'initial icons'), value = await f.store.load();
+    f.store.begin(value); value.name = 'committed'; await f.store.publish(value, f.store.current.files, () => true);
+    value.name = 'unsaved'; f.store.stageFile('data/icons.css', 'unsaved icons', true);
+    const write = f.adapter.write; let current = true;
+    f.adapter.write = async (path, text) => { await write(path, text); if (path === `${root}/data/icons.css`) current = false; };
+    await assert.rejects(f.store.publish(value, f.store.current.files, () => current), ConfigEditorReopened);
+    f.adapter.write = write; await f.store.discardDraft();
+    const open = () => {
+        const io = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-a', hash, f.local);
+        return { io, store: new ConfigProtection(io, 'device-a', hash) };
+    };
+    const next = open(), recovered = await next.store.load(); current = true;
+    f.adapter.write = async (path, text) => { await write(path, text); if (path === `${root}/data/icons.css`) current = false; };
+    await assert.rejects(next.store.publish(recovered, next.store.current.files, () => current), ConfigEditorReopened);
+    assert.equal(next.io.hasPendingTransaction, true);
+    f.adapter.write = write; const last = open(), again = await last.store.load();
+    assert.equal(again.name, 'committed');
+    assert.equal((await last.store.publish(again, last.store.current.files, () => true)).status, 'saved');
+    assert.equal(last.io.hasPendingTransaction, false);
+    const fresh = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-new', hash, { read: () => undefined, write() {} });
+    assert.equal((await fresh.readShared()).id, last.store.current.id);
+});
+
+test('unindexed managed files are retained and cannot be overwritten by a competing staged file', async () => {
+    const f = await committedDeviceFixture(), path = 'data/devices/new-phone.json', original = JSON.stringify({ id: 'new-phone', name: 'Remote phone', type: 'phone', lastSeen: 1 });
+    f.files.set(`${root}/${path}`, original); f.value.name = 'next';
+    assert.equal((await f.store.publish(f.value, f.store.current.files, () => true)).status, 'saved');
+    assert.equal(f.files.get(`${root}/${path}`), original);
+    f.store.stageFile(path, JSON.stringify({ id: 'new-phone', name: 'Local phone', type: 'phone', lastSeen: 1 }), true);
+    await assert.rejects(f.store.publish(f.value, f.store.current.files, () => true), ConfigDiskChanged);
+    assert.equal(f.files.get(`${root}/${path}`), original);
+});
+
+test('discarded partial transactions retain pre-existing unindexed files but remove files they created', async () => {
+    for (const existed of [true, false]) {
+        const f = await committedDeviceFixture(), path = 'data/devices/unindexed.json';
+        const text = JSON.stringify({ id: 'unindexed', name: 'External phone', type: 'phone', lastSeen: 1 });
+        const originalState = f.files.get(`${root}/.bpm/device-a/states/${f.store.current.id}.json`);
+        if (existed) f.files.set(`${root}/${path}`, text);
+        f.value.name = 'unsaved'; f.store.stageFile(path, text, true); f.store.stageFile('data/icons.css', 'new icons', true);
+        const read = f.adapter.read; let current = true;
+        f.adapter.read = async target => {
+            const value = await read(target);
+            if (target === `${root}/data.json` && f.files.get(`${root}/data/icons.css`) === 'new icons'
+                && f.files.has(`${root}/${path}`)) current = false;
+            return value;
+        };
+        await assert.rejects(f.store.publish(f.value, f.store.current.files, () => current), ConfigEditorReopened);
+        const transaction = JSON.parse(f.files.get(`${root}/.bpm/device-a/transactions/${f.anchor().transaction}.json`));
+        assert.equal(transaction.untracked?.[path], existed ? text : undefined);
+        assert.equal(f.files.get(`${root}/.bpm/device-a/states/${f.store.current.id}.json`), originalState);
+        f.adapter.read = read; await f.store.discardDraft();
+        const io = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-a', hash, f.local), store = new ConfigProtection(io, 'device-a', hash);
+        const value = await store.load();
+        assert.equal((await store.publish(value, store.current.files, () => true)).status, 'saved');
+        assert.equal(f.files.get(`${root}/${path}`), existed ? text : undefined);
+        assert.equal(io.hasPendingTransaction, false);
+    }
+});
+
+test('transaction before-images require the original local anchor, owner, endpoints and full content digest', async () => {
+    const path = 'data/devices/unindexed.json', text = JSON.stringify({ id: 'unindexed', name: 'External phone', type: 'phone', lastSeen: 1 });
+    for (const mutate of [
+        raw => { raw.owner = 'device-b'; },
+        raw => { raw.before = 'a'.repeat(64); },
+        raw => { raw.after = 'b'.repeat(64); },
+        raw => { delete raw.untracked; },
+        raw => { raw.untracked[path] = 'forged original bytes'; },
+        raw => { raw.untracked[path] = null; },
+        raw => { raw.untracked['../outside.json'] = text; },
+    ]) {
+        const f = await committedDeviceFixture(); f.files.set(`${root}/${path}`, text);
+        f.value.name = 'unsaved'; f.store.stageFile(path, text, true);
+        const write = f.adapter.write; let current = true;
+        f.adapter.write = async (target, value) => { await write(target, value); if (target.includes('/transactions/')) current = false; };
+        await assert.rejects(f.store.publish(f.value, f.store.current.files, () => current), ConfigEditorReopened);
+        f.adapter.write = write;
+        const transactionPath = `${root}/.bpm/device-a/transactions/${f.anchor().transaction}.json`;
+        const raw = JSON.parse(f.files.get(transactionPath)); mutate(raw); f.files.set(transactionPath, JSON.stringify(raw));
+        const before = f.publicWrites().length, io = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-a', hash, f.local);
+        await assert.rejects(io.readShared(), /BPM transaction/);
+        assert.equal(f.publicWrites().length, before); assert.equal(f.files.get(`${root}/${path}`), text);
+    }
 });

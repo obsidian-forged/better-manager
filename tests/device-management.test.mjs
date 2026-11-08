@@ -205,6 +205,231 @@ test('manual saving remains the default for new and previously stored settings',
     assert.equal(manager.settings.MANUAL_CONFIG_SAVE, true);
 });
 
+test('discard restores the committed settings so later unrelated saves cannot publish abandoned edits', async () => {
+    const adapter = memoryAdapter(), { manager } = await fixture({ adapter });
+    const path = '.obsidian/plugins/self/data.json';
+    adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
+    await manager.loadSettings();
+    const editor = {}; manager.beginSettingsEditing(editor);
+    manager.settings.RECENT_INSTALL_DAYS = 14;
+    await manager.saveSettings({ captureDevice: false });
+    await manager.discardPendingSettings();
+    manager.endSettingsEditing(editor, { allowAutomaticSave: false });
+    await manager.settingsSaveQueue;
+    assert.equal(manager.settings.RECENT_INSTALL_DAYS, 7);
+    assert.equal(manager.hasUnsavedSettings, false);
+    manager.beginSettingsEditing({});
+    manager.settings.LANGUAGE = 'fr'; await manager.saveSettings({ captureDevice: false });
+    assert.equal(await manager.savePendingSettings(), true);
+    const saved = JSON.parse(adapter.files[path]);
+    assert.equal(saved.RECENT_INSTALL_DAYS, 7); assert.equal(saved.LANGUAGE, 'fr');
+});
+
+test('discard waits for an older queued stage instead of letting it resurrect the discarded draft', async () => {
+    const adapter = memoryAdapter(), { manager } = await fixture({ adapter });
+    const path = '.obsidian/plugins/self/data.json';
+    adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
+    await manager.loadSettings(); manager.beginSettingsEditing({});
+    let enter, release;
+    const started = new Promise(resolve => { enter = resolve; }), gate = new Promise(resolve => { release = resolve; });
+    manager.devices.mergeDeviceRecords = async () => { enter(); await gate; return false; };
+    manager.settings.RECENT_INSTALL_DAYS = 14;
+    const staging = manager.saveSettings({ captureDevice: false }); await started;
+    const discarding = manager.discardPendingSettings(); release();
+    await Promise.all([staging, discarding]); await manager.settingsSaveQueue;
+    assert.equal(manager.settings.RECENT_INSTALL_DAYS, 7);
+    assert.equal(manager.hasUnsavedSettings, false);
+    assert.equal(Object.keys(adapter.files).some(path => path.endsWith('/draft.json')), false);
+    assert.equal(JSON.parse(adapter.files[path]).RECENT_INSTALL_DAYS, 7);
+});
+
+for (const edit of ['another-field', 'same-field']) {
+    test(`new ${edit} edits made while discard waits are retained without reviving abandoned values`, async () => {
+        const adapter = memoryAdapter(), { manager } = await fixture({ adapter });
+        const path = '.obsidian/plugins/self/data.json';
+        adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
+        await manager.loadSettings(); manager.beginSettingsEditing({});
+        let enter, release;
+        const started = new Promise(resolve => { enter = resolve; }), gate = new Promise(resolve => { release = resolve; });
+        manager.devices.mergeDeviceRecords = async () => { enter(); await gate; return false; };
+        manager.settings.RECENT_INSTALL_DAYS = 14;
+        const staging = manager.saveSettings({ captureDevice: false }); await started;
+        const discarding = manager.discardPendingSettings();
+        if (edit === 'another-field') manager.settings.LANGUAGE = 'fr';
+        else manager.settings.RECENT_INSTALL_DAYS = 21;
+        const newer = manager.saveSettings({ captureDevice: false }); release();
+        await Promise.all([staging, discarding, newer]);
+        assert.equal(manager.settings.RECENT_INSTALL_DAYS, edit === 'same-field' ? 21 : 7);
+        assert.equal(manager.hasUnsavedSettings, true);
+        const draftPath = Object.keys(adapter.files).find(path => path.endsWith('/draft.json'));
+        const draft = JSON.parse(adapter.files[draftPath]).value;
+        assert.equal(draft.RECENT_INSTALL_DAYS, edit === 'same-field' ? 21 : 7);
+        if (edit === 'another-field') assert.equal(draft.LANGUAGE, 'fr');
+        assert.equal(await manager.savePendingSettings(), true);
+        const saved = JSON.parse(adapter.files[path]);
+        assert.equal(saved.RECENT_INSTALL_DAYS, edit === 'same-field' ? 21 : 7);
+        if (edit === 'another-field') assert.equal(saved.LANGUAGE, 'fr');
+    });
+}
+
+test('discard keeps session-only plugin overrides outside the restored persistent settings', async () => {
+    const adapter = memoryAdapter(), { manager } = await fixture({ adapter });
+    manager.settings.DEVICE_MANAGEMENT.enabled = true;
+    const path = '.obsidian/plugins/self/data.json';
+    adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
+    await manager.loadSettings(); manager.beginSettingsEditing({});
+    manager.overview.setMode('plugins', 'session');
+    await manager.overview.setPluginState('a', { enabled: false });
+    manager.settings.RECENT_INSTALL_DAYS = 14; await manager.saveSettings({ captureDevice: false });
+    const shared = adapter.files[path]; await manager.discardPendingSettings();
+    assert.equal(manager.settings.RECENT_INSTALL_DAYS, 7);
+    assert.equal(manager.settings.Plugins.find(plugin => plugin.id === 'a').enabled, false);
+    assert.equal(manager.devices.persistedSettings().Plugins.find(plugin => plugin.id === 'a').enabled, true);
+    assert.equal(manager.hasUnsavedSettings, false); assert.equal(adapter.files[path], shared);
+});
+
+test('an explicit Save clicked while Discard is removing the old draft cannot republish it', async () => {
+    const adapter = memoryAdapter(), { manager } = await fixture({ adapter });
+    const path = '.obsidian/plugins/self/data.json';
+    adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
+    await manager.loadSettings(); manager.beginSettingsEditing({});
+    manager.settings.RECENT_INSTALL_DAYS = 14; await manager.saveSettings({ captureDevice: false });
+    const remove = manager.configProtection.files.removeDraft.bind(manager.configProtection.files);
+    let enter, release;
+    const started = new Promise(resolve => { enter = resolve; }), gate = new Promise(resolve => { release = resolve; });
+    manager.configProtection.files.removeDraft = async () => { enter(); await gate; await remove(); };
+    const discarding = manager.discardPendingSettings(); await started;
+    const saving = manager.savePendingSettings(); release();
+    await Promise.all([discarding, saving]); await manager.settingsSaveQueue;
+    assert.equal(manager.settings.RECENT_INSTALL_DAYS, 7);
+    assert.equal(JSON.parse(adapter.files[path]).RECENT_INSTALL_DAYS, 7);
+    assert.equal(manager.hasUnsavedSettings, false);
+});
+
+test('a failed draft write exposes the actionable storage error in the Save notice', async () => {
+    const adapter = memoryAdapter(), { manager } = await fixture({ adapter });
+    const path = '.obsidian/plugins/self/data.json';
+    adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
+    await manager.loadSettings(); manager.beginSettingsEditing({});
+    const write = adapter.write.bind(adapter);
+    adapter.write = async (target, text) => {
+        if (target.endsWith('/draft.json')) throw new Error('ENOSPC: no space left on device');
+        await write(target, text);
+    };
+    manager.settings.RECENT_INSTALL_DAYS = 14;
+    const original = adapter.files[path];
+    assert.equal(await manager.savePendingSettings(), false);
+    assert.match(notices.at(-1), /ENOSPC: no space left on device/);
+    assert.equal(manager.settings.RECENT_INSTALL_DAYS, 14);
+    assert.equal(adapter.files[path], original); assert.equal(manager.isSavingSettings, false);
+    adapter.write = write;
+    assert.equal(await manager.savePendingSettings(), true);
+    assert.equal(JSON.parse(adapter.files[path]).RECENT_INSTALL_DAYS, 14);
+});
+
+for (const enabled of [false, true]) {
+    test(`discard restores a permanent plugin toggle with device management ${enabled ? 'enabled' : 'disabled'}`, async () => {
+        const adapter = memoryAdapter(), { manager } = await fixture({ adapter });
+        manager.settings.DEVICE_MANAGEMENT.enabled = enabled;
+        const path = '.obsidian/plugins/self/data.json';
+        adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
+        await manager.loadSettings(); manager.beginSettingsEditing({});
+        await manager.overview.setPluginState('a', { enabled: false });
+        assert.equal(Boolean(manager.appPlugins.plugins.a), false);
+        const shared = adapter.files[path]; await manager.discardPendingSettings();
+        assert.equal(manager.settings.Plugins.find(plugin => plugin.id === 'a').enabled, true);
+        assert.equal(Boolean(manager.appPlugins.plugins.a), true);
+        assert.equal(manager.appPlugins.enabledPlugins.has('a'), true);
+        assert.equal(manager.hasUnsavedSettings, false); assert.equal(adapter.files[path], shared);
+        manager.settings.RECENT_INSTALL_DAYS = 14; await manager.saveSettings();
+        assert.equal(await manager.savePendingSettings(), true);
+        assert.equal(JSON.parse(adapter.files[path]).Plugins.find(plugin => plugin.id === 'a').enabled, true);
+    });
+}
+
+test('discarding another setting or plugin state leaves an unrelated native appearance unchanged', async () => {
+    const adapter = memoryAdapter(), { manager } = await fixture({ adapter });
+    const nativeChanges = [];
+    manager.app.customCss = { theme: 'Changed outside BPM', enabledSnippets: new Set(['outside']),
+        setTheme(theme) { nativeChanges.push(['theme', theme]); this.theme = theme; },
+        setCssEnabledStatus(id, enabled) { nativeChanges.push(['snippet', id, enabled]); },
+        async loadTheme() { nativeChanges.push(['load-theme']); }, async loadSnippets() { nativeChanges.push(['load-snippets']); } };
+    firstOf(manager.settings, 'computer').appearance = { theme: 'Saved preset', snippets: { saved: true } };
+    const path = '.obsidian/plugins/self/data.json';
+    adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
+    await manager.loadSettings(); manager.beginSettingsEditing({});
+    manager.settings.RECENT_INSTALL_DAYS = 14; await manager.saveSettings({ captureDevice: false });
+    await manager.discardPendingSettings();
+    assert.equal(manager.app.customCss.theme, 'Changed outside BPM'); assert.deepEqual(nativeChanges, []);
+    await manager.overview.setPluginState('a', { enabled: false });
+    await manager.discardPendingSettings();
+    assert.equal(Boolean(manager.appPlugins.plugins.a), true);
+    assert.equal(manager.app.customCss.theme, 'Changed outside BPM'); assert.deepEqual(nativeChanges, []);
+});
+
+test('discard restores a permanent appearance edit without publishing the abandoned preset', async () => {
+    const adapter = memoryAdapter(), { manager } = await fixture({ adapter });
+    manager.app.customCss = { theme: 'Original', enabledSnippets: new Set(['base']),
+        setTheme(theme) { this.theme = theme; },
+        setCssEnabledStatus(id, enabled) { if (enabled) this.enabledSnippets.add(id); else this.enabledSnippets.delete(id); },
+        async loadTheme() {}, async loadSnippets() {} };
+    firstOf(manager.settings, 'computer').appearance = { theme: 'Original', snippets: { base: true } };
+    const path = '.obsidian/plugins/self/data.json';
+    adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
+    await manager.loadSettings(); manager.beginSettingsEditing({});
+    await manager.overview.writeAppearance({ theme: 'Abandoned', snippets: { extra: true } });
+    const shared = adapter.files[path]; await manager.discardPendingSettings();
+    assert.equal(manager.app.customCss.theme, 'Original');
+    assert.deepEqual([...manager.app.customCss.enabledSnippets], ['base']);
+    assert.equal(manager.hasUnsavedSettings, false); assert.equal(adapter.files[path], shared);
+});
+
+test('file edits requested after Discard starts remain pending when an older settings stage delays it', async () => {
+    const adapter = memoryAdapter(), { manager } = await fixture({ adapter });
+    const path = '.obsidian/plugins/self/data.json';
+    adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
+    await manager.loadSettings(); manager.beginSettingsEditing({});
+    let enter, release;
+    const started = new Promise(resolve => { enter = resolve; }), gate = new Promise(resolve => { release = resolve; });
+    manager.devices.mergeDeviceRecords = async () => { enter(); await gate; return false; };
+    manager.settings.RECENT_INSTALL_DAYS = 14;
+    const oldStage = manager.saveSettings({ captureDevice: false }); await started;
+    const discarding = manager.discardPendingSettings();
+    const end = manager.configProtection.beginUserAction();
+    try { await manager.configProtection.stageFile('data/icons.css', 'icons edited after Discard'); }
+    finally { end(); }
+    release(); await Promise.all([oldStage, discarding]);
+    assert.equal(manager.settings.RECENT_INSTALL_DAYS, 7);
+    assert.deepEqual(manager.configProtection.protection.pendingFiles, { 'data/icons.css': 'icons edited after Discard' });
+    assert.equal(manager.hasUnsavedSettings, true);
+    assert.equal(JSON.parse(adapter.files[path]).RECENT_INSTALL_DAYS, 7);
+    assert.equal(await manager.savePendingSettings(), true);
+    assert.equal(adapter.files['.obsidian/plugins/self/data/icons.css'], 'icons edited after Discard');
+});
+
+test('a file edit requested before Discard is abandoned even when its draft write finishes afterward', async () => {
+    const adapter = memoryAdapter(), { manager } = await fixture({ adapter });
+    const path = '.obsidian/plugins/self/data.json';
+    adapter.files[path] = JSON.stringify(manager.devices.persistedSettings());
+    await manager.loadSettings(); manager.beginSettingsEditing({});
+    const write = adapter.write.bind(adapter); let enter, release, blocked = false;
+    const started = new Promise(resolve => { enter = resolve; }), gate = new Promise(resolve => { release = resolve; });
+    adapter.write = async (target, text) => {
+        if (!blocked && target.endsWith('/draft.json')) { blocked = true; enter(); await gate; }
+        await write(target, text);
+    };
+    const end = manager.configProtection.beginUserAction();
+    const oldFile = manager.configProtection.stageFile('data/icons.css', 'icons requested before Discard');
+    await started;
+    const discarding = manager.discardPendingSettings(); release();
+    try { await Promise.all([oldFile, discarding]); }
+    finally { end(); }
+    assert.deepEqual(manager.configProtection.protection.pendingFiles, {});
+    assert.equal(manager.hasUnsavedSettings, false);
+    assert.equal(adapter.files['.obsidian/plugins/self/data/icons.css'], undefined);
+    assert.equal(Object.keys(adapter.files).some(path => path.endsWith('/draft.json')), false);
+});
+
 test('failure to prime read-only sync warnings reports the limitation without breaking configuration protection', async () => {
     const adapter = memoryAdapter(), { manager } = await fixture({ adapter });
     const path = '.obsidian/plugins/self/data.json';

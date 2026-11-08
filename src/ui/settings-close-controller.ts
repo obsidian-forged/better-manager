@@ -14,7 +14,7 @@ interface SettingsCloseActions {
     close(allowAutomaticSave: boolean): void;
 }
 
-/** 关闭确认复用同一保存入口，不保存只保留草稿；Closing never silently publishes a manual draft. */
+/** 关闭确认复用保存入口，明确“不保存”才丢弃草稿；Closing never silently publishes a manual draft. */
 export class SettingsCloseController {
     private pending = false;
     constructor(private readonly host: SettingsCloseHost, private readonly actions: SettingsCloseActions) {}
@@ -34,7 +34,10 @@ export class SettingsCloseController {
                 if (!this.actions.isOpen()) return;
                 if (save && (!await this.host.savePendingSettings() || this.host.hasUnsavedSettings)) return;
             }
-            if (manual && hadUnsaved && !save) await this.host.discardPendingSettings();
+            if (manual && hadUnsaved && !save) {
+                await this.host.discardPendingSettings();
+                if (this.host.hasUnsavedSettings) return;
+            }
             if (this.actions.isOpen()) this.actions.close(!manual);
         } finally { this.pending = false; }
     }

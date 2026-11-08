@@ -6,7 +6,17 @@ const result = await build({ entryPoints: ['src/settings/save-request.ts'], bund
     write: false, logLevel: 'silent' });
 const module = { exports: {} };
 new Function('module', 'exports', result.outputFiles[0].text)(module, module.exports);
-const { queueSettingsSave, reconcileSettingsRecord, applySettingsEdit } = module.exports;
+const { queueSettingsSave, reconcileSettingsRecord, applySettingsEdit, settingsSaveMessage } = module.exports;
+
+test('an incomplete bundle notice distinguishes absent files from mismatched content', () => {
+    const issues = [{ path: 'data/icons.css', kind: 'missing' }, { path: 'data/devices/phone.json', kind: 'different' },
+        { path: 'data/devices/removed.json', kind: 'unexpected' }];
+    const zh = settingsSaveMessage('zh-CN', 'incomplete', issues), en = settingsSaveMessage('en', 'incomplete', issues);
+    assert.match(zh, /文件缺失: data\/icons\.css/); assert.match(zh, /内容不一致: data\/devices\/phone\.json/);
+    assert.match(zh, /草稿已保留/); assert.match(zh, /应已删除的文件仍存在/);
+    assert.match(en, /Missing file: data\/icons\.css/); assert.match(en, /Content mismatch: data\/devices\/phone\.json/);
+    assert.match(en, /draft was kept/);
+});
 
 test('queued automatic work cannot capture a later edit or consume its explicit save intent', async () => {
     let release;

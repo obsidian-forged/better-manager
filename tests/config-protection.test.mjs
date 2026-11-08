@@ -113,3 +113,47 @@ test('repeated manual stages outside an editor retain dirty state until an actua
     f.store.begin(f.value);f.store.end();f.store.begin(f.value);f.value.name='initial';await f.store.stage(f.value);
     assert.equal(f.store.hasPendingChanges,false);
 });
+test('file-only edits remain dirty after reopening and become clean when their bytes are reverted', async () => {
+    const f = await fixture(); f.store.begin(f.value);
+    f.store.stageFile('data/icons.css', 'icons', true); await f.store.persistFileDraft();
+    assert.equal(f.store.hasPendingChanges, true);
+    f.store.end(); f.store.begin(f.value); await f.store.stage(f.value);
+    assert.equal(f.store.hasPendingChanges, true);
+    f.store.stageFile('data/icons.css', null, true); await f.store.persistFileDraft();
+    assert.equal(f.store.hasPendingChanges, false);
+});
+test('discard clears confirmed choices and cannot republish them on the next Save', async () => {
+    const f = await fixture(); f.value.name = 'local'; await f.store.stage(f.value);
+    f.state.shared = await createConfigRevision({ name: 'remote', layout: 'cards' }, 'device-b', [f.initial], {}, hash);
+    assert.equal((await publish(f)).status, 'conflict');
+    f.store.choose({ name: 'chosen', layout: 'cards' }, { 'data/icons.css': 'chosen icons' });
+    await f.store.stage(f.value); await f.store.discardDraft();
+    assert.equal(f.store.conflict, undefined); assert.equal(f.store.confirmedSelection, undefined);
+    assert.deepEqual(f.store.pendingFiles, {}); assert.equal(f.store.hasPendingChanges, false);
+    const result = await f.store.publish(f.initial.value, {}, () => true);
+    assert.equal(result.status, 'conflict'); assert.equal(f.store.conflict.local.name, 'initial');
+});
+test('a failed file draft cannot leak into a later Save or overwrite the previous draft', async () => {
+    const f = await fixture(); f.value.name = 'valid edit'; await f.store.stage(f.value);
+    const previous = copy(f.state.draft), write = f.io.writeDraft;
+    let failed = false;
+    f.io.writeDraft = async draft => {
+        if (!failed) { failed = true; f.state.draft = copy(draft); throw new Error('disk busy after write'); }
+        await write(draft);
+    };
+    await assert.rejects(f.store.stageFileDraft('data/icons.css', 'failed icons', true), /disk busy/);
+    assert.deepEqual(f.state.draft, previous); assert.deepEqual(f.store.pendingFiles, {});
+    assert.equal(f.store.hasPendingChanges, true);
+    assert.equal((await publish(f)).status, 'saved'); assert.deepEqual(f.state.shared.files, {});
+});
+test('discard retains later file edits atomically if its replacement draft cannot be written', async () => {
+    const f = await fixture(); f.value.name = 'discarded'; await f.store.stage(f.value);
+    await f.store.stageFileDraft('data/icons.css', 'new action', true);
+    const previous = copy(f.state.draft), write = f.io.writeDraft;
+    f.io.writeDraft = async () => { throw new Error('No space for replacement draft'); };
+    await assert.rejects(f.store.discardDraft({ 'data/icons.css': 'new action' }), /No space/);
+    assert.deepEqual(f.state.draft, previous); assert.equal(f.store.pendingFiles['data/icons.css'], 'new action');
+    f.io.writeDraft = write; await f.store.discardDraft({ 'data/icons.css': 'new action' });
+    assert.equal(f.state.draft.value.name, 'initial'); assert.equal(f.state.draft.files['data/icons.css'], 'new action');
+    assert.equal(f.store.hasPendingChanges, true); assert.equal(f.state.writes, 0);
+});

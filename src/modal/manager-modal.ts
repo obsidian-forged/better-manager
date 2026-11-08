@@ -1896,6 +1896,22 @@ export class ManagerModal extends Modal {
                     .onClick(this.action(async () => { await this.assignPluginTag(pluginId, tag.id); })));
             }
         });
+        // 延迟档位与设置页同一份定义；Delayed startup tiers share the definition from settings.
+        // BPM 自身与 bpm-ignore 插件不受延迟管理，直接禁用避免看似生效；Disable what the lifecycle ignores.
+        const delays = this.settings.DELAYS;
+        const delayAvailable = delays.length > 0 && pluginId !== this.manager.manifest.id && !plugin.tags.includes(BPM_IGNORE_TAG);
+        addSubmenu(t("菜单_快速添加到延迟"), "timer", delayAvailable, (submenu) => {
+            submenu.addItem((item) => item.setTitle(t("通用_无延迟_文本")).setIcon("timer-off")
+                .setChecked(plugin.delay === "").setDisabled(plugin.delay === "")
+                .onClick(this.action(async () => { await this.assignPluginDelay(pluginId, ""); })));
+            if (delays.length > 0) submenu.addSeparator();
+            for (const delay of delays) {
+                const assigned = plugin.delay === delay.id;
+                submenu.addItem((item) => item.setTitle(`${delay.name || delay.id} (${delay.time}s)`).setIcon("timer")
+                    .setChecked(assigned).setDisabled(assigned)
+                    .onClick(this.action(async () => { await this.assignPluginDelay(pluginId, delay.id); })));
+            }
+        });
     }
 
     private async assignPluginGroup(pluginId: string, groupId: string): Promise<void> {
@@ -1910,6 +1926,15 @@ export class ManagerModal extends Modal {
         if (!plugin || tagId === BPM_TAG_ID || plugin.tags.includes(tagId) || !this.settings.TAGS.some((tag) => tag.id === tagId)) return;
         plugin.tags.push(tagId);
         await this.finishBulkMetadataEdit("批量编辑_已添加标签", 1);
+    }
+
+    /** 空字符串表示无延迟；An empty id clears the delayed startup tier. */
+    private async assignPluginDelay(pluginId: string, delayId: string): Promise<void> {
+        const plugin = this.settings.Plugins.find((item) => item.id === pluginId);
+        if (!plugin || plugin.delay === delayId) return;
+        if (delayId !== "" && !this.settings.DELAYS.some((delay) => delay.id === delayId)) return;
+        await this.manager.overview.setPluginState(pluginId, { delay: delayId });
+        await this.finishBulkMetadataEdit("批量编辑_已更新延迟", 1);
     }
 
     private async openPluginHotkeys(pluginId: string) {
@@ -5811,6 +5836,8 @@ export class ManagerModal extends Modal {
         ].forEach((item) => {
             const chip = this.footEl.createSpan({ cls: `bpm-stat-chip ${item.cls}` });
             chip.setAttribute("aria-label", `${item.label} ${item.value}`);
+            // 长主题名截断后仍可悬停查看完整值；Keep the full value reachable after truncation.
+            chip.setAttribute("title", `${item.label} ${item.value}`);
             const icon = chip.createSpan({ cls: "bpm-stat-chip__icon" });
             setIcon(icon, item.icon);
             chip.createSpan({ cls: "bpm-stat-chip__label", text: item.label });

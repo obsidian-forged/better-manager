@@ -15765,10 +15765,10 @@ body.theme-dark :is(.manager-setting__tabs, .manager-toolbar__tabs, .manager-rep
 .manager-container .manager-overview-heading[data-page="ribbon"] .ribbon-manager-filter-bar { margin-bottom: 0; }
 .manager-container .manager-ribbon-scope { margin: 0; }
 
-/* 外观总览四项统计等宽，避免较长主题名把最后一格撑宽；Appearance summary chips share equal widths. */
-.manager-food.manager-appearance-stats { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; }
-.manager-food.manager-appearance-stats .bpm-stat-chip { min-width: 0; }
-.manager-food.manager-appearance-stats .bpm-stat-chip__value { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* 外观总览统计与插件总览同节奏：按内容收窄、左对齐，长主题名截断而不撑满整栏；Appearance summary chips hug their content like the plugin overview. */
+.manager-food.manager-appearance-stats { justify-content: flex-start; }
+.manager-food.manager-appearance-stats .bpm-stat-chip { min-width: 0; max-width: 100%; }
+.manager-food.manager-appearance-stats .bpm-stat-chip__value { min-width: 0; max-width: 20ch; overflow: hidden; text-overflow: ellipsis; }
 
 /* 桌面端五个筛选字段保持一行；Five desktop filter fields stay on one row. */
 .manager-container:not(.manager-container--mobile) .manager-filter-control-group { display: flex; flex-wrap: nowrap; align-items: stretch; gap: 8px; }

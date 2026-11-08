@@ -1,7 +1,8 @@
-import { ConfigDraft, ConfigProtectionIO, ConfigConflict, ConfigEditorReopened } from './config-protection';
+import { ConfigDraft, ConfigProtectionIO, ConfigConflict, ConfigEditorReopened, ConfigPublicationFiles } from './config-protection';
 import { ConfigRecord, ConfigSnapshot, decodeConfig, DigestText, encodeConfig } from './config-revision';
 import { settingsFingerprint } from './session-store';
 import type { PrivateCacheWrites } from './private-cache-watch';
+import { mergeDeviceHeartbeat, preserveDeviceHeartbeat } from './device-file-content';
 
 export interface ConfigFileAdapter {
     exists(path: string): Promise<boolean>;
@@ -19,8 +20,11 @@ const safeId = (value: unknown): value is string => typeof value === 'string' &&
 export const isManagedConfigFile = (path: string): boolean => /^(?:data\/icons\.css|data\/devices\/[^/]+\.json)$/.test(path)
     && !path.includes('..') && !path.includes('\\');
 
+export interface ConfigBundleIssue { path: string; kind: 'missing' | 'different' | 'unexpected'; }
 export class IncompleteConfigBundle extends Error {
-    constructor(readonly snapshot: ConfigSnapshot) { super('Synced BPM configuration files have not all arrived'); }
+    constructor(readonly snapshot: ConfigSnapshot, readonly issues: ConfigBundleIssue[] = []) {
+        super('BPM configuration files are missing or do not match the recorded revision');
+    }
 }
 export class ConfigDiskChanged extends Error {
     constructor() { super('BPM configuration changed on disk before publication'); }
@@ -36,6 +40,8 @@ export class ConfigFiles implements ConfigProtectionIO {
     private initialShared?: unknown;
     private incomplete = false;
     get hasPendingBundle(): boolean { return this.incomplete; }
+    get hasPendingTransaction(): boolean { return Boolean(this.anchor.transactionTarget && this.anchor.transactionBase); }
+    needsPublication(): boolean { return this.hasPendingTransaction; }
 
     constructor(private readonly adapter: ConfigFileAdapter, readonly configDir: string, readonly pluginId: string,
         private readonly owner: string, private readonly hash: DigestText, private readonly local: ConfigLocalAnchor,
@@ -63,7 +69,8 @@ export class ConfigFiles implements ConfigProtectionIO {
             catch (error) { if (!await this.adapter.exists(current)) throw error; }
         }
     }
-    private async writeChanged(path: string, text: string, immutable = false, current?: () => boolean): Promise<void> {
+    private async writeChanged(path: string, text: string, immutable = false, current?: () => boolean,
+        guard?: () => Promise<void>): Promise<void> {
         const previous = await this.read(path);
         if (previous === text) return;
         if (immutable && previous !== undefined) {
@@ -73,11 +80,14 @@ export class ConfigFiles implements ConfigProtectionIO {
         await this.ensureParent(path);
         const write = async () => {
             if (current && !current()) throw new ConfigEditorReopened();
+            await guard?.();
+            if (current && !current()) throw new ConfigEditorReopened();
             await this.adapter.write(path, text);
         };
         const retainedWrite = () => this.privateWrites ? this.privateWrites.write(path, text, write) : write();
         if (this.sharedWrites) await this.sharedWrites.write(path, text, retainedWrite); else await retainedWrite();
         if (await this.adapter.read(path) !== text) {
+            if (guard) throw new ConfigDiskChanged();
             this.privateWrites?.altered(path);
             throw new Error('BPM configuration write verification failed');
         }
@@ -151,12 +161,28 @@ export class ConfigFiles implements ConfigProtectionIO {
     private async snapshotFrom(raw: unknown, files: Record<string, string | null>): Promise<ConfigSnapshot> {
         const snapshot = await decodeConfig(raw, this.hash), digests = await this.fileDigests(files);
         if (snapshot.revision) {
-            if (settingsFingerprint(snapshot.files) !== settingsFingerprint(digests)) throw new IncompleteConfigBundle(snapshot);
+            if (settingsFingerprint(snapshot.files) !== settingsFingerprint(digests)) {
+                const issues: ConfigBundleIssue[] = [...new Set([...Object.keys(snapshot.files), ...Object.keys(digests)])]
+                    .filter(path => snapshot.files[path] !== digests[path]).map(path => ({ path,
+                        kind: digests[path] === null ? 'missing' : snapshot.files[path] === null ? 'unexpected' : 'different' }));
+                throw new IncompleteConfigBundle(snapshot, issues);
+            }
         } else {
             snapshot.files = digests;
             snapshot.id = `legacy-${await this.hash(settingsFingerprint({ digest: snapshot.digest, files: digests }))}`;
         }
         return snapshot;
+    }
+    private async heartbeatCompatibleState(snapshot: ConfigSnapshot, files: Record<string, string | null>): Promise<StoredState | undefined> {
+        let state = this.states.get(snapshot.id);
+        if (!state && await this.adapter.exists(`${this.privateRoot}/states/${snapshot.id}.json`)) state = (await this.readState(snapshot.id)).state;
+        if (!state) return;
+        for (const path of Object.keys(snapshot.files)) {
+            const expected = state.files[path] ?? null, actual = files[path] ?? null;
+            if (expected !== actual && preserveDeviceHeartbeat(path, expected, actual) === undefined) return;
+        }
+        // Never replace the immutable snapshot with drifted bytes under its original id.
+        return state;
     }
     private async sharedMarker(raw: unknown): Promise<ConfigSnapshot> {
         try { return await decodeConfig(raw, this.hash); }
@@ -180,34 +206,41 @@ export class ConfigFiles implements ConfigProtectionIO {
         const files: Record<string, string | null> = {};
         for (const path of paths) files[path] = await this.readManaged(path) ?? null;
         if (this.anchor.transactionTarget && this.anchor.transactionBase) {
-            const before = await this.readState(this.anchor.transactionBase), after = await this.readState(this.anchor.transactionTarget);
+            const { before, after, untracked } = await this.readPreparedTransaction();
             const originalMarker = snapshot.revision ? snapshot.id === before.snapshot.id : snapshot.digest === before.snapshot.digest;
             if (originalMarker) {
                 let covered = true;
                 for (const path of new Set([...Object.keys(before.state.files), ...Object.keys(after.state.files)])) {
                     const actual = await this.readManaged(path) ?? null;
-                    if (actual !== (before.state.files[path] ?? null) && actual !== (after.state.files[path] ?? null)) { covered = false; break; }
+                    const matches = (expected: string | null) => actual === expected || preserveDeviceHeartbeat(path, expected, actual) !== undefined;
+                    if (!matches(before.state.files[path] ?? untracked[path] ?? null) && !matches(after.state.files[path] ?? null)) { covered = false; break; }
                 }
                 if (covered) {
                     // An interrupted local transaction is a private draft, including legacy commit markers.
                     this.observed = before.snapshot;
+                    this.incomplete = false;
                     return before.snapshot;
                 }
             }
         }
         let complete: ConfigSnapshot;
+        let state: StoredState | undefined;
         try { complete = await this.snapshotFrom(raw, files); }
         catch (error) {
             if (!(error instanceof IncompleteConfigBundle)) throw error;
-            this.incomplete = true;
-            if (!allowTrustedFallback || !this.anchor.head) throw error;
-            const trusted = (await this.readState(this.anchor.head)).snapshot;
-            this.observed = trusted;
-            return trusted;
+            state = await this.heartbeatCompatibleState(snapshot, files);
+            if (state) complete = snapshot;
+            else {
+                this.incomplete = true;
+                if (!allowTrustedFallback || !this.anchor.head) throw error;
+                const trusted = (await this.readState(this.anchor.head)).snapshot;
+                this.observed = trusted;
+                return trusted;
+            }
         }
         this.incomplete = false;
         this.observed = complete;
-        this.states.set(complete.id, { owner: this.owner, config: encodeConfig(complete), files });
+        this.states.set(complete.id, state ?? { owner: this.owner, config: encodeConfig(complete), files });
         return complete;
     }
     setInitialShared(value: unknown): void { this.initialShared = value; }
@@ -251,6 +284,35 @@ export class ConfigFiles implements ConfigProtectionIO {
         const state = { owner: this.owner, config: encodeConfig(snapshot), files };
         this.states.set(id, state);
         return { snapshot, state };
+    }
+    private async readPreparedTransaction(): Promise<{
+        before: { snapshot: ConfigSnapshot; state: StoredState };
+        after: { snapshot: ConfigSnapshot; state: StoredState };
+        untracked: Record<string, string>;
+    }> {
+        const id = this.anchor.transaction, base = this.anchor.transactionBase, target = this.anchor.transactionTarget;
+        if (!id || !base || !target) throw new Error('Invalid trusted BPM transaction anchor');
+        const path = `${this.privateRoot}/transactions/${id}.json`;
+        try {
+            const text = await this.read(path);
+            if (text === undefined) throw new Error('The trusted BPM transaction backup is missing');
+            const raw: unknown = JSON.parse(text);
+            if (!record(raw) || raw.owner !== this.owner || raw.before !== base || raw.after !== target
+                || raw.untracked !== undefined && !record(raw.untracked)) throw new Error('Invalid BPM transaction backup');
+            const untracked: Record<string, string> = {};
+            if (record(raw.untracked)) for (const [relative, value] of Object.entries(raw.untracked)) {
+                if (!isManagedConfigFile(relative) || typeof value !== 'string') throw new Error('Invalid BPM transaction before-image');
+                untracked[relative] = value;
+            }
+            const body = { before: base, after: target, ...(raw.untracked !== undefined ? { untracked } : {}) };
+            if (await this.hash(settingsFingerprint(body)) !== id) throw new Error('BPM transaction identity does not match the trusted anchor');
+            const before = await this.readState(base), after = await this.readState(target);
+            for (const relative of Object.keys(untracked)) {
+                if (Object.prototype.hasOwnProperty.call(before.state.files, relative)
+                    || !Object.prototype.hasOwnProperty.call(after.state.files, relative)) throw new Error('Invalid BPM transaction before-image membership');
+            }
+            return { before, after, untracked };
+        } catch (error) { this.privateWrites?.altered(path); throw error; }
     }
     async readHead(): Promise<ConfigSnapshot | undefined> {
         return this.anchor.head ? (await this.readState(this.anchor.head)).snapshot : undefined;
@@ -345,6 +407,70 @@ export class ConfigFiles implements ConfigProtectionIO {
         const state = this.states.get(snapshot.id) ?? (await this.readState(snapshot.id)).state;
         return { ...state.files };
     }
+    async preparePublication(base: ConfigSnapshot, changes: Record<string, string | null>): Promise<ConfigPublicationFiles> {
+        const files = { ...await this.filesFor(base), ...changes };
+        for (const [path, text] of Object.entries(files)) {
+            if (!path.startsWith('data/devices/')) continue;
+            const actual = await this.readManaged(path) ?? null;
+            const retained = mergeDeviceHeartbeat(path, text, actual);
+            if (retained !== undefined) files[path] = retained;
+        }
+        return { files, digests: await this.fileDigests(files) };
+    }
+
+    private async assertMarker(expected: ConfigSnapshot): Promise<void> {
+        const actual = await this.read(`${this.root}/data.json`);
+        const raw: unknown = actual === undefined ? this.initialShared ?? {} : JSON.parse(actual);
+        const marker = await this.sharedMarker(raw);
+        if (marker.revision ? marker.id !== expected.id
+            : expected.revision || settingsFingerprint(marker.value) !== settingsFingerprint(expected.value)) throw new ConfigDiskChanged();
+    }
+    private async assertFiles(files: Record<string, string | null>): Promise<void> {
+        for (const [path, text] of Object.entries(files)) {
+            if ((await this.readManaged(path) ?? null) !== text) throw new ConfigDiskChanged();
+        }
+    }
+    private async writePublicFile(path: string, text: string | null, expected: string | null,
+        marker: ConfigSnapshot, current: () => boolean): Promise<void> {
+        const guard = async () => {
+            await this.assertMarker(marker);
+            if ((await this.readManaged(path) ?? null) !== expected) throw new ConfigDiskChanged();
+        };
+        if (!current()) throw new ConfigEditorReopened();
+        await guard();
+        if (expected === text) return;
+        const target = `${this.root}/${path}`;
+        if (text !== null) { await this.writeChanged(target, text, false, current, guard); return; }
+        const remove = async () => {
+            if (!current()) throw new ConfigEditorReopened();
+            await guard();
+            if (!current()) throw new ConfigEditorReopened();
+            await this.adapter.remove(target);
+        };
+        if (this.sharedWrites) await this.sharedWrites.remove(target, remove); else await remove();
+        if (await this.adapter.exists(target)) throw new ConfigDiskChanged();
+    }
+
+    /** Only an explicit Save may undo an interrupted local transaction. Retain the old anchor
+     * until all before-images are restored, so another cancellation remains recoverable. */
+    private async restorePreparedFiles(marker: ConfigSnapshot, current: () => boolean): Promise<void> {
+        if (!this.anchor.transactionTarget || this.anchor.transactionBase !== marker.id) return;
+        const { before, after, untracked } = await this.readPreparedTransaction();
+        const restored: Record<string, string | null> = {};
+        for (const path of new Set([...Object.keys(before.state.files), ...Object.keys(after.state.files)])) {
+            const actual = await this.readManaged(path) ?? null;
+            const original = before.state.files[path] ?? untracked[path] ?? null, prepared = after.state.files[path] ?? null;
+            const matches = (expected: string | null) => actual === expected || preserveDeviceHeartbeat(path, expected, actual) !== undefined;
+            if (!matches(original) && !matches(prepared)) throw new ConfigDiskChanged();
+            const retained = mergeDeviceHeartbeat(path, original, actual) ?? original;
+            await this.writePublicFile(path, retained, actual, marker, current);
+            restored[path] = retained;
+        }
+        await this.assertMarker(marker);
+        await this.assertFiles(restored);
+        if (!current()) throw new ConfigEditorReopened();
+        this.saveAnchor({ ...this.anchor, transaction: undefined, transactionTarget: undefined, transactionBase: undefined });
+    }
 
     async writeShared(snapshot: ConfigSnapshot, changes: Record<string, string | null>, stillClosed: () => boolean): Promise<void> {
         const expected = this.observed;
@@ -352,6 +478,7 @@ export class ConfigFiles implements ConfigProtectionIO {
         const current = await this.readShared();
         if (current.id !== expected.id) throw new ConfigDiskChanged();
         if (!stillClosed()) throw new ConfigEditorReopened();
+        await this.restorePreparedFiles(current, stillClosed);
         let previous = this.states.get(snapshot.id);
         if (!previous && this.anchor.head === snapshot.id) previous = (await this.readState(snapshot.id)).state;
         const files = { ...(this.states.get(this.anchor.head ?? '')?.files ?? this.states.get(current.id)?.files ?? {}), ...changes };
@@ -359,40 +486,45 @@ export class ConfigFiles implements ConfigProtectionIO {
         for (const path of Object.keys(files)) if (!(path in snapshot.files)) delete files[path];
         const verified = await this.snapshotFrom(encodeConfig(snapshot), files);
         if (verified.id !== snapshot.id) throw new Error('Configuration files do not match the prepared revision');
+        const before = this.states.get(current.id);
+        if (!before) throw new Error('The BPM transaction baseline is unavailable');
+        const initialFiles: Record<string, string | null> = {};
+        const untracked: Record<string, string> = {};
+        for (const [path, text] of Object.entries(files)) {
+            const actual = await this.readManaged(path) ?? null, original = before.files[path] ?? null;
+            if (actual !== original && actual !== text && preserveDeviceHeartbeat(path, original, actual) === undefined) throw new ConfigDiskChanged();
+            // Re-prepare a revision if a heartbeat advanced after its digests were calculated.
+            // Publishing the old digest would strand devices without this private before-image.
+            const retained = mergeDeviceHeartbeat(path, text, actual);
+            if (retained !== undefined && retained !== text) throw new ConfigDiskChanged();
+            initialFiles[path] = actual;
+            // A file outside the old revision can predate this transaction. Its physical
+            // before-image must not be confused with a file created by this Save.
+            if (!Object.prototype.hasOwnProperty.call(before.files, path) && actual !== null) untracked[path] = actual;
+        }
+        await this.assertMarker(current);
         const state = { owner: this.owner, config: encodeConfig(snapshot), files };
         await this.privateJson(`states/${snapshot.id}.json`, state, true);
         this.states.set(snapshot.id, state);
         if (!stillClosed()) throw new ConfigEditorReopened();
         // An equivalent remote revision may be accepted without presenting a conflict. Its
         // exact bytes still form the transaction's before-image and must survive interruption.
-        const before = this.states.get(current.id);
-        if (!before) throw new Error('The BPM transaction baseline is unavailable');
         await this.privateJson(`states/${current.id}.json`, before, true);
         if (!stillClosed()) throw new ConfigEditorReopened();
         // Keep a prepared copy before touching any public file. The primary marker is written last.
-        const transaction = await this.hash(settingsFingerprint({ before: current.id, after: snapshot.id }));
-        await this.privateJson(`transactions/${transaction}.json`, { owner: this.owner, before: current.id, after: snapshot.id }, true);
+        const prepared = { before: current.id, after: snapshot.id, ...(Object.keys(untracked).length ? { untracked } : {}) };
+        const transaction = await this.hash(settingsFingerprint(prepared));
+        await this.privateJson(`transactions/${transaction}.json`, { owner: this.owner, ...prepared }, true);
         this.saveAnchor({ ...this.anchor, transaction, transactionTarget: snapshot.id, transactionBase: current.id });
         for (const [path, text] of Object.entries(files)) {
-            if (!stillClosed()) throw new ConfigEditorReopened();
-            const target = `${this.root}/${path}`;
-            if (text === null) {
-                if (await this.adapter.exists(target)) {
-                    if (!stillClosed()) throw new ConfigEditorReopened();
-                    const remove = () => this.adapter.remove(target);
-                    if (this.sharedWrites) await this.sharedWrites.remove(target, remove); else await remove();
-                }
-            }
-            else await this.writeChanged(target, text, false, stillClosed);
+            await this.writePublicFile(path, text, initialFiles[path] ?? null, current, stillClosed);
         }
         if (!stillClosed()) throw new ConfigEditorReopened();
-        // Recheck the commit marker after auxiliary writes; foreign writers do not participate in this queue.
-        const actual = await this.read(`${this.root}/data.json`);
-        const raw: unknown = actual === undefined ? this.initialShared ?? {} : JSON.parse(actual);
-        const marker = await this.sharedMarker(raw);
-        if (marker.revision ? marker.id !== current.id : settingsFingerprint(marker.value) !== settingsFingerprint(current.value)) throw new ConfigDiskChanged();
+        const guard = async () => { await this.assertMarker(current); await this.assertFiles(files); };
+        // Both the marker and exact auxiliary bytes must still match at publication time.
+        await guard();
         if (!stillClosed()) throw new ConfigEditorReopened();
-        await this.writeChanged(`${this.root}/data.json`, JSON.stringify(encodeConfig(snapshot), null, 2), false, stillClosed);
+        await this.writeChanged(`${this.root}/data.json`, JSON.stringify(encodeConfig(snapshot), null, 2), false, stillClosed, guard);
         const saved = await this.readShared();
         if (saved.id !== snapshot.id) throw new Error('BPM configuration publication verification failed');
     }

@@ -129,6 +129,8 @@ export default class Manager extends Plugin {
     private settingsEditEpoch = 0;
     private pendingSettingsRequests = 0;
     private pendingSettingsSnapshot?: Record<string, unknown>;
+    private settingsDiscardContext?: { before: Record<string, unknown>; restored?: Record<string, unknown> };
+    private settingsDiscardPromise?: Promise<void>;
     private settingsTab?: ManagerSettingTab;
     public configProtection?: ProtectedConfigSession;
     private syncWarningModal?: SyncWarningModal;
@@ -1076,6 +1078,7 @@ export default class Manager extends Plugin {
         if (options.captureDevice !== false) this.devices?.capture();
         this.pendingSettingsRequests++;
         this.refreshSettingsSaveState();
+        const discard = this.settingsDiscardContext;
         // Freeze before joining the queue; automatic work must never capture a later manual edit.
         try { await queueSettingsSave(this.devices?.persistedSettings() ?? this.settings, options.automatic === true,
             task => this.queueSettingsOperation(task), async request => {
@@ -1083,10 +1086,14 @@ export default class Manager extends Plugin {
             const recordsChanged = await this.devices?.mergeDeviceRecords();
             if (recordsChanged) this.managerModal?.refreshDevicePanelIfOpen();
             // 投影其他设备时，data.json 只写本机真实值；外域值留在 DEVICE_MANAGEMENT。
-            if (request.serialized === this.persistedSettingsJson && request.automatic) return;
-            if (this.configProtection) await this.configProtection.save(request.value, request.automatic);
-            else this.pendingSettingsSnapshot = request.value;
-            this.persistedSettingsJson = request.serialized;
+            // A request captured while Discard was waiting still contains the old UI values.
+            // Preserve only its newer edits against the restored, committed baseline.
+            const value = discard?.restored ? applySettingsEdit(discard.before, request.value, discard.restored) : request.value;
+            const serialized = discard?.restored ? JSON.stringify(value) : request.serialized;
+            if (serialized === this.persistedSettingsJson && request.automatic) return;
+            if (this.configProtection) await this.configProtection.save(value, request.automatic);
+            else this.pendingSettingsSnapshot = value;
+            this.persistedSettingsJson = serialized;
         }); } finally {
             this.pendingSettingsRequests--;
             this.refreshSettingsSaveState();
@@ -1102,8 +1109,44 @@ export default class Manager extends Plugin {
 
     /** 用户明确选择不保存后丢弃草稿；Discard the local draft after an explicit decline. */
     public async discardPendingSettings(): Promise<void> {
-        await this.configProtection?.discardDraft();
-        this.refreshSettingsSaveState();
+        if (this.settingsDiscardPromise) return this.settingsDiscardPromise;
+        const discard: { before: Record<string, unknown>; restored?: Record<string, unknown> } = {
+            before: copySettingsRecord(this.devices?.persistedSettings() ?? this.settings),
+        };
+        const protection = this.configProtection, fileCutoff = protection?.mutationEpoch;
+        this.settingsDiscardContext = discard;
+        this.settingsEditEpoch++;
+        const pending = this.queueSettingsOperation(async () => {
+            const restored = await protection?.discardDraft(fileCutoff);
+            this.pendingSettingsSnapshot = undefined;
+            if (!restored) return;
+            discard.restored = restored;
+            const latest = copySettingsRecord(this.devices?.persistedSettings() ?? this.settings);
+            const next = applySettingsEdit(discard.before, latest, restored);
+            const beforeRuntime = this.devices?.boundRuntimeFingerprint() ?? '';
+            const appearanceFingerprint = () => settingsFingerprint(this.devices?.presetById(this.devices.boundPresetId)?.preset.appearance);
+            const beforeAppearance = appearanceFingerprint();
+            const runtimeFingerprint = () => settingsFingerprint([
+                this.settings.Plugins.map(plugin => [plugin.id, plugin.enabled, plugin.delay]),
+                this.settings.RIBBON_SETTINGS, this.settings.RIBBON_GROUPS, this.settings.RIBBON_MANAGER_ENABLED, this.settings.DELAY,
+                this.settings.DEVICE_MANAGEMENT?.enabled,
+            ]);
+            const beforePlugins = runtimeFingerprint();
+            this.adoptSettings(next);
+            this.devices?.reconcileAfterExplicitSave();
+            // Requests started after this point already see the restored UI baseline.
+            if (this.settingsDiscardContext === discard) this.settingsDiscardContext = undefined;
+            if (settingsFingerprint(next) !== settingsFingerprint(restored)) await this.configProtection?.save(next);
+            await this.devices?.restoreDiscardedRuntime({ restoreRuntime: beforeRuntime !== (this.devices?.boundRuntimeFingerprint() ?? '')
+                || beforePlugins !== runtimeFingerprint(), restoreAppearance: beforeAppearance !== appearanceFingerprint() });
+        });
+        this.settingsDiscardPromise = pending;
+        try { await pending; }
+        finally {
+            if (this.settingsDiscardContext === discard) this.settingsDiscardContext = undefined;
+            if (this.settingsDiscardPromise === pending) this.settingsDiscardPromise = undefined;
+            this.refreshSettingsSaveState();
+        }
     }
 
     private async publishPendingSettings(allowed: () => boolean = () => true, notifySuccess = true): Promise<boolean> {
@@ -1113,13 +1156,15 @@ export default class Manager extends Plugin {
         try {
             // User mutations already captured their edited scope. Re-capturing runtime state
             // here would add unrelated appearance/Ribbon changes or cancel a reviewed choice.
+            const discard = this.settingsDiscardContext;
             const staging = this.saveSettings({ captureDevice: false });
-            const value = copySettingsRecord(this.devices?.persistedSettings() ?? this.settings);
+            let value = copySettingsRecord(this.devices?.persistedSettings() ?? this.settings);
             const epoch = this.settingsEditEpoch, protection = this.configProtection;
             const protectionEpoch = protection?.mutationEpoch;
             const current = () => !this.isUnloaded && allowed() && this.settingsEditEpoch === epoch
                 && protection?.mutationEpoch === protectionEpoch && !protection?.hasPendingUserAction;
             await staging;
+            if (discard?.restored) value = applySettingsEdit(discard.before, value, discard.restored);
             const result = await this.queueSettingsOperation(async () => {
                 if (!current()) return { status: 'cancelled' as const };
                 if (protection) return protection.publish(value, current);
@@ -1157,12 +1202,13 @@ export default class Manager extends Plugin {
                 if (notifySuccess) new Notice(settingsSaveMessage(this.settings.LANGUAGE, result.status === 'noop' ? 'unchanged' : 'saved'), 5000);
                 return true;
             }
-            if (notifySuccess || result.status !== 'cancelled') new Notice(settingsSaveMessage(this.settings.LANGUAGE, result.status), 10_000);
+            if (notifySuccess || result.status !== 'cancelled') new Notice(settingsSaveMessage(this.settings.LANGUAGE, result.status,
+                result.status === 'incomplete' ? result.issues : undefined), 10_000);
             if (notifySuccess && result.status === 'conflict') this.openConfigConflict();
             return false;
         } catch (error) {
             this.reportError("Saving settings failed", error);
-            new Notice(settingsSaveMessage(this.settings.LANGUAGE, 'failed'), 10_000);
+            new Notice(`${settingsSaveMessage(this.settings.LANGUAGE, 'failed')}\n${errorMessage(error)}`, 10_000);
             return false;
         } finally {
             this.settingsSaveRunning = false;

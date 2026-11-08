@@ -1,5 +1,6 @@
 import type { ConfigRecord } from './config-revision';
 import { settingsFingerprint } from './session-store';
+import type { ConfigBundleIssue } from './config-files';
 
 export interface SettingsSaveRequest { value: ConfigRecord; serialized: string; automatic: boolean; }
 export function copySettingsRecord(value: object): ConfigRecord {
@@ -88,10 +89,15 @@ const saveMessages = {
     pending: ['仍有未保存的更改，请点击保存配置。', 'There are unsaved changes. Save the settings to keep them.'],
     savedPending: ['本次配置已保存，仍有新的更改尚未保存。', 'Settings were saved. Newer changes still need to be saved.'],
     conflict: ['发现配置差异，已保留两份。请查看标记、确认选择，再点击保存配置。', 'Different settings were found and both copies were preserved. Review the marked features, confirm your choices, then save again.'],
-    incomplete: ['同步配置的相关文件尚未完整到达。未写入配置，请稍后再次保存。', 'Some synced configuration files have not arrived. No settings were published. Save again when the files are available.'],
+    incomplete: ['配置文件缺失或与记录的版本不一致。未写入配置，草稿已保留。请检查下列文件的同步状态。', 'Configuration files are missing or do not match the recorded revision. No settings were published; the draft was kept. Check the files listed below.'],
     cancelled: ['保存期间配置有了新更改，已保留草稿。请再次保存。', 'Settings changed during saving. The draft was kept. Save again.'],
-    failed: ['配置保存失败，草稿已保留。', 'Settings could not be saved. The draft was kept.'],
+    failed: ['配置保存未完成。请保留当前窗口，检查错误后重试。', 'Settings could not be saved. Keep this window open, check the error, then retry.'],
 } as const;
-export function settingsSaveMessage(language: string, key: keyof typeof saveMessages): string {
-    return saveMessages[key][/^zh/i.test(language) ? 0 : 1];
+export function settingsSaveMessage(language: string, key: keyof typeof saveMessages, issues: readonly ConfigBundleIssue[] = []): string {
+    const chinese = /^zh/i.test(language);
+    const message = saveMessages[key][chinese ? 0 : 1];
+    if (key !== 'incomplete' || !issues.length) return message;
+    const labels = chinese ? { missing: '文件缺失', different: '内容不一致', unexpected: '应已删除的文件仍存在' }
+        : { missing: 'Missing file', different: 'Content mismatch', unexpected: 'Deleted file is still present' };
+    return [message, ...issues.map(issue => `${labels[issue.kind]}: ${issue.path}`)].join('\n');
 }

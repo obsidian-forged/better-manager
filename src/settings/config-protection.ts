@@ -20,6 +20,10 @@ export interface ConfigPublication {
     value?: ConfigRecord;
 }
 type ConfigComparisonPurpose = 'conflict' | 'publication';
+export interface ConfigPublicationFiles {
+    files: Record<string, string | null>;
+    digests: Record<string, string | null>;
+}
 export interface ConfigProtectionIO {
     readShared(): Promise<ConfigSnapshot>;
     readHead(): Promise<ConfigSnapshot | undefined>;
@@ -33,6 +37,8 @@ export interface ConfigProtectionIO {
     claimRepair?(key: string): Promise<boolean>;
     sameContent?(value: ConfigRecord, files: Record<string, string | null>, base: ConfigSnapshot, incoming: ConfigSnapshot,
         purpose: ConfigComparisonPurpose): Promise<boolean>;
+    preparePublication?(base: ConfigSnapshot, files: Record<string, string | null>): Promise<ConfigPublicationFiles>;
+    needsPublication?(): boolean;
     writeShared(value: ConfigSnapshot, files: Record<string, string | null>, stillClosed: () => boolean): Promise<void>;
 }
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -70,6 +76,7 @@ export class ConfigProtection {
     private readonly stagedFiles: Record<string, string | null> = {};
     private lastDraft = '';
     private fileEdits = false;
+    private readonly editedFiles = new Set<string>();
     private editing = false;
     private recoveredEdits = false;
     get conflict(): ConfigConflict | undefined { return this.conflictValue; }
@@ -122,6 +129,7 @@ export class ConfigProtection {
         }
         if (this.draft) {
             Object.assign(this.stagedFiles, this.draft.files);
+            if (this.draft.userEdited) for (const path of Object.keys(this.draft.files)) this.editedFiles.add(path);
             this.lastDraft = settingsFingerprint(this.draft);
             this.recoveredEdits = this.draft.userEdited;
         }
@@ -143,7 +151,6 @@ export class ConfigProtection {
         this.editing = true;
         if (!this.draft?.userEdited && !this.recoveredEdits) this.baseline = clone(value);
         this.openingHead = this.head;
-        this.fileEdits = false;
     }
     end(): void {
         this.editing = false;
@@ -156,7 +163,14 @@ export class ConfigProtection {
             if (record(rebased)) this.baseline = rebased;
         }
         const baseline = this.baseline ?? this.head.value;
-        const userEdited = Boolean(this.recoveredEdits || !equal(value, baseline) || this.fileEdits);
+        let fileEdits = false;
+        for (const path of this.editedFiles) {
+            const text = this.stagedFile(path)?.value ?? null;
+            if ((text === null ? null : await this.hash(text)) !== (this.head.files[path] ?? null)) { fileEdits = true; break; }
+        }
+        this.fileEdits = fileEdits;
+        if (this.recoveredEdits && equal(value, this.head.value) && !fileEdits && !this.resolution) this.recoveredEdits = false;
+        const userEdited = Boolean(this.recoveredEdits || !equal(value, baseline) || fileEdits);
         const draft = { base: this.openingHead?.id ?? this.head.id, value: clone(value), files: clone(this.resolution?.files ?? this.stagedFiles), userEdited };
         if (equal(value, this.head.value) && !Object.keys(this.stagedFiles).length && !this.draft) return;
         const fingerprint = settingsFingerprint(draft);
@@ -175,9 +189,32 @@ export class ConfigProtection {
         if (this.stagedFile(path)?.value === text) return;
         this.stagedFiles[path] = text;
         if (this.resolution) this.resolution.files[path] = text;
-        if (userEdited) this.fileEdits = true;
+        if (userEdited) { this.editedFiles.add(path); this.fileEdits = true; }
     }
     async persistFileDraft(): Promise<void> { await this.stage(this.draft?.value ?? this.baseline ?? this.head.value); }
+    /** A failed private write must not leave a file edit available to a later Save. */
+    async stageFileDraft(path: string, text: string | null, userEdited: boolean): Promise<void> {
+        const previous = { files: clone(this.stagedFiles), edited: [...this.editedFiles], fileEdits: this.fileEdits,
+            draft: this.draft && clone(this.draft), lastDraft: this.lastDraft, resolution: this.resolution && clone(this.resolution),
+            conflict: this.conflictValue && clone(this.conflictValue), incoming: this.incoming, recovered: this.recoveredEdits };
+        this.stageFile(path, text, userEdited);
+        try { await this.persistFileDraft(); }
+        catch (error) {
+            for (const key of Object.keys(this.stagedFiles)) delete this.stagedFiles[key];
+            Object.assign(this.stagedFiles, previous.files);
+            this.editedFiles.clear(); for (const key of previous.edited) this.editedFiles.add(key);
+            this.fileEdits = previous.fileEdits; this.draft = previous.draft; this.lastDraft = previous.lastDraft;
+            this.resolution = previous.resolution; this.conflictValue = previous.conflict;
+            this.incoming = previous.incoming; this.recoveredEdits = previous.recovered;
+            try {
+                if (previous.draft) await this.io.writeDraft(previous.draft); else await this.io.removeDraft();
+                if (previous.conflict) await this.io.preserveConflict(previous.conflict); else await this.io.clearConflict?.();
+            } catch (restoreError) {
+                throw new AggregateError([error, restoreError], 'The configuration draft could not be saved or restored. Check available storage before saving again.');
+            } finally { this.changed(); }
+            throw error;
+        }
+    }
     stagedFile(path: string): { value: string | null } | undefined {
         if (this.resolution && Object.prototype.hasOwnProperty.call(this.resolution.files, path)) return { value: this.resolution.files[path] };
         return Object.prototype.hasOwnProperty.call(this.stagedFiles, path) ? { value: this.stagedFiles[path] } : undefined;
@@ -256,7 +293,7 @@ export class ConfigProtection {
         if (!current()) return { status: 'cancelled' };
         const selected = clone(this.resolution?.value ?? value), files = this.pendingFiles;
         const sameEffective = await this.sameContent(selected, files, this.head, disk);
-        if (sameEffective && await this.sameContent(selected, files, this.head, disk, 'publication')) {
+        if (sameEffective && !this.io.needsPublication?.() && await this.sameContent(selected, files, this.head, disk, 'publication')) {
             if (!current()) return { status: 'cancelled' };
             await this.io.writeHead(disk);
             return this.complete(disk, current, 'noop');
@@ -281,24 +318,45 @@ export class ConfigProtection {
         const parents = this.conflictValue && (this.resolution || sameEffective) ? [this.head, this.conflictValue.incoming,
             ...(disk.id !== this.head.id && disk.id !== this.conflictValue.incoming.id ? [disk] : [])]
             : (sameBase || sameEffective) && disk.id !== this.head.id ? [this.head, disk] : [this.head];
-        const next = await createConfigRevision(selected, this.device, parents, fileDigests, this.hash);
+        // Preserve newer heartbeat bytes only when a real Save is needed. A metadata-only
+        // no-op above must not create a revision or touch any shared file.
+        const prepared = await this.io.preparePublication?.(this.head, files);
+        const next = await createConfigRevision(selected, this.device, parents, prepared?.digests ?? fileDigests, this.hash);
         // Re-saving an unchanged local version after an old sync replay restores its existing
         // revision. Repeated explicit clicks are authorized; there is no automatic repair loop.
         const target = !this.resolution && sameConfigContent(next, this.head) ? this.head : next;
         if (!current()) return { status: 'cancelled' };
-        await this.io.writeShared(target, files, current);
+        await this.io.writeShared(target, prepared?.files ?? files, current);
         await this.io.writeHead(target);
         return this.complete(target, current, 'saved');
     }
 
     /** 用户明确选择“不保存”时丢弃本机草稿，避免下次打开继续提示；Discard an explicit unsaved draft. */
-    async discardDraft(): Promise<void> {
-        await this.io.removeDraft();
-        this.draft = undefined;
-        this.lastDraft = '';
-        this.fileEdits = false;
+    async discardDraft(retainFiles: Record<string, string | null> = {}): Promise<void> {
+        let hasFileEdits = false;
+        for (const [path, text] of Object.entries(retainFiles)) {
+            if ((text === null ? null : await this.hash(text)) !== (this.head.files[path] ?? null)) { hasFileEdits = true; break; }
+        }
+        const retained = hasFileEdits ? { base: this.head.id, value: clone(this.head.value), files: clone(retainFiles), userEdited: true } : undefined;
+        // Replace an existing draft in one write when a later action must survive. Deleting
+        // it first would lose the new action if storage ran out during the following write.
+        if (retained) await this.io.writeDraft(retained); else await this.io.removeDraft();
+        await this.io.clearConflict?.();
+        this.draft = retained;
+        this.lastDraft = retained ? settingsFingerprint(retained) : '';
+        this.fileEdits = hasFileEdits;
         this.recoveredEdits = false;
+        this.editedFiles.clear();
+        this.resolution = undefined;
+        this.conflictValue = undefined;
+        this.incoming = undefined;
+        this.baseline = clone(this.head.value);
+        this.openingHead = this.head;
         for (const key of Object.keys(this.stagedFiles)) delete this.stagedFiles[key];
+        if (retained) {
+            Object.assign(this.stagedFiles, retained.files);
+            for (const path of Object.keys(retained.files)) this.editedFiles.add(path);
+        }
         this.changed();
     }
 
@@ -315,6 +373,7 @@ export class ConfigProtection {
             this.lastDraft = '';
         }
         this.fileEdits = false;
+        this.editedFiles.clear();
         this.recoveredEdits = false;
         this.conflictValue = undefined;
         this.resolution = undefined;

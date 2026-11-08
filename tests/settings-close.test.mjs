@@ -64,6 +64,14 @@ test('new edits staged during Save are not discarded by closing the editor', asy
     assert.equal(f.isOpen(), true);
 });
 
+test('new edits staged while Discard waits keep the editor open for another explicit choice', async () => {
+    const f = fixture();
+    f.host.discardPendingSettings = async () => { f.calls.push('discard-with-new-draft'); };
+    await f.controller.request();
+    assert.deepEqual(f.calls, ['draft', 'confirm', 'discard-with-new-draft']);
+    assert.equal(f.isOpen(), true); assert.equal(f.host.hasUnsavedSettings, true);
+});
+
 test('repeated clicks share one pending prompt and cannot publish twice', async () => {
     const f = fixture();
     let answer;
