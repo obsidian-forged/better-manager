@@ -1,8 +1,9 @@
 import { FloatingScrollbars } from '../ui/floating-scrollbars';
 import { SettingsSaveButton } from '../ui/settings-save-button';
 import { ScopeSelect } from '../ui/scope-select';
-import { App, ButtonComponent, PluginSettingTab, requireApiVersion, setIcon, Setting, ToggleComponent } from 'obsidian';
+import { App, ButtonComponent, ExtraButtonComponent, PluginSettingTab, requireApiVersion, setIcon, Setting, ToggleComponent } from 'obsidian';
 import type { SettingDefinitionItem, SettingDefinitionPage } from 'obsidian';
+import { protectionText } from './protection-text';
 import { SettingsSearch, SettingsSearchPage } from './search-view';
 import { SyncNoticeView } from '../ui/sync-notice-view';
 import { syncNativeSettingsPageTitle } from './native-page-title';
@@ -25,6 +26,7 @@ class ManagerSettingTab extends PluginSettingTab {
     private search?: SettingsSearch;
     private syncNoticeView?: SyncNoticeView;
     private settingsSaveButton?: SettingsSaveButton;
+    private navigationSaveButton?: ExtraButtonComponent;
     private navigation?: ScopeSelect;
     private navigationObserver?: MutationObserver;
     private closeObserver?: MutationObserver;
@@ -39,7 +41,11 @@ class ManagerSettingTab extends PluginSettingTab {
         const pages = this.searchPages();
         const indexed = SettingsSearch.index(pages, this.containerEl.ownerDocument, this.manager.translator.t('功能开关_个性化'));
         this.observeNavigation();
-        return [{ type: 'group', cls: 'manager-setting-navigation', heading: this.manager.translator.t('管理器_BPM设置_短'), items: pages.map((page, index): SettingDefinitionPage => ({
+        const t = (key: string) => this.manager.translator.t(key);
+        // 原生分页列表补上与编辑页一致的搜索/保存按钮；搜索按钮打开完整设置搜索。
+        // Mirror the editor's search/save buttons on the native page list; search opens the full settings search.
+        return [{ type: 'group', cls: 'manager-setting-navigation', heading: t('管理器_BPM设置_短'),
+            items: pages.map((page, index): SettingDefinitionPage => ({
             type: 'page',
             name: page.label,
             desc: this.navigationDescription(page),
@@ -112,10 +118,45 @@ class ManagerSettingTab extends PluginSettingTab {
                 setIcon(icon, summary.getAttribute('data-bpm-setting-icon') ?? 'settings-2');
                 row.prepend(icon);
             });
+            // 原生分页列表同样提供搜索与保存入口；保存只在手动保存模式显示。
+            // The native page list also gets search and save controls; save only for manual saving.
+            root.querySelectorAll<HTMLElement>('.manager-setting-navigation > .setting-item-heading > .setting-item-control').forEach(control => {
+                if (!control.querySelector('.manager-setting-search__native-trigger')) {
+                    const search = new ExtraButtonComponent(control);
+                    search.extraSettingsEl.addClass('manager-setting-search__native-trigger');
+                    search.setIcon('search').setTooltip(this.manager.translator.t('设置_搜索_标题'));
+                    search.onClick(() => this.openSearchFromNavigation());
+                }
+                const existing = control.querySelector<HTMLElement>('.bpm-settings-save');
+                if (this.manager.settings?.MANUAL_CONFIG_SAVE === false) {
+                    if (existing) {
+                        existing.remove();
+                        if (this.navigationSaveButton?.extraSettingsEl === existing) this.navigationSaveButton = undefined;
+                    }
+                    return;
+                }
+                if (existing) return;
+                const button = new ExtraButtonComponent(control);
+                this.navigationSaveButton = button;
+                button.extraSettingsEl.addClass('bpm-settings-save');
+                button.onClick(() => { void this.manager.savePendingSettings(); });
+                this.refreshNavigationSave();
+            });
         };
         this.navigationObserver = new view.MutationObserver(decorate);
         this.navigationObserver.observe(root, { childList: true, subtree: true });
         decorate();
+    }
+
+    /** 从原生分类列表打开完整设置搜索；Open the full settings search from the native page list. */
+    private openSearchFromNavigation(): void {
+        const rows = this.containerEl.querySelectorAll<HTMLElement>('.manager-setting-navigation .setting-item.mod-navigable');
+        const index = this.activeTabIndex >= 0 && this.activeTabIndex < rows.length ? this.activeTabIndex : 0;
+        const row = rows[index] ?? rows[0];
+        if (!row) return;
+        row.click();
+        const view = this.containerEl.ownerDocument.defaultView ?? window;
+        view.setTimeout(() => this.renderRoot.querySelector<HTMLButtonElement>('.manager-setting-search__trigger')?.click(), 0);
     }
 
     hide(): void {
@@ -169,7 +210,18 @@ class ManagerSettingTab extends PluginSettingTab {
         this.syncNoticeView?.refresh();
     }
 
-    refreshSettingsSaveState(): void { this.settingsSaveButton?.refresh(); }
+    refreshSettingsSaveState(): void { this.settingsSaveButton?.refresh(); this.refreshNavigationSave(); }
+
+    /** 原生分页列表的保存按钮与顶栏共用状态；Keep the native-list save button in sync with the topbar. */
+    private refreshNavigationSave(): void {
+        const button = this.navigationSaveButton;
+        if (!button) return;
+        const saving = this.manager.isSavingSettings, dirty = this.manager.hasUnsavedSettings;
+        button.setIcon(saving ? 'loader-circle' : 'save').setDisabled(saving)
+            .setTooltip(protectionText(this.manager, saving ? 'saving' : dirty ? 'saveSettings' : 'checkSaveSettings'));
+        button.extraSettingsEl.toggleClass('has-unsaved-settings', dirty);
+        button.extraSettingsEl.toggleClass('is-saving', saving);
+    }
 
     /** 记住当前分页，重绘后回到同一页并恢复滚动位置，避免改一次配置就跳回顶部。 */
     private activeTabIndex = 0;

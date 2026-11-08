@@ -38,6 +38,7 @@ export class ProtectedConfigSession {
     private privateErrorShown = false;
     private sharedErrorShown = false;
     get privateCacheModified(): boolean { return this.privateCache.modified; }
+    get localCacheRebuilt(): boolean { return this.files.localCacheRebuilt; }
     get usingCache(): boolean { return true; }
     get mutationEpoch(): number { return this.editEpoch; }
     get hasPendingUserAction(): boolean { return this.userOperations > 0; }
@@ -108,6 +109,8 @@ export class ProtectedConfigSession {
         return settingsFingerprint(this.normalize(payload));
     }
     async load(): Promise<ConfigRecord> {
+        // 缺失的恢复缓存不能阻止启动；Missing recovery files must not prevent startup.
+        await this.files.repairMissingAnchor();
         await this.files.backupStartup();
         this.files.setInitialShared(await this.manager.loadData());
         await this.files.recoverPreparedCommit();

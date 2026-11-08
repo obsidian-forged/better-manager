@@ -69,6 +69,8 @@ export class DeviceManager {
 
     private readonly localState: LocalStateStore;
     constructor(private readonly manager: Manager) { this.localState = new LocalStateStore(manager); }
+    /** 未开启同步保护时设备记录留在 data.json，不读写共享文件；Single-machine mode keeps devices in data.json. */
+    private get sharedDeviceFiles(): boolean { return this.manager.configSyncProtectionEnabled; }
     get data(): DeviceManagement {
         const data = this.manager.settings.DEVICE_MANAGEMENT;
         if (!data) throw new Error('Device management has not been initialized');
@@ -88,7 +90,7 @@ export class DeviceManager {
         const stored = await this.loadIdentity();
         this.migrateDeviceRecord(typeof stored?.id === 'string' ? stored.id : '');
         // 先读回自己的记录文件，避免每次启动都当成新设备重建并刷新时间戳。
-        const ownFromFile = await this.loadOwnDeviceFile();
+        const ownFromFile = this.sharedDeviceFiles ? await this.loadOwnDeviceFile() : undefined;
         if (ownFromFile) {
             const existing = this.data.devices.find(device => device.id === this.id);
             const fileStamp = ownFromFile.updatedAt ?? ownFromFile.lastSeen;
@@ -115,6 +117,12 @@ export class DeviceManager {
             await this.applyEffective();
         }
         this.ready = true;
+        if (!this.sharedDeviceFiles) {
+            // 关闭保护后首次启动：把遗留的设备文件并入 data.json 一次，之后不再写文件。
+            // First local start absorbs existing device files once, then keeps records in data.json.
+            if (await this.mergeDeviceRecords(true)) await this.manager.saveSettings({ captureDevice: false, automatic: true });
+            return;
+        }
         // 记录文件是跨设备的唯一通道：启动时先收别人的，再补写缺失的（含旧版 data.json 里的记录），最后写自己。
         await this.mergeDeviceRecords();
         await this.bootstrapDeviceFiles();
@@ -770,8 +778,9 @@ export class DeviceManager {
             [plugin.id, { enabled: plugin.enabled, delay: plugin.delay }])), this.boundPresetId);
         const persisted = { ...raw, Plugins: raw.Plugins.map(plugin => ({ ...plugin, ...states[plugin.id] })) };
         // 设备记录只走独立文件；写进 data.json 会让三端互相覆盖并触发同步抖动。
+        // 本机模式没有共享文件，设备记录随 data.json 一起保存。
         const management = persisted.DEVICE_MANAGEMENT;
-        if (!management) return persisted;
+        if (!management || !this.sharedDeviceFiles) return persisted;
         return { ...persisted, DEVICE_MANAGEMENT: { ...management, devices: [] } };
     }
 
@@ -1128,6 +1137,7 @@ export class DeviceManager {
     }
 
     private async writeDeviceFile(device: ManagedDevice): Promise<void> {
+        if (!this.sharedDeviceFiles) return;
         const path = this.deviceFilePath(device.id);
         const adapter = this.manager.app?.vault?.adapter;
         if (!path || !adapter) return;
@@ -1136,6 +1146,7 @@ export class DeviceManager {
     }
 
     private async removeDeviceFile(id: string): Promise<void> {
+        if (!this.sharedDeviceFiles) return;
         const path = this.deviceFilePath(id);
         const adapter = this.manager.app?.vault?.adapter;
         if (!path || !adapter) return;
@@ -1146,7 +1157,7 @@ export class DeviceManager {
 
     /** 用户操作必须可观察失败，并恢复之前的文件草稿；User edits either retain both records or reject. */
     private async persistDeviceEdit(id: string, device: ManagedDevice | null): Promise<void> {
-        if (!this.manager.app?.vault?.adapter) {
+        if (!this.manager.app?.vault?.adapter || !this.sharedDeviceFiles) {
             await this.manager.saveSettings({ captureDevice: false });
             return;
         }
@@ -1197,8 +1208,8 @@ export class DeviceManager {
      * 设备记录不走 data.json：那份文件容易被同步规则排除，且多设备共享会互相覆盖。
      * Merge device records from their own files (one file per device).
      */
-    async mergeDeviceRecords(): Promise<boolean> {
-        if (!this.ready) return false;
+    async mergeDeviceRecords(includeShared = false): Promise<boolean> {
+        if (!this.ready || (!this.sharedDeviceFiles && !includeShared)) return false;
         const configDir = this.manager.app?.vault?.configDir;
         const prefix = this.deviceFilePrefix();
         const adapter = this.manager.app?.vault?.adapter;

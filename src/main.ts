@@ -5,7 +5,9 @@ import type { ReleaseHighlightsModal } from './modal/release-highlights-modal';
 import { settingsFingerprint } from './settings/session-store';
 import { ProtectedConfigSession } from './settings/protected-session';
 import { applySettingsEdit, copySettingsRecord, queueSettingsSave, reconcileSettingsRecord, settingsSaveMessage } from './settings/save-request';
+import { resolveConfigSyncProtection } from './settings/config-mode';
 import { detectSyncPlugins } from './settings/sync-detector';
+import { protectionText } from './settings/protection-text';
 import { SyncWarningModal } from './settings/sync-warning';
 import { ConfigConflictModal } from './settings/conflict-view';
 import { PluginIcons } from './icons/plugin-icons';
@@ -125,6 +127,8 @@ export default class Manager extends Plugin {
     /** Serialize settings writes and remember the last successful payload. */
     private settingsSaveQueue: Promise<void> = Promise.resolve();
     private persistedSettingsJson = '';
+    /** 无保护模式下 data.json 的最近内容指纹；Fingerprint of the last data.json written or read. */
+    private lastPublishedFingerprint = '';
     private settingsSaveRunning = false;
     private settingsEditEpoch = 0;
     private pendingSettingsRequests = 0;
@@ -237,6 +241,8 @@ export default class Manager extends Plugin {
         // 后续 t() 才能直接命中；不 await 会让切换到 ru/ja/... 的用户先看到英文
         await this.translator.ensureLanguage(this.settings.LANGUAGE);
         if (this.isUnloaded) return;
+        // 缓存被删除后重建只提示一次；Announce a rebuilt recovery cache once, after language is ready.
+        if (this.configProtection?.localCacheRebuilt) new Notice(this.translator.t("配置_恢复缓存已重建"), 8000);
         let builtinTagsChanged = false;
         const tagCountBeforeBpmEnsure = this.settings.TAGS.length;
         ensureBpmTagExists(this);
@@ -946,17 +952,35 @@ export default class Manager extends Plugin {
     }
 
     public async loadSettings() {
+        const raw: unknown = await this.loadData();
+        // 旧版本没有这个键：升级用户沿用保护，避免同步用户升级后静默失去保护；全新安装默认关闭。
+        // Legacy files keep protection; fresh installs stay on the simple single-file path.
+        const protectedMode = resolveConfigSyncProtection(raw);
+        if (!protectedMode) {
+            this.configProtection = undefined;
+            this.settings = this.normalizeSettings(raw) as unknown as ManagerSettings;
+            this.settings.CONFIG_SYNC_PROTECTION = false;
+            this.pendingSettingsSnapshot = undefined;
+            this.persistedSettingsJson = JSON.stringify(this.settings);
+            this.lastPublishedFingerprint = settingsFingerprint(this.settings);
+            return;
+        }
         const storage = new LocalStateStore(this);
-        const stored = storage.loadLocalStorage('bpm-settings-cache-owner');
-        const owner = typeof stored === 'string' && /^[a-z0-9-]{8,80}$/.test(stored) ? stored
+        const savedOwner = storage.loadLocalStorage('bpm-settings-cache-owner');
+        const owner = typeof savedOwner === 'string' && /^[a-z0-9-]{8,80}$/.test(savedOwner) ? savedOwner
             : window.crypto?.randomUUID?.() ?? `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-        if (stored !== owner) storage.saveLocalStorage('bpm-settings-cache-owner', owner);
+        if (savedOwner !== owner) storage.saveLocalStorage('bpm-settings-cache-owner', owner);
         this.configProtection = new ProtectedConfigSession(this, owner, value => this.normalizeSettings(value),
             () => { if (this.translator && !this.isUnloaded) this.refreshConfigConflict(); });
         this.settings = this.normalizeSettings(await this.configProtection.load()) as unknown as ManagerSettings;
+        this.settings.CONFIG_SYNC_PROTECTION = true;
         this.pendingSettingsSnapshot = undefined;
         this.persistedSettingsJson = JSON.stringify(this.settings);
+        this.lastPublishedFingerprint = settingsFingerprint(this.settings);
     }
+
+    /** 未开启同步保护时只读写 data.json；Off means the simple single-file path. */
+    public get configSyncProtectionEnabled(): boolean { return this.settings?.CONFIG_SYNC_PROTECTION !== false; }
 
     private normalizeSettings(value: unknown): Record<string, unknown> {
         if (value !== null && value !== undefined && (typeof value !== 'object' || Array.isArray(value))) throw new Error('Invalid BPM settings file');
@@ -1027,6 +1051,11 @@ export default class Manager extends Plugin {
             && Reflect.get(core, 'sync') === true;
         const detected = detectSyncPlugins(this.appPlugins.enabledPlugins, official);
         if (!detected.length || this.isUnloaded) return;
+        // 未开启保护时不展示 .bpm 排除提示，改为建议开启保护。
+        if (!this.configSyncProtectionEnabled) {
+            new Notice(protectionText(this, 'syncProtectionAmbientWarning'), 12_000);
+            return;
+        }
         this.syncWarningModal = new SyncWarningModal(this, detected);
         this.syncWarningModal.open();
     }
@@ -1092,12 +1121,48 @@ export default class Manager extends Plugin {
             const serialized = discard?.restored ? JSON.stringify(value) : request.serialized;
             if (serialized === this.persistedSettingsJson && request.automatic) return;
             if (this.configProtection) await this.configProtection.save(value, request.automatic);
-            else this.pendingSettingsSnapshot = value;
-            this.persistedSettingsJson = serialized;
+            else if (request.automatic) {
+                // 编辑期间的视图状态不提前写盘；启动迁移等无编辑场景直接落盘。
+                // View-state saves never publish early; startup migrations write directly.
+                if (this.settingsEditors.size === 0 && !this.pendingSettingsSnapshot) {
+                    await this.writeLocalSettings(value);
+                    this.pendingSettingsSnapshot = undefined;
+                    this.persistedSettingsJson = serialized;
+                }
+            } else {
+                this.pendingSettingsSnapshot = value;
+                this.persistedSettingsJson = serialized;
+            }
         }); } finally {
             this.pendingSettingsRequests--;
             this.refreshSettingsSaveState();
         }
+    }
+
+    /** 无保护模式只写 data.json，并读回校验；The simple path writes and verifies data.json. */
+    private async writeLocalSettings(value: Record<string, unknown>): Promise<void> {
+        await this.saveData(value);
+        const check: unknown = await this.loadData();
+        if (settingsFingerprint(this.normalizeSettings(check)) !== settingsFingerprint(value)) {
+            throw new Error('BPM settings write verification failed');
+        }
+        this.lastPublishedFingerprint = settingsFingerprint(value);
+    }
+
+    /** 外部修改 data.json 时，手动保存先确认再覆盖；Manual saves ask before overwriting an external edit. */
+    private async confirmLocalExternalChange(current: () => boolean): Promise<boolean> {
+        let disk: unknown;
+        try { disk = await this.loadData() as unknown; }
+        catch (error) { this.reportError('Reading local settings failed', error); return true; }
+        if (settingsFingerprint(this.normalizeSettings(disk)) === this.lastPublishedFingerprint) return true;
+        const message = protectionText(this, 'syncProtectionExternalChanged');
+        if (this.settings.MANUAL_CONFIG_SAVE === false) { new Notice(message, 10_000); return true; }
+        if (!current()) return false;
+        const { confirmWithModal } = await import('./utils.js');
+        const confirmed = await confirmWithModal(this.app, this, {
+            message, confirmText: protectionText(this, 'syncProtectionOverwrite'), tone: 'warning',
+        });
+        return confirmed && current();
     }
 
     public get automaticSavesSuppressed(): boolean { return false; }
@@ -1109,6 +1174,7 @@ export default class Manager extends Plugin {
 
     /** 用户明确选择不保存后丢弃草稿；Discard the local draft after an explicit decline. */
     public async discardPendingSettings(): Promise<void> {
+        if (!this.configProtection) { await this.discardLocalSettings(); return; }
         if (this.settingsDiscardPromise) return this.settingsDiscardPromise;
         const discard: { before: Record<string, unknown>; restored?: Record<string, unknown> } = {
             before: copySettingsRecord(this.devices?.persistedSettings() ?? this.settings),
@@ -1149,6 +1215,93 @@ export default class Manager extends Plugin {
         }
     }
 
+    /** 无保护模式没有磁盘草稿：直接回到最后一次读写 data.json 的内容。 */
+    private async discardLocalSettings(): Promise<void> {
+        this.settingsEditEpoch++;
+        this.pendingSettingsSnapshot = undefined;
+        let raw: unknown;
+        try { raw = await this.loadData() as unknown; }
+        catch (error) { this.reportError('Reading local settings failed', error); raw = {}; }
+        const published = this.normalizeSettings(raw) as unknown as ManagerSettings;
+        const publishedDevices = published.DEVICE_MANAGEMENT?.devices;
+        this.adoptSettings(published);
+        // adoptSettings 保留内存中的设备记录，本机模式需要显式回到已保存版本。
+        if (publishedDevices && this.settings.DEVICE_MANAGEMENT) {
+            this.settings.DEVICE_MANAGEMENT.devices = publishedDevices.map(device => ({ ...device }));
+        }
+        this.devices?.reconcileAfterExplicitSave();
+        this.lastPublishedFingerprint = settingsFingerprint(this.normalizeSettings(raw));
+        this.persistedSettingsJson = JSON.stringify(this.devices?.persistedSettings() ?? this.settings);
+        if (this.devices?.data.enabled) await this.devices.apply({ refreshViews: false, persist: false });
+        this.refreshSettingsSaveState();
+    }
+
+    /** 切换同步保护；重启后生效，关闭时可选删除 .bpm。Applied on the next start.
+     * 切换本身必须先落盘，否则删除 .bpm 会连草稿里的开关一起丢掉。
+     * Persist the switch before deleting the cache, or the draft carrying it is removed too. */
+    public async setConfigSyncProtection(enabled: boolean, deleteCache: boolean): Promise<boolean> {
+        if ((this.settings.CONFIG_SYNC_PROTECTION === true) === enabled) return true;
+        if (enabled) {
+            // 本机模式还没有保护会话，直接写一份带设备记录的普通 data.json。
+            // Local mode has no session yet: write a plain data.json that keeps device records.
+            this.settings.CONFIG_SYNC_PROTECTION = true;
+            const snapshot = this.localSnapshot(true);
+            await this.writeLocalSettings(snapshot);
+            this.pendingSettingsSnapshot = undefined;
+            this.persistedSettingsJson = JSON.stringify(snapshot);
+            new Notice(protectionText(this, 'syncProtectionRestart'), 10_000);
+            return true;
+        }
+        this.settings.CONFIG_SYNC_PROTECTION = false;
+        await this.saveSettings({ captureDevice: false });
+        if (!await this.savePendingSettings()) {
+            this.settings.CONFIG_SYNC_PROTECTION = true;
+            new Notice(protectionText(this, 'syncProtectionSaveFirst'), 10_000);
+            return false;
+        }
+        this.clearConfigProtectionAnchors();
+        if (deleteCache) await this.removeConfigRecoveryCache();
+        // 删除 .bpm 后立刻写普通配置，去掉修订标记并保留设备记录。
+        // After dropping the cache, write plain settings without a revision and keep devices.
+        const snapshot = this.localSnapshot(false);
+        await this.writeLocalSettings(snapshot);
+        this.persistedSettingsJson = JSON.stringify(snapshot);
+        new Notice(protectionText(this, 'syncProtectionRestart'), 10_000);
+        return true;
+    }
+
+    /** 本机快照：持久值 + 内存设备记录，绝不写修订标记。 */
+    private localSnapshot(protection: boolean): Record<string, unknown> {
+        const snapshot = copySettingsRecord(this.devices?.persistedSettings() ?? this.settings);
+        snapshot.CONFIG_SYNC_PROTECTION = protection;
+        delete snapshot._bpmRevision;
+        const devices = this.settings.DEVICE_MANAGEMENT?.devices;
+        const management = snapshot.DEVICE_MANAGEMENT;
+        if (devices && management && typeof management === 'object' && !Array.isArray(management)) {
+            snapshot.DEVICE_MANAGEMENT = { ...(management as Record<string, unknown>), devices: devices.map(device => ({ ...device })) };
+        }
+        return snapshot;
+    }
+
+    private clearConfigProtectionAnchors(): void {
+        try {
+            for (const key of Object.keys(window.localStorage)) {
+                if (key.startsWith('bpm-config-anchor-')) window.localStorage.removeItem(key);
+            }
+        } catch (error) { this.reportError('Clearing configuration anchors failed', error); }
+    }
+
+    private async removeConfigRecoveryCache(): Promise<void> {
+        const adapter = this.app.vault.adapter;
+        const path = normalizePath(`${this.app.vault.configDir}/plugins/${this.manifest.id}/.bpm`);
+        try {
+            if (await adapter.exists(path)) await adapter.rmdir(path, true);
+        } catch (error) {
+            this.reportError('Removing the recovery cache failed', error);
+            new Notice(errorMessage(error), 10_000);
+        }
+    }
+
     private async publishPendingSettings(allowed: () => boolean = () => true, notifySuccess = true): Promise<boolean> {
         if (this.settingsSaveRunning || this.isUnloaded || !allowed()) return false;
         this.settingsSaveRunning = true;
@@ -1168,7 +1321,8 @@ export default class Manager extends Plugin {
             const result = await this.queueSettingsOperation(async () => {
                 if (!current()) return { status: 'cancelled' as const };
                 if (protection) return protection.publish(value, current);
-                await this.saveData(value);
+                if (!await this.confirmLocalExternalChange(current)) return { status: 'cancelled' as const };
+                await this.writeLocalSettings(value);
                 if (current()) this.pendingSettingsSnapshot = undefined;
                 return { status: current() ? 'saved' as const : 'saved-pending' as const, value };
             });

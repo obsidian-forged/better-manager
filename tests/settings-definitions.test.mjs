@@ -17,6 +17,8 @@ class Element {
     prepend(child) { child.parentElement = this; this.children.unshift(child); }
     addClass(...classes) { classes.forEach(cls => this.classes.add(cls)); }
     removeClass(...classes) { classes.forEach(cls => this.classes.delete(cls)); }
+    toggleClass(cls, on) { if (on) this.classes.add(cls); else this.classes.delete(cls); }
+    remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter(child => child !== this); }
     hasClass(cls) { return this.classes.has(cls); }
     empty() { this.children = []; }
     closest(selector) { return this.hasClass(selector.slice(1)) ? this : this.parentElement?.closest(selector) ?? null; }
@@ -26,6 +28,7 @@ class Element {
         const descendants = this.children.flatMap(child => [child, ...child.querySelectorAll('*')]);
         if (selector === '*') return descendants;
         if (selector === '.manager-setting-navigation > .setting-item-heading > .setting-item-name') return descendants.filter(child => child.hasClass('setting-item-name') && child.parentElement?.hasClass('setting-item-heading') && child.parentElement?.parentElement?.hasClass('manager-setting-navigation'));
+        if (selector === '.manager-setting-navigation > .setting-item-heading > .setting-item-control') return descendants.filter(child => child.hasClass('setting-item-control') && child.parentElement?.hasClass('setting-item-heading') && child.parentElement?.parentElement?.hasClass('manager-setting-navigation'));
         if (selector === '.manager-setting-navigation__summary') return descendants.filter(child => child.hasClass('manager-setting-navigation__summary'));
         return this.children.filter(child => child.hasClass('setting-item') && !child.hasClass('setting-item-heading') || child.hasClass('manager-personalize'));
     }
@@ -39,7 +42,15 @@ function document() {
     return doc;
 }
 class Base { constructor(app) { this.app = app; this.containerEl = new Element(document()); } }
-const obsidian = { PluginSettingTab: Base, Plugin: Base, Modal: Base, FuzzySuggestModal: Base, SuggestModal: Base, Menu: Base, requireApiVersion: () => true, setIcon: (element, icon) => { element.icon = icon; } };
+class ExtraButton {
+    constructor(container) { this.extraSettingsEl = new Element(container.ownerDocument); this.extraSettingsEl.parentElement = container; container.children.push(this.extraSettingsEl); }
+    setIcon(icon) { this.extraSettingsEl.icon = icon; return this; }
+    setTooltip() { return this; }
+    setDisabled() { return this; }
+    onClick(callback) { this.click = callback; return this; }
+}
+const obsidian = { PluginSettingTab: Base, Plugin: Base, Modal: Base, FuzzySuggestModal: Base, SuggestModal: Base, Menu: Base, ExtraButtonComponent: ExtraButton,
+    requireApiVersion: () => true, setIcon: (element, icon) => { element.icon = icon; } };
 const result = await build({ stdin: { contents: "export { ManagerSettingTab } from './src/settings/index'; export { SettingsSearch } from './src/settings/search-view'; export { syncNativeSettingsPageTitle } from './src/settings/native-page-title';", resolveDir: process.cwd() },
     bundle: true, platform: 'node', format: 'cjs', write: false, external: ['obsidian', 'electron'], loader: { '.webp': 'dataurl' }, logLevel: 'silent' });
 const module = { exports: {} };
@@ -65,13 +76,15 @@ test('native and BPM settings search index real setting names and descriptions w
 
 test('native definitions mount the live editor on the matching page and legacy display returns to its own root', () => {
     const editing = new Set();
-    const manager = { register() {}, translator: { t: key => key }, beginSettingsEditing: owner => editing.add(owner), endSettingsEditing: owner => editing.delete(owner) };
+    const manager = { register() {}, settings: { MANUAL_CONFIG_SAVE: true, LANGUAGE: 'en' }, isSavingSettings: false, hasUnsavedSettings: false,
+        translator: { t: key => key }, beginSettingsEditing: owner => editing.add(owner), endSettingsEditing: owner => editing.delete(owner) };
     const tab = new ManagerSettingTab({}, manager), legacyRoot = tab.containerEl, mounts = [];
     tab.searchPages = pages;
     tab.renderSettings = () => { mounts.push({ root: tab.renderRoot, page: tab.activeTabIndex }); };
     const rootDefinitions = tab.getSettingDefinitions();
     assert.equal(rootDefinitions[0].type, 'group');
     assert.equal(rootDefinitions[0].heading, '管理器_BPM设置_短');
+    assert.equal(rootDefinitions[0].search, undefined);
     const definitions = rootDefinitions[0].items;
     assert.deepEqual(definitions.map(item => [item.type, item.name]), [['page', 'General'], ['page', 'Appearance']]);
     assert.ok(definitions[0].items[0].aliases.includes('Days to mark newly installed plugins'));
@@ -94,18 +107,24 @@ test('native definitions mount the live editor on the matching page and legacy d
 });
 
 test('native settings navigation uses fixed descriptions and a single gear icon in its heading', () => {
-    const tab = new ManagerSettingTab({}, { register() {}, translator: { t: key => key } });
+    const tab = new ManagerSettingTab({}, { register() {}, settings: { MANUAL_CONFIG_SAVE: true, LANGUAGE: 'en' }, isSavingSettings: false, hasUnsavedSettings: false,
+        savePendingSettings: async () => true, translator: { t: key => key } });
     tab.searchPages = pages;
     const group = tab.containerEl.createDiv('manager-setting-navigation');
-    const heading = group.createDiv('setting-item-heading').createDiv('setting-item-name');
+    const header = group.createDiv('setting-item-heading');
+    const heading = header.createDiv('setting-item-name');
+    const control = header.createDiv('setting-item-control');
     heading.setText('Better Manager settings');
     const definitions = tab.getSettingDefinitions();
     assert.equal(definitions[0].cls, 'manager-setting-navigation');
     assert.equal(tab.icon, 'settings');
     assert.equal(heading.children[0].icon, 'settings');
     assert.equal(heading.children[1].textContent, 'Better Manager settings');
+    assert.ok(control.querySelector('.bpm-settings-save'), 'manual saving exposes a native save control');
+    assert.ok(control.children.some(child => child.hasClass('manager-setting-search__native-trigger')), 'the native list exposes a search button');
     tab.getSettingDefinitions();
     assert.equal(heading.children.length, 2);
+    assert.equal(control.children.filter(child => child.hasClass('bpm-settings-save')).length, 1);
     assert.deepEqual(definitions[0].items.map(page => page.desc.children[0].textContent), ['Configure behavior and saving.', 'Customize cards and toolbars.']);
 });
 

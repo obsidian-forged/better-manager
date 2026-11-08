@@ -5090,7 +5090,8 @@ export class ManagerModal extends Modal {
 
         const changed = JSON.stringify(this.manager.settings.PLUGIN_LAYOUT) !== JSON.stringify(normalized);
         this.manager.settings.PLUGIN_LAYOUT = normalized;
-        if (changed) this.action(async () => { await this.manager.saveSettings(); })();
+        // 布局归一化是内部维护，不制造“未保存”草稿；Normalization is maintenance, not a user edit.
+        if (changed) this.action(async () => { await this.manager.saveSettings({ automatic: true }); })();
         return this.manager.settings.PLUGIN_LAYOUT;
     }
 

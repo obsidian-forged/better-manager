@@ -444,3 +444,49 @@ test('transaction before-images require the original local anchor, owner, endpoi
         assert.equal(f.publicWrites().length, before); assert.equal(f.files.get(`${root}/${path}`), text);
     }
 });
+
+test('deleting the private recovery cache does not block startup and rebuilds from shared values', async () => {
+    const f = fixture({ name: 'initial' }, 'icons');
+    const value = await f.store.load(); f.store.begin(value); value.name = 'committed';
+    await f.store.publish(value, f.store.current.files, () => true);
+    // 用户删除 .bpm 与 data 目录；Users delete .bpm and the data folder, leaving only the shared files.
+    for (const path of [...f.files.keys()]) {
+        if (path.includes('/.bpm/') || path.endsWith('/data/icons.css')) f.files.delete(path);
+    }
+    assert.equal(await f.io.repairMissingAnchor(), true);
+    assert.equal(f.io.localCacheRebuilt, true);
+    assert.equal(await f.io.readHead(), undefined);
+    assert.equal(f.anchor().head, undefined);
+    const recovered = await f.io.readShared(true);
+    assert.equal(recovered.revision, undefined);
+    assert.equal(recovered.value.name, 'committed');
+    assert.equal(recovered.files['data/icons.css'], null);
+    const repaired = JSON.parse(f.files.get(`${root}/data.json`));
+    assert.equal(repaired._bpmRevision, undefined, 'the unusable revision marker is removed');
+    assert.equal(repaired.name, 'committed');
+    // 启动流程会写入新的本机状态；Startup persists the rebuilt private state.
+    await f.io.writeHead(recovered);
+    assert.equal(f.anchor().head, recovered.id);
+    assert.ok([...f.files.keys()].some(path => path.includes('/.bpm/device-a/states/')));
+    // 下次启动读取已修复的普通配置；Later starts read the repaired plain configuration.
+    const next = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-a', hash, f.local);
+    assert.equal(await next.repairMissingAnchor(), false);
+    const later = await next.readShared(true);
+    assert.equal(later.revision, undefined);
+    assert.equal(later.value.name, 'committed');
+    assert.equal(later.files['data/icons.css'], undefined);
+});
+
+test('a complete bundle still starts normally after the private cache is repaired', async () => {
+    const f = fixture({ name: 'initial' }, 'icons');
+    const value = await f.store.load(); f.store.begin(value); value.name = 'committed';
+    await f.store.publish(value, f.store.current.files, () => true);
+    for (const path of [...f.files.keys()]) if (path.includes('/.bpm/')) f.files.delete(path);
+    assert.equal(await f.io.repairMissingAnchor(), true);
+    const recovered = await f.io.readShared(true);
+    // 文件齐全时保留修订身份；A complete bundle keeps its revision identity.
+    assert.ok(recovered.revision);
+    assert.equal(recovered.files['data/icons.css'], await hash('icons'));
+    const loaded = await f.store.load();
+    assert.equal(loaded.name, 'committed');
+});

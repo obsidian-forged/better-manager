@@ -36,13 +36,15 @@ async function fixture() {
     };
     const manager = new Manager();
     manager.settings = structuredClone(DEFAULT_SETTINGS);
+    manager.settings.CONFIG_SYNC_PROTECTION = true;
     manager.settings.Plugins = [{ id: 'self', name: 'Self', enabled: true, delay: '', tags: [], group: '', desc: '', note: '' }];
     manager.manifest = { id: 'self' };
     manager.translator = { t: key => key };
     manager.app = { vault: { configDir: '.obsidian', adapter }, workspace: {},
         loadLocalStorage: key => locals.get(key), saveLocalStorage: (key, value) => { locals.set(key, value); } };
     manager.appPlugins = { manifests: { self: { id: 'self' } }, enabledPlugins: new Set(['self']), plugins: { self: {} } };
-    manager.loadData = async () => null;
+    manager.loadData = async () => Object.hasOwn(files, `${ROOT}data.json`) ? JSON.parse(files[`${ROOT}data.json`]) : null;
+    manager.saveData = async value => { files[`${ROOT}data.json`] = JSON.stringify(value); };
     manager.refreshRibbonManagerFeature = async () => {};
     manager.devices = new DeviceManager(manager);
     await manager.devices.initialize();

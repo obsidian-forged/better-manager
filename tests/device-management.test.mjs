@@ -54,6 +54,7 @@ async function fixture(options = {}) {
     platform.isMobileApp = false;
     platform.isTablet = false;
     const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.CONFIG_SYNC_PROTECTION = options.localOnly ? false : true;
     settings.Plugins = [record('self', true), record('a', true), record('b', false), record('ignored', true, ['bpm-ignore'])];
     settings.RIBBON_SETTINGS = [structuredClone(ribbon)];
     const calls = [];
@@ -65,7 +66,10 @@ async function fixture(options = {}) {
     manager.manifest = { id: 'self' };
     manager.translator = { t: (key, vars) => `${key}${vars?.names || ''}` };
     manager.app = { loadLocalStorage: key => locals.get(key), saveLocalStorage: (key, value) => { locals.set(key, value); } };
-    manager.loadData = async () => null;
+    let stored = options.initialStored ?? null;
+    const dataPath = '.obsidian/plugins/self/data.json';
+    manager.loadData = async () => options.adapter && options.adapter.files[dataPath] !== undefined
+        ? JSON.parse(options.adapter.files[dataPath]) : stored;
     if (options.adapter) manager.app.vault = { configDir: '.obsidian', adapter: options.adapter };
     manager.appPlugins = {
         manifests: Object.fromEntries(settings.Plugins.map(plugin => [plugin.id, { id: plugin.id, name: plugin.name }])),
@@ -76,7 +80,11 @@ async function fixture(options = {}) {
         async enablePluginAndSave(id) { calls.push(['enable', id]); this.enabledPlugins.add(id); this.plugins[id] = {}; },
         async disablePluginAndSave(id) { calls.push(['disable', id]); this.enabledPlugins.delete(id); delete this.plugins[id]; },
     };
-    manager.saveData = async () => { calls.push(['save']); };
+    manager.saveData = async value => {
+        stored = structuredClone(value);
+        if (options.adapter) options.adapter.files[dataPath] = JSON.stringify(value);
+        calls.push(['save']);
+    };
     manager.refreshRibbonManagerFeature = async () => { calls.push(['ribbon']); };
     manager.devices = new DeviceManager(manager);
     await manager.devices.initialize();
@@ -1647,3 +1655,19 @@ for (const phase of ['marker-written', 'publication-returned']) {
         assert.equal(JSON.parse(adapter.files[path]).RECENT_INSTALL_DAYS, 21);
     });
 }
+
+test('single-machine mode keeps device records in data.json and never writes device files', async () => {
+    const otherPath = `${DEVICES_DIR}other.json`;
+    const original = JSON.stringify({ id: 'other', name: 'Old tablet', type: 'tablet', lastSeen: 5, updatedAt: 5 });
+    const adapter = memoryAdapter({ [otherPath]: original });
+    const { manager, settings } = await fixture({ adapter, localOnly: true });
+    // 旧设备文件启动时并入 data.json 一次，之后不再写入；Legacy files are absorbed once.
+    assert.equal(adapter.files[otherPath], original);
+    assert.equal(settings.DEVICE_MANAGEMENT.devices.find(device => device.id === 'other')?.name, 'Old tablet');
+    assert.ok(settings.DEVICE_MANAGEMENT.devices.some(device => device.id === manager.devices.id));
+    await manager.devices.rename('other', 'Renamed');
+    const saved = manager.devices.persistedSettings().DEVICE_MANAGEMENT;
+    assert.equal(saved.devices.find(device => device.id === 'other').name, 'Renamed');
+    assert.equal(adapter.files[otherPath], original);
+    assert.equal(Object.keys(adapter.files).filter(path => path.includes('/data/devices/')).length, 1);
+});

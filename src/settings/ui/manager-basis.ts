@@ -1,10 +1,11 @@
 import { FEATURE_IDS, TOOL_IDS, featureEnabled, toolAvailable, toolEnabled } from '../../features';
 import BaseSetting from "../base-setting";
-import { ButtonComponent, DropdownComponent, Setting, ToggleComponent, TextComponent, setIcon } from "obsidian";
+import { ButtonComponent, DropdownComponent, Notice, Setting, ToggleComponent, TextComponent, setIcon } from "obsidian";
 import Commands from "src/command";
 import { githubProxyEnabled } from "src/github-url";
 import { addSettingTags } from '../setting-tags';
 import { protectionText } from '../protection-text';
+import { confirmWithCheckbox, confirmWithModal } from '../../utils';
 // import { GROUP_STYLE, ITEM_STYLE, TAG_STYLE } from "src/data/data";
 
 export default class ManagerBasis extends BaseSetting {
@@ -108,6 +109,42 @@ export default class ManagerBasis extends BaseSetting {
                 this.settings.MANUAL_CONFIG_SAVE = value;
                 await this.manager.saveSettings({ captureDevice: false });
             })));
+        addSettingTags(new Setting(this.containerEl)
+            .setName(syncText('syncProtectionName')).setDesc(syncText('syncProtectionDescription')),
+            [syncText('realtimeSyncTag'), syncText('syncProtectionDefaultOff')])
+            .addToggle(toggle => {
+                const current = this.settings.CONFIG_SYNC_PROTECTION === true;
+                toggle.setValue(current).onChange(this.action(async value => {
+                    if (value === current) return;
+                    if (this.manager.hasUnsavedSettings || this.manager.configProtection?.conflictChoices) {
+                        new Notice(syncText('syncProtectionSaveFirst'));
+                        toggle.setValue(current);
+                        return;
+                    }
+                    let changed = false;
+                    if (value) {
+                        const confirmed = await confirmWithModal(this.app, this.manager, {
+                            message: syncText('syncProtectionEnableWarning'),
+                            confirmText: this.manager.translator.t('通用_确认_文本'),
+                            tone: 'default',
+                        });
+                        if (!confirmed) { toggle.setValue(false); return; }
+                        changed = await this.manager.setConfigSyncProtection(true, false);
+                    } else {
+                        const result = await confirmWithCheckbox(this.app, this.manager, {
+                            message: syncText('syncProtectionDisableWarning'),
+                            confirmText: this.manager.translator.t('通用_确认_文本'),
+                            tone: 'warning',
+                            checkboxLabel: syncText('syncProtectionDeleteCache'),
+                            checkboxDefault: false,
+                        });
+                        if (!result.confirmed) { toggle.setValue(true); return; }
+                        changed = await this.manager.setConfigSyncProtection(false, result.checked);
+                    }
+                    if (!changed) { toggle.setValue(current); return; }
+                    this.settingTab.renderSettings();
+                }));
+            });
         addSettingTags(new Setting(this.containerEl)
             .setName(syncText('changeWarningsName')).setDesc(syncText('changeWarningsDescription')), syncTags)
             .addToggle(toggle => toggle.setValue(this.settings.SYNC_CHANGE_WARNINGS !== false).onChange(this.action(async value => {

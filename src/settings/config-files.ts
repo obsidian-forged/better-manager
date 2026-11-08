@@ -39,8 +39,10 @@ export class ConfigFiles implements ConfigProtectionIO {
     private readonly states = new Map<string, StoredState>();
     private initialShared?: unknown;
     private incomplete = false;
+    private cacheRecovered = false;
     get hasPendingBundle(): boolean { return this.incomplete; }
     get hasPendingTransaction(): boolean { return Boolean(this.anchor.transactionTarget && this.anchor.transactionBase); }
+    get localCacheRebuilt(): boolean { return this.cacheRecovered; }
     needsPublication(): boolean { return this.hasPendingTransaction; }
 
     constructor(private readonly adapter: ConfigFileAdapter, readonly configDir: string, readonly pluginId: string,
@@ -232,10 +234,21 @@ export class ConfigFiles implements ConfigProtectionIO {
             if (state) complete = snapshot;
             else {
                 this.incomplete = true;
-                if (!allowTrustedFallback || !this.anchor.head) throw error;
-                const trusted = (await this.readState(this.anchor.head)).snapshot;
-                this.observed = trusted;
-                return trusted;
+                // 本机恢复缓存被删除后，缺失的关联文件无法再核对；按当前共享值重建，避免永远无法启动。
+                // After the local cache is gone, missing auxiliary files cannot be verified; rebuild from the
+                // shared values instead of refusing to start forever. Waiting files are still reported on Save.
+                if (allowTrustedFallback && this.cacheRecovered && !this.anchor.head) {
+                    complete = await this.snapshotFrom(snapshot.value, files);
+                    // 修订标记引用的文件已无法核对；立即改写为可用的普通配置，否则之后每次保存都会因缺失文件失败。
+                    // Rewrite the unusable revision immediately; otherwise every later Save would fail on the
+                    // missing files. The value itself is preserved unchanged.
+                    await this.writeChanged(`${this.root}/data.json`, JSON.stringify(encodeConfig(complete), null, 2), false);
+                } else {
+                    if (!allowTrustedFallback || !this.anchor.head) throw error;
+                    const trusted = (await this.readState(this.anchor.head)).snapshot;
+                    this.observed = trusted;
+                    return trusted;
+                }
             }
         }
         this.incomplete = false;
@@ -251,6 +264,27 @@ export class ConfigFiles implements ConfigProtectionIO {
         await this.writeHead(snapshot);
         const conflict = await this.readConflict();
         if (conflict && snapshot.revision?.parents.includes(conflict.incoming.id)) await this.clearConflict();
+    }
+
+    /** 本机锚点可能比 .bpm 目录活得更久（用户删除或同步排除），指向不存在的文件会让插件无法启动。
+     * Forget private references whose files are gone so a deleted recovery cache cannot block startup. */
+    async repairMissingAnchor(): Promise<boolean> {
+        const missing = async (path: string): Promise<boolean> => !(await this.adapter.exists(path));
+        const anchor = { ...this.anchor };
+        let repaired = false;
+        if (anchor.head && await missing(`${this.privateRoot}/states/${anchor.head}.json`)) {
+            anchor.head = undefined; repaired = true;
+        }
+        if (anchor.conflict && await missing(`${this.privateRoot}/conflicts/${anchor.conflict}.json`)) {
+            anchor.conflict = undefined; repaired = true;
+        }
+        if (anchor.transaction && (await missing(`${this.privateRoot}/transactions/${anchor.transaction}.json`)
+            || anchor.transactionBase !== undefined && await missing(`${this.privateRoot}/states/${anchor.transactionBase}.json`)
+            || anchor.transactionTarget !== undefined && await missing(`${this.privateRoot}/states/${anchor.transactionTarget}.json`))) {
+            anchor.transaction = undefined; anchor.transactionBase = undefined; anchor.transactionTarget = undefined; repaired = true;
+        }
+        if (repaired) { this.saveAnchor(anchor); this.cacheRecovered = true; }
+        return repaired;
     }
 
     private async readState(id: string): Promise<{ snapshot: ConfigSnapshot; state: StoredState }> {
