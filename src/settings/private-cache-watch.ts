@@ -3,6 +3,7 @@ import type { DigestText } from './config-revision';
 export interface PrivateCacheReader {
     read(path: string): Promise<string>;
     stat(path: string): Promise<{ type: string } | null>;
+    list(path: string): Promise<{ files: string[]; folders: string[] }>;
 }
 export interface PrivateCacheWrites {
     write(path: string, text: string, action: () => Promise<void>): Promise<void>;
@@ -25,6 +26,27 @@ export class PrivateCacheWatch implements PrivateCacheWrites {
         private readonly notify: () => void, private readonly failed: (error: unknown) => void) {}
 
     private includes(path: string): boolean { return path === this.root || path.startsWith(`${this.root}/`); }
+    /** Existing snapshots also need an in-memory baseline: a metadata-only notification
+     * must not be mistaken for an unknown external file. Never persist this index. */
+    async prime(): Promise<void> {
+        const folders = [this.root], visited = new Set<string>();
+        while (folders.length && !this.closed) {
+            const directory = folders.pop();
+            if (!directory || visited.has(directory) || !this.includes(directory)) continue;
+            visited.add(directory);
+            if (!(await this.reader.stat(directory))) continue;
+            const entries = await this.reader.list(directory);
+            for (const path of entries.files) {
+                if (!this.includes(path) || this.expected.has(path)) continue;
+                try {
+                    const digest = await this.hash(await this.reader.read(path));
+                    if (!this.closed && !this.expected.has(path)) this.expected.set(path, digest);
+                }
+                catch (error) { if (await this.reader.stat(path)) throw error; }
+            }
+            folders.push(...entries.folders);
+        }
+    }
     altered(path: string): void {
         if (!this.includes(path) || this.closed || this.changed) return;
         this.changed = true;

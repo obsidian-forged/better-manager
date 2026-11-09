@@ -227,7 +227,8 @@ test('quick organization menus use checked native submenus and stage only an exi
     const groups = menu.items[0].submenu.items, tags = menu.items[1].submenu.items, delays = menu.items[2].submenu.items;
     assert.equal(groups[0].checked, true); assert.equal(groups[0].disabled, true);
     assert.equal(tags[0].checked, true); assert.equal(tags[0].disabled, true);
-    assert.deepEqual(tags.map(item => item.title), ['Favorite', 'Work']);
+    assert.deepEqual(tags.map(item => item.title), ['Favorite', 'Work', '标签编辑_创建标签']);
+    assert.equal(groups.at(-1).title, '分组编辑_创建分组');
     assert.deepEqual(delays.map(item => [item.title, item.checked, item.disabled]), [['通用_无延迟_文本', false, false], ['Later (10s)', true, true], ['Slow (30s)', false, false]]);
     await trigger(groups[1].click); await trigger(tags[1].click); await trigger(delays[2].click);
     const plugin = settings.Plugins.find(item => item.id === 'a');
@@ -244,11 +245,13 @@ test('quick organization menus use checked native submenus and stage only an exi
     assert.ok(settings.Plugins.every(item => item.enabled === true));
 });
 
-test('quick organization disables empty categories and supports native menu fallback without setSubmenu', async () => {
+test('quick organization keeps creation available for empty categories and supports native menu fallback without setSubmenu', async () => {
     const { modal, settings, trigger } = fixture();
     settings.GROUPS = []; settings.TAGS = [{ id: 'bpm-install', name: 'Automatic' }]; settings.DELAYS = [];
     const empty = new Menu(); modal.addPluginOrganizationMenu(empty, 'a', new Element());
-    assert.ok(empty.items.every(item => item.disabled));
+    assert.deepEqual(empty.items.map(item => item.disabled), [false, false, true]);
+    assert.deepEqual(empty.items[0].submenu.items.map(item => item.title), ['分组编辑_创建分组']);
+    assert.deepEqual(empty.items[1].submenu.items.map(item => item.title), ['标签编辑_创建标签']);
     settings.GROUPS = [{ id: 'tools', name: 'Tools' }];
     submenuSupported = false;
     try {
@@ -323,4 +326,15 @@ test('mobile quick organization also replaces the parent menu instead of creatin
         assert.equal(menu.hidden, true);
         assert.deepEqual(lastMenu.position, { x: 30, y: 70 });
     } finally { obsidian.Platform.isMobile = false; }
+});
+
+
+test('bulk assignment menus offer contextual creation only for adding groups or tags', () => {
+    const { modal } = fixture();
+    modal.showBulkGroupMenu({});
+    assert.equal(lastMenu.items.at(-1).title, '分组编辑_创建分组');
+    modal.showBulkTagMenu({}, 'add');
+    assert.equal(lastMenu.items.at(-1).title, '标签编辑_创建标签');
+    modal.showBulkTagMenu({}, 'remove');
+    assert.equal(lastMenu.items.some(item => item.title === '标签编辑_创建标签'), false);
 });

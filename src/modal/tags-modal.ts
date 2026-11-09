@@ -1,3 +1,4 @@
+import { createOrganizationEntry } from '../settings/organization';
 import { createActionHandler } from '../ui/action-handler';
 import { App, ExtraButtonComponent, Modal, Notice, setIcon, Setting } from 'obsidian';
 import { ManagerSettings } from '../settings/data';
@@ -274,9 +275,7 @@ export class TagsModal extends Modal {
             const submit = () => {
                 const nextId = idInput.value.trim();
                 const nextName = nameInput.value.trim() || nextId;
-                const containsId = this.manager.settings.TAGS.some(tag => tag.id === nextId);
-                if (!containsId && nextId !== '' && nextId !== BPM_TAG_ID && nextId !== BPM_IGNORE_TAG) {
-                    this.manager.settings.TAGS.push({ id: nextId, name: nextName, color });
+                if (createOrganizationEntry(this.manager.settings, 'tag', { id: nextId, name: nextName, color })) {
                     this.action(async () => { await this.manager.saveSettings(); })();
                     this.add = false;
                     this.action(async () => { await this.reloadShowData(); })();

@@ -43,6 +43,8 @@ function memoryAdapter(files = {}) {
     return {
         files,
         async exists(path) { return Object.prototype.hasOwnProperty.call(files, path) || Object.keys(files).some(file => file.startsWith(path + '/')); },
+        async stat(path) { return Object.prototype.hasOwnProperty.call(files, path) ? { type: 'file' }
+            : Object.keys(files).some(file => file.startsWith(path + '/')) ? { type: 'folder' } : null; },
         async mkdir() {},
         async list(dir) { return { files: Object.keys(files).filter(path => path.startsWith(`${dir}/`)), folders: [] }; },
         async read(path) { if (!(path in files)) throw new Error('ENOENT'); return files[path]; },

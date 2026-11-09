@@ -1,3 +1,4 @@
+import { createOrganizationEntry } from '../organization';
 import BaseSetting from "../base-setting";
 import { Notice, setIcon, Setting } from "obsidian";
 import Commands from "src/command";
@@ -66,10 +67,8 @@ export default class ManagerGroup extends BaseSetting {
                 .onClick(() => {
                     const nextId = id.trim();
                     const nextName = name.trim() || nextId;
-                    const containsId = this.manager.settings.GROUPS.some(tag => tag.id === nextId);
-                    if (!containsId && nextId !== '') {
-                        if (color === '') color = this.manager.generateAutoColor(this.manager.settings.GROUPS.map(g => g.color));
-                        this.manager.settings.GROUPS.push({ id: nextId, name: nextName, color });
+                    if (color === '') color = this.manager.generateAutoColor(this.manager.settings.GROUPS.map(g => g.color));
+                    if (createOrganizationEntry(this.manager.settings, 'group', { id: nextId, name: nextName, color })) {
                         void this.manager.saveSettings();
                         this.settingTab.groupDisplay();
                         Commands(this.app, this.manager);

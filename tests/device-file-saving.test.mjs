@@ -28,6 +28,8 @@ async function fixture() {
     const files = { [file('other')]: JSON.stringify(other) }, writes = [], locals = new Map();
     const adapter = {
         async exists(path) { return Object.hasOwn(files, path) || Object.keys(files).some(name => name.startsWith(path + '/')); },
+        async stat(path) { return Object.hasOwn(files, path) ? { type: 'file' }
+            : Object.keys(files).some(name => name.startsWith(path + '/')) ? { type: 'folder' } : null; },
         async mkdir() {},
         async list(path) { return { files: Object.keys(files).filter(name => name.startsWith(path + '/')), folders: [] }; },
         async read(path) { if (!Object.hasOwn(files, path)) throw new Error('Missing test file'); return files[path]; },
@@ -167,4 +169,92 @@ test('discard restores renamed and removed devices without publishing them', asy
     assert.equal(manager.devices.data.devices.find(device => device.id === 'other').name, other.name);
     assert.equal(manager.hasUnsavedSettings, false);
     assert.equal(files[file('other')], disk);
+});
+
+async function localSettingsFixture() {
+    const manager = new Manager(), writes = [], notices = [];
+    let disk = { ...structuredClone(DEFAULT_SETTINGS), CONFIG_SYNC_PROTECTION: false };
+    manager.settings = structuredClone(disk);
+    manager.translator = { t: key => key };
+    manager.loadData = async () => structuredClone(disk);
+    manager.saveData = async value => { writes.push(structuredClone(value)); disk = structuredClone(value); };
+    manager.reportError = (context, error) => notices.push({ context, error });
+    await manager.loadSettings();
+    return { manager, writes, notices, disk: () => disk, replaceDisk(value) { disk = value; } };
+}
+
+test('single-file repeated Save preserves unchanged bytes and does not emit another sync write', async () => {
+    const f = await localSettingsFixture(), { manager, writes } = f;
+    manager.settings.SEARCH = 'Changed';
+    await manager.saveSettings({ captureDevice: false });
+    assert.equal(await manager.savePendingSettings(), true);
+    assert.equal(writes.length, 1);
+    // Equivalent JSON received with another property order is still the same configuration.
+    f.replaceDisk(Object.fromEntries(Object.entries(f.disk()).reverse()));
+    assert.equal(await manager.savePendingSettings(), true);
+    assert.equal(await manager.savePendingSettings(), true);
+    assert.equal(writes.length, 1);
+    assert.equal(manager.hasUnsavedSettings, false);
+});
+
+test('single-file Save retains its draft when the current disk contents cannot be read', async () => {
+    const { manager, writes, notices } = await localSettingsFixture();
+    manager.settings.SEARCH = 'Unsaved';
+    await manager.saveSettings({ captureDevice: false });
+    manager.loadData = async () => { throw new Error('Permission denied'); };
+    assert.equal(await manager.savePendingSettings(), false);
+    assert.equal(writes.length, 0);
+    assert.equal(manager.hasUnsavedSettings, true);
+    assert.match(notices[0].error.message, /Permission denied/);
+});
+
+test('single-file Save cancels stale publication when a newer edit arrives during its disk read', async () => {
+    const f = await localSettingsFixture(), { manager, writes } = f;
+    manager.settings.SEARCH = 'Old draft';
+    await manager.saveSettings({ captureDevice: false });
+    const read = manager.loadData;
+    let release, started, once = true;
+    const blocked = new Promise(resolve => { release = resolve; }), reading = new Promise(resolve => { started = resolve; });
+    manager.loadData = async () => {
+        const value = await read();
+        if (once) { once = false; started(); await blocked; }
+        return value;
+    };
+    const saving = manager.savePendingSettings();
+    await reading;
+    manager.settings.SEARCH = 'New draft';
+    const staged = manager.saveSettings({ captureDevice: false });
+    release();
+    assert.equal(await saving, false);
+    await staged;
+    assert.equal(writes.length, 0);
+    assert.equal(manager.hasUnsavedSettings, true);
+    assert.equal(await manager.savePendingSettings(), true);
+    assert.equal(f.disk().SEARCH, 'New draft');
+});
+
+test('single-file no-op comparison retains the explicit cleanup of protection revision metadata', async () => {
+    const f = await localSettingsFixture(), { manager, writes } = f;
+    f.replaceDisk({ ...f.disk(), _bpmRevision: { obsolete: true } });
+    assert.equal(await manager.savePendingSettings(), true);
+    assert.equal(writes.length, 1);
+    assert.equal(Object.hasOwn(f.disk(), '_bpmRevision'), false);
+});
+
+test('single-file Save does not overwrite an external edit that arrives after its comparison', async () => {
+    const f = await localSettingsFixture(), { manager, writes } = f;
+    manager.settings.SEARCH = 'My pending edit';
+    await manager.saveSettings({ captureDevice: false });
+    const read = manager.loadData;
+    let reads = 0;
+    manager.loadData = async () => {
+        if (++reads === 2) f.replaceDisk({ ...f.disk(), SEARCH: 'New external edit' });
+        return read();
+    };
+    assert.equal(await manager.savePendingSettings(), false);
+    assert.equal(writes.length, 0);
+    assert.equal(f.disk().SEARCH, 'New external edit');
+    assert.equal(manager.settings.SEARCH, 'My pending edit');
+    assert.equal(manager.hasUnsavedSettings, true);
+    assert.match(f.notices[0].error.message, /changed on disk before publication/);
 });

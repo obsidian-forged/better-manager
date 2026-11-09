@@ -11,6 +11,8 @@ const root='.obsidian/plugins/bpm/.bpm',draft=`${root}/device-a/draft.json`;
 function fixture(){
     const files=new Map(),errors=[],folders=new Set([root,`${root}/device-a`]);let notices=0,reads=0;
     const reader={stat:async path=>files.has(path)?{type:'file'}:folders.has(path)?{type:'folder'}:null,
+        list:async path=>({files:[...files.keys()].filter(entry=>entry.startsWith(`${path}/`)&&!entry.slice(path.length+1).includes('/')),
+            folders:[...folders].filter(entry=>entry.startsWith(`${path}/`)&&!entry.slice(path.length+1).includes('/'))}),
         read:async path=>{reads++;if(!files.has(path))throw Error('Missing file');return files.get(path);}};
     const watch=new PrivateCacheWatch(root,reader,hash,()=>{notices++;},error=>errors.push(error));
     return{files,folders,reader,watch,errors,notices:()=>notices,reads:()=>reads};
@@ -19,6 +21,21 @@ test('private saves and delayed file echoes stay quiet without a persistent inde
     const f=fixture();await f.watch.write(draft,'local draft',async()=>{f.watch.observe(draft);await Promise.resolve();f.files.set(draft,'local draft');});
     await f.watch.settled();f.watch.observe(draft);await f.watch.settled();
     assert.equal(f.notices(),0);assert.equal(f.watch.modified,false);assert.deepEqual([...f.files],[[draft,'local draft']]);
+});
+test('existing recovery files ignore unchanged metadata events after a read-only startup baseline',async()=>{
+    const f=fixture();f.files.set(draft,'saved in a previous session');
+    await f.watch.prime();
+    f.watch.observe(draft);await f.watch.settled();
+    f.watch.observe(draft);await f.watch.settled();
+    assert.equal(f.notices(),0);assert.equal(f.watch.modified,false);
+    assert.deepEqual([...f.files],[[draft,'saved in a previous session']]);
+    f.files.set(draft,'external overwrite');f.watch.observe(draft);await f.watch.settled();
+    assert.equal(f.notices(),1);assert.equal(f.watch.modified,true);
+});
+test('startup baselining does not replace a locally registered expected value with a foreign overwrite',async()=>{
+    const f=fixture();await f.watch.write(draft,'trusted',async()=>{f.files.set(draft,'trusted');});
+    f.files.set(draft,'external overwrite');await f.watch.prime();
+    f.watch.observe(draft);await f.watch.settled();assert.equal(f.notices(),1);
 });
 test('an external overwrite warns once and leaves the changed file untouched',async()=>{
     const f=fixture();await f.watch.write(draft,'trusted',async()=>{f.files.set(draft,'trusted');});

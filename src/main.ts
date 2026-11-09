@@ -1140,29 +1140,40 @@ export default class Manager extends Plugin {
     }
 
     /** 无保护模式只写 data.json，并读回校验；The simple path writes and verifies data.json. */
-    private async writeLocalSettings(value: Record<string, unknown>): Promise<void> {
+    private async writeLocalSettings(value: Record<string, unknown>, current: () => boolean = () => true, expectedDisk?: string): Promise<boolean> {
+        const previous: unknown = await this.loadData();
+        // Failed or malformed reads must never authorize replacing an unknown configuration.
+        const actual = settingsFingerprint(this.normalizeSettings(previous));
+        if (!current()) return false;
+        // Key order and formatting do not justify another write or a new sync event. Keep
+        // revision metadata in this comparison so disabling protection still removes it.
+        if (settingsFingerprint(previous) === settingsFingerprint(value)) {
+            this.lastPublishedFingerprint = settingsFingerprint(value);
+            return true;
+        }
+        if (expectedDisk !== undefined && actual !== expectedDisk) throw new Error('BPM configuration changed on disk before publication');
         await this.saveData(value);
         const check: unknown = await this.loadData();
         if (settingsFingerprint(this.normalizeSettings(check)) !== settingsFingerprint(value)) {
             throw new Error('BPM settings write verification failed');
         }
         this.lastPublishedFingerprint = settingsFingerprint(value);
+        return true;
     }
 
     /** 外部修改 data.json 时，手动保存先确认再覆盖；Manual saves ask before overwriting an external edit. */
-    private async confirmLocalExternalChange(current: () => boolean): Promise<boolean> {
-        let disk: unknown;
-        try { disk = await this.loadData() as unknown; }
-        catch (error) { this.reportError('Reading local settings failed', error); return true; }
-        if (settingsFingerprint(this.normalizeSettings(disk)) === this.lastPublishedFingerprint) return true;
+    private async confirmLocalExternalChange(current: () => boolean): Promise<string | undefined> {
+        const disk: unknown = await this.loadData();
+        const fingerprint = settingsFingerprint(this.normalizeSettings(disk));
+        if (fingerprint === this.lastPublishedFingerprint) return fingerprint;
         const message = protectionText(this, 'syncProtectionExternalChanged');
-        if (this.settings.MANUAL_CONFIG_SAVE === false) { new Notice(message, 10_000); return true; }
-        if (!current()) return false;
+        if (this.settings.MANUAL_CONFIG_SAVE === false) { new Notice(message, 10_000); return fingerprint; }
+        if (!current()) return;
         const { confirmWithModal } = await import('./utils.js');
         const confirmed = await confirmWithModal(this.app, this, {
             message, confirmText: protectionText(this, 'syncProtectionOverwrite'), tone: 'warning',
         });
-        return confirmed && current();
+        return confirmed && current() ? fingerprint : undefined;
     }
 
     public get automaticSavesSuppressed(): boolean { return false; }
@@ -1321,8 +1332,8 @@ export default class Manager extends Plugin {
             const result = await this.queueSettingsOperation(async () => {
                 if (!current()) return { status: 'cancelled' as const };
                 if (protection) return protection.publish(value, current);
-                if (!await this.confirmLocalExternalChange(current)) return { status: 'cancelled' as const };
-                await this.writeLocalSettings(value);
+                const expectedDisk = await this.confirmLocalExternalChange(current);
+                if (expectedDisk === undefined || !await this.writeLocalSettings(value, current, expectedDisk)) return { status: 'cancelled' as const };
                 if (current()) this.pendingSettingsSnapshot = undefined;
                 return { status: current() ? 'saved' as const : 'saved-pending' as const, value };
             });

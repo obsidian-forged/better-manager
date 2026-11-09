@@ -1,3 +1,4 @@
+import { createOrganizationEntry } from '../organization';
 import BaseSetting from "../base-setting";
 import { Notice, setIcon, Setting } from "obsidian";
 import { BPM_TAG_ID } from "src/repo-resolver";
@@ -76,10 +77,8 @@ export default class ManagerTag extends BaseSetting {
                 .onClick(() => {
                     const nextId = id.trim();
                     const nextName = name.trim() || nextId;
-                    const containsId = this.manager.settings.TAGS.some(tag => tag.id === nextId);
-                    if (!containsId && nextId !== '' && !this.isPresetTag(nextId)) {
-                        if (color === '') color = this.manager.generateAutoColor(this.manager.settings.TAGS.map(t => t.color));
-                        this.manager.settings.TAGS.push({ id: nextId, name: nextName, color });
+                    if (color === '') color = this.manager.generateAutoColor(this.manager.settings.TAGS.map(t => t.color));
+                    if (createOrganizationEntry(this.manager.settings, 'tag', { id: nextId, name: nextName, color })) {
                         void this.manager.saveSettings();
                         this.settingTab.tagDisplay();
                         Commands(this.app, this.manager);

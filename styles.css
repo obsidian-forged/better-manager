@@ -5295,6 +5295,51 @@ body.is-tablet .manager-container--mobile .bpm-mobile-filter-fields .manager-fil
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 42%, transparent), 0 12px 30px rgba(0, 0, 0, 0.18);
 }
 
+.tooltip.bpm-rich-tooltip {
+    max-width: min(24rem, calc(100vw - var(--size-4-4)));
+    text-align: start;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.bpm-rich-tooltip__heading {
+    display: flex;
+    align-items: center;
+    gap: var(--size-2-2);
+    font-weight: var(--font-semibold);
+}
+
+.bpm-rich-tooltip__icon {
+    display: inline-flex;
+    flex: 0 0 var(--icon-s);
+    align-items: center;
+    justify-content: center;
+    width: var(--icon-s);
+    height: var(--icon-s);
+}
+
+.bpm-rich-tooltip__icon svg {
+    width: 100%;
+    height: 100%;
+}
+
+.bpm-rich-tooltip__description {
+    margin-top: var(--size-2-1);
+    font-size: var(--font-ui-smaller);
+    line-height: var(--line-height-normal);
+}
+
+.manager-editor-bar .manager-bulk-bar__summary {
+    flex: 1 1 auto;
+}
+
+.manager-editor-bar__description {
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    line-height: var(--line-height-normal);
+    overflow-wrap: anywhere;
+}
+
 .manager-bulk-bar-host {
     position: sticky;
     top: 0;

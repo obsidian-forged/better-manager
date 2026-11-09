@@ -129,6 +129,8 @@ export class ProtectedConfigSession {
         // its trusted snapshot; a transient re-read failure only disables this initial baseline.
         try { await this.sharedChanges.prime(await this.files.sharedPaths()); }
         catch (error) { this.sharedChangesFailed(error); }
+        try { await this.privateCache.prime(); }
+        catch (error) { this.privateCacheFailed(error); }
         this.loaded = true;
         this.stopPrivateWatch = subscribeFileChanges(this.manager.app.vault.adapter as FileChangeAdapter,
             path => { this.privateCache.observe(path); this.sharedChanges.observe(path); }, error => this.privateCacheFailed(error));

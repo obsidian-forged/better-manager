@@ -1,4 +1,6 @@
 import { FloatingScrollbars } from '../ui/floating-scrollbars';
+import { addOrganizationCreateAction } from '../ui/organization-create';
+import { RichTooltips } from '../ui/rich-tooltip';
 import { createActionHandler } from '../ui/action-handler';
 import { TaskCenterView } from '../ui/task-center-view';
 import { protectionText } from '../settings/protection-text';
@@ -1880,22 +1882,26 @@ export class ManagerModal extends Modal {
                 }));
             });
         };
-        addSubmenu(t("菜单_快速添加分组"), "folder-tree", this.settings.GROUPS.length > 0, (submenu) => {
+        addSubmenu(t("菜单_快速添加分组"), "folder-tree", true, (submenu) => {
             for (const group of this.settings.GROUPS) {
                 const assigned = plugin.group === group.id;
                 submenu.addItem((item) => item.setTitle(group.name || group.id).setIcon("folder-tree")
                     .setChecked(assigned).setDisabled(assigned)
                     .onClick(this.action(async () => { await this.assignPluginGroup(pluginId, group.id); })));
             }
+            addOrganizationCreateAction(submenu, this.manager, 'group', open => this.replaceActionMenu(submenu, open),
+                async id => { await this.assignPluginGroup(pluginId, id); });
         });
         const tags = this.settings.TAGS.filter((tag) => tag.id !== BPM_TAG_ID);
-        addSubmenu(t("菜单_快速添加标签"), "tags", tags.length > 0, (submenu) => {
+        addSubmenu(t("菜单_快速添加标签"), "tags", true, (submenu) => {
             for (const tag of tags) {
                 const assigned = plugin.tags.includes(tag.id);
                 submenu.addItem((item) => item.setTitle(tag.name || tag.id).setIcon("tag")
                     .setChecked(assigned).setDisabled(assigned)
                     .onClick(this.action(async () => { await this.assignPluginTag(pluginId, tag.id); })));
             }
+            addOrganizationCreateAction(submenu, this.manager, 'tag', open => this.replaceActionMenu(submenu, open),
+                async id => { await this.assignPluginTag(pluginId, id); });
         });
         // 延迟档位与设置页同一份定义；Delayed startup tiers share the definition from settings.
         // BPM 自身与 bpm-ignore 插件不受延迟管理，直接禁用避免看似生效；Disable what the lifecycle ignores.
@@ -2192,6 +2198,8 @@ export class ManagerModal extends Modal {
                 .setIcon("folder-tree")
                 .onClick(() => { this.action(async () => { await this.applyBulkGroup(group.id); })(); }));
         }
+        addOrganizationCreateAction(menu, this.manager, 'group', open => this.replaceActionMenu(menu, open),
+            async id => { await this.applyBulkGroup(id); });
         menu.showAtMouseEvent(event);
     }
 
@@ -2214,6 +2222,10 @@ export class ManagerModal extends Modal {
                     if (mode === "add") this.action(async () => { await this.applyBulkAddTag(tag.id); })();
                     else this.action(async () => { await this.applyBulkRemoveTag(tag.id); })();
                 }));
+        }
+        if (mode === "add") {
+            addOrganizationCreateAction(menu, this.manager, 'tag', open => this.replaceActionMenu(menu, open),
+                async id => { await this.applyBulkAddTag(id); });
         }
         menu.showAtMouseEvent(event);
     }
@@ -2291,6 +2303,7 @@ export class ManagerModal extends Modal {
         setIcon(summaryIcon, "pen-line");
         const text = summary.createDiv("manager-bulk-bar__summary-text");
         text.createSpan({ cls: "manager-bulk-bar__title", text: t(this.layoutSettingsPreview ? "排序_编辑自定义布局" : "管理器_编辑模式_标题") });
+        text.createSpan({ cls: "manager-editor-bar__description", text: t(canEditLayout ? "管理器_编辑模式_布局说明" : "管理器_编辑模式_说明") });
 
         const actions = bar.createDiv("manager-bulk-bar__actions");
         if (canEditLayout) {
@@ -2556,6 +2569,7 @@ export class ManagerModal extends Modal {
     private taskCenterView?: TaskCenterView;
     private bulkEditButtonEl?: HTMLButtonElement;
     private editorButtonEl?: HTMLButtonElement;
+    private richTooltips?: RichTooltips;
     private pluginTabEl?: HTMLButtonElement;
     private themeTabEl?: HTMLButtonElement;
     private installTabEl?: HTMLButtonElement;
@@ -2993,7 +3007,7 @@ export class ManagerModal extends Modal {
         bulkEditButton.buttonEl.setAttribute("aria-label", t("批量编辑_入口"));
         bulkEditButton.buttonEl.classList.toggle("is-active", this.bulkEditMode);
         this.bulkEditButtonEl = bulkEditButton.buttonEl;
-        this.bindLongPressTooltip(bulkEditButton.buttonEl, t("批量编辑_入口"));
+        this.bindLongPressTooltip(bulkEditButton.buttonEl, t("批量编辑_入口"), t("批量编辑_说明"));
         bulkEditButton.onClick(() => {
             this.setBulkEditMode(!this.bulkEditMode);
         });
@@ -3047,7 +3061,7 @@ export class ManagerModal extends Modal {
         editorButton.setTooltip(this.manager.translator.t("管理器_编辑模式_描述"));
         editorButton.buttonEl.classList.toggle("is-active", this.editorMode);
         this.editorButtonEl = editorButton.buttonEl;
-        this.bindLongPressTooltip(editorButton.buttonEl, this.manager.translator.t("管理器_编辑模式_描述"));
+        this.bindLongPressTooltip(editorButton.buttonEl, t("管理器_编辑模式_标题"), t("管理器_编辑模式_说明"));
         editorButton.onClick(() => {
             this.action(async () => { await this.setEditorMode(!this.editorMode); })();
         });
@@ -8692,13 +8706,16 @@ export class ManagerModal extends Modal {
         }
     }
 
-    private bindLongPressTooltip(el: HTMLElement | undefined, text?: string) {
+    private bindLongPressTooltip(el: HTMLElement | undefined, text?: string, description?: string) {
         if (!el || !text) return;
+        this.richTooltips?.bind(el, { title: text, description });
         let timer: number | undefined;
-        const show = () => { new Notice(text, 1500); };
-        const clear = () => { if (timer) window.clearTimeout(timer); timer = undefined; };
+        const view = el.ownerDocument.defaultView;
+        const show = () => { if (el.isConnected) new Notice([text, description].filter(Boolean).join('\n'), 3000); };
+        const clear = () => { if (timer !== undefined) view?.clearTimeout(timer); timer = undefined; };
         el.addEventListener("touchstart", () => {
-            timer = window.setTimeout(show, 500);
+            clear();
+            timer = view?.setTimeout(show, 500);
         });
         el.addEventListener("touchend", clear);
         el.addEventListener("touchcancel", clear);
@@ -8878,6 +8895,8 @@ export class ManagerModal extends Modal {
 
     public onOpen(): void {
         this.opened = true;
+        this.richTooltips?.destroy();
+        this.richTooltips = new RichTooltips(this.modalEl);
         this.allowAutomaticSaveOnClose = true;
         this.manager.beginSettingsEditing(this);
         this.conflictMarkers = new ConfigConflictMarkers(this.manager, this.modalEl, (row, value) => this.previewConflictPlugin(row, value));
@@ -8920,6 +8939,8 @@ export class ManagerModal extends Modal {
     }
 
     public onClose(): void {
+        this.richTooltips?.destroy();
+        this.richTooltips = undefined;
         this.globalToolsHost = undefined;
         this.appearanceNavigation?.close(); this.appearanceNavigation = undefined;
         this.closePluginFilterMenus();
