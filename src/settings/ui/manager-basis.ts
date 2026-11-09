@@ -1,4 +1,4 @@
-import { FEATURE_IDS, TOOL_IDS, featureEnabled, toolAvailable, toolEnabled } from '../../features';
+import { FEATURE_IDS, TOOL_IDS, ONE_CLICK_ACTION_IDS, featureEnabled, toolAvailable, toolEnabled } from '../../features';
 import BaseSetting from "../base-setting";
 import { ButtonComponent, DropdownComponent, Notice, Setting, ToggleComponent, TextComponent, setIcon } from "obsidian";
 import Commands from "src/command";
@@ -25,7 +25,7 @@ export default class ManagerBasis extends BaseSetting {
             install: 'download', transfer: 'archive-restore', troubleshoot: 'search-check',
         };
         const TOOL_ICONS: Record<string, string> = {
-            updates: 'rss', bulkEdit: 'list-plus', layoutEditor: 'pen', reload: 'refresh-ccw',
+            oneClick: 'zap', updates: 'rss', bulkEdit: 'list-plus', layoutEditor: 'pen', reload: 'refresh-ccw',
             catalog: 'compass', pluginMarket: 'store', appearanceMarket: 'store', appearanceProfiles: 'plus',
         };
         const personalizeEl = this.containerEl.createDiv('manager-personalize');
@@ -60,7 +60,7 @@ export default class ManagerBasis extends BaseSetting {
 
         const toolsWrap = personalizeEl.createDiv('manager-personalize__tools');
         const toolsSetting = new Setting(toolsWrap).setClass('manager-personalize__actions').setClass('mod-action').setName('');
-        for (const id of TOOL_IDS.filter(toolAvailable)) {
+        for (const id of TOOL_IDS.filter(id => toolAvailable(id) && !ONE_CLICK_ACTION_IDS.some(action => action === id))) {
             const button = toolsSetting.controlEl.createEl('button', { cls: 'manager-personalize__tool clickable-icon' });
             button.type = 'button';
             button.setAttribute('aria-label', t0('功能开关_' + id));
@@ -79,6 +79,16 @@ export default class ManagerBasis extends BaseSetting {
                 void this.manager.saveSettings().catch(error => this.manager.devices.report(error));
                 this.manager.managerModal?.close();
             });
+        }
+
+        heading('功能开关_oneClick');
+        for (const id of ONE_CLICK_ACTION_IDS) {
+            new Setting(this.containerEl).setName(t0('功能开关_' + id))
+                .addToggle(toggle => toggle.setValue(toolEnabled(this.settings, id)).onChange(this.action(async value => {
+                    this.settings.TOOLS = { ...this.settings.TOOLS, [id]: value };
+                    await this.manager.saveSettings();
+                    this.manager.managerModal?.close();
+                })));
         }
 
         heading("设置_基础设置_分组_常规");

@@ -35,6 +35,8 @@ class ButtonComponent {
     setButtonText(text) { this.buttonEl.setText(text); return this; }
     setDisabled(value) { this.buttonEl.disabled = value; return this; }
     setCta() { return this; }
+    setIcon() { return this; }
+    setTooltip() { return this; }
     onClick(callback) { this.buttonEl.click = callback; return this; }
 }
 class ValueComponent {
@@ -57,7 +59,7 @@ class Setting {
 const notices = [];
 const built = await build({ entryPoints: ['src/rollback/history-modal.ts'], bundle: true, format: 'cjs', platform: 'node', write: false, external: ['obsidian'], logLevel: 'silent' });
 const module = { exports: {} };
-new Function('require', 'module', 'exports', built.outputFiles[0].text)(() => ({ Modal, Setting, ButtonComponent, Notice: class { constructor(message) { notices.push(message); } } }), module, module.exports);
+new Function('require', 'module', 'exports', built.outputFiles[0].text)(() => ({ Modal, Setting, ButtonComponent, setIcon() {}, Notice: class { constructor(message) { notices.push(message); } } }), module, module.exports);
 const { HistoryModal } = module.exports;
 const settle = () => new Promise(resolve => setImmediate(resolve));
 function fixture() {
@@ -119,4 +121,17 @@ test('initial settings-render failures are reported and release the busy state',
     assert.ok(notices.slice(count).includes('History settings unavailable'));
     assert.equal(f.modal.busy, false); assert.equal(f.modal.modalEl.attributes['aria-busy'], undefined);
     f.modal.close();
+});
+
+test('workflow header retains the host title and provides exactly one visible close action', async () => {
+    const f = fixture(); f.modal.open(); await settle();
+    assert.ok(f.modal.titleEl.classes.has('manager-workflow-modal__title'));
+    assert.equal(f.modal.titleEl.textContent, 'Plugin rollback (Preview)');
+    const actions = descendants(f.modal.titleEl).filter(element => element.classes.has('manager-workflow-modal__close'));
+    assert.equal(actions.length, 1);
+    assert.equal(actions[0].attributes['aria-label'], '通用_关闭_文本');
+    assert.equal(actions[0].attributes.type, 'button');
+    actions[0].click();
+    assert.equal(f.modal.opened, false);
+    assert.equal(f.editors.size, 0);
 });

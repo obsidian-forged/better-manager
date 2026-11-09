@@ -1,7 +1,8 @@
 import { setIcon } from 'obsidian';
 import { createBpmFilterSelectField } from './filter-field';
+import { createFilterOptionAction, type FilterOptionAction } from './filter-option-action';
 
-export interface ScopeOption { value: string; label: string; group?: string; icon?: string; }
+export interface ScopeOption { value: string; label: string; group?: string; icon?: string; trailingAction?: FilterOptionAction; }
 
 /** 工具栏共用的单选菜单；Shared toolbar single-select with bounded positioning and cleanup. */
 export class ScopeSelect {
@@ -92,6 +93,8 @@ export class ScopeSelect {
                 if (option.icon) setIcon(row.createSpan('manager-multiselect-filter__check'), option.icon);
                 row.createSpan({ cls: 'manager-multiselect-filter__option-label', text: option.label });
                 row.createSpan({ cls: 'manager-repo-page__stat-value', text: option.value });
+                if (option.trailingAction) createFilterOptionAction(row, option.trailingAction,
+                    () => { this.close(); this.trigger.focus(); }, event => !moved || event.detail === 0);
                 continue;
             }
             if (option.group && option.group !== groupName) {
@@ -99,7 +102,9 @@ export class ScopeSelect {
                 groupName = option.group;
             }
             const selected = option.value === value;
-            const button = this.menu.createEl('button', { cls: 'manager-multiselect-filter__option', attr: {
+            const row = option.trailingAction
+                ? this.menu.createDiv({ cls: 'manager-multiselect-filter__option-row', attr: { role: 'presentation' } }) : this.menu;
+            const button = row.createEl('button', { cls: 'manager-multiselect-filter__option', attr: {
                 type: 'button', role: 'option', 'aria-selected': `${selected}`,
             } });
             button.toggleClass('is-selected', selected);
@@ -107,8 +112,8 @@ export class ScopeSelect {
             if (option.icon) setIcon(button.createSpan('manager-multiselect-filter__check manager-scope-select__option-icon'), option.icon);
             button.createSpan({ cls: 'manager-multiselect-filter__option-label', text: option.label });
             this.choices.set(option.value, button);
-            button.addEventListener('click', () => {
-                if (moved) return;
+            button.addEventListener('click', event => {
+                if (moved && event.detail !== 0) return;
                 this.close();
                 this.trigger.focus();
                 if (this.value !== option.value) {
@@ -116,6 +121,8 @@ export class ScopeSelect {
                     onChange(option.value);
                 }
             });
+            if (option.trailingAction) createFilterOptionAction(row, option.trailingAction,
+                () => { this.close(); this.trigger.focus(); }, event => !moved || event.detail === 0);
         }
         this.trigger.addEventListener('click', () => { if (this.open) this.close(); else this.show(); });
         this.root.addEventListener('keydown', event => {
@@ -123,9 +130,11 @@ export class ScopeSelect {
             if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
             event.preventDefault();
             if (!this.open) this.show();
-            const buttons = Array.from(this.menu.querySelectorAll('button'));
+            const buttons = summary ? Array.from(this.menu.querySelectorAll<HTMLButtonElement>('button')) : [...this.choices.values()];
             const index = buttons.indexOf(this.doc.activeElement as HTMLButtonElement);
-            buttons[(index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1) + buttons.length) % buttons.length]?.focus();
+            const next = index < 0 ? (event.key === 'ArrowDown' ? 0 : buttons.length - 1)
+                : (index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length;
+            buttons[next]?.focus();
         });
     }
     /** 更新摘要与选中态，避免选中值被构造闭包固定；Keep reusable menus in sync after selection. */

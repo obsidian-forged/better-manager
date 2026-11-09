@@ -1,3 +1,4 @@
+import { renderWorkflowModalHeader } from '../ui/workflow-modal';
 import { FloatingScrollbars } from '../ui/floating-scrollbars';
 import { App, ButtonComponent, Modal, Platform, SearchComponent, Setting, setIcon } from "obsidian";
 import { createBpmFilterField } from "../ui/filter-field";
@@ -38,6 +39,7 @@ export class CatalogModal extends Modal {
     private detail!: HTMLElement;
     private page = 0;
     private query = "";
+    private filtersExpanded = false;
     private sourceId = "";
     private sort = "discover";
     private installed = "all";
@@ -79,9 +81,9 @@ export class CatalogModal extends Modal {
         this.scrollbars?.destroy();
         this.scrollbars = new FloatingScrollbars(this.modalEl);
         this.closed = false;
-        this.modalEl.addClass("manager-container");
+        this.modalEl.addClass("manager-container", "manager-catalog", "manager-workflow-modal");
         this.modalEl.toggleClass("manager-container--mobile", Platform.isMobile);
-        this.titleEl.setText(this.t("目录_标题"));
+        renderWorkflowModalHeader(this, this.t('目录_标题'), 'compass', this.t('通用_关闭_文本'));
         this.status = this.contentEl.createDiv();
         this.status.setAttribute("role", "status");
         this.status.setAttribute("aria-live", "polite");
@@ -153,6 +155,7 @@ export class CatalogModal extends Modal {
         this.contentEl.empty();
         this.actionButtons = [];
         const workspace = this.contentEl.createDiv("manager-repo-page");
+        workspace.toggleClass("manager-catalog--detail", Boolean(this.selected));
         const hero = workspace.createDiv("manager-repo-page__header");
         const titleBlock = hero.createDiv("manager-repo-page__title-block");
         setIcon(titleBlock.createSpan({ cls: "manager-repo-page__icon" }), "compass");
@@ -169,8 +172,14 @@ export class CatalogModal extends Modal {
         navigation.setAttribute("role", "tablist");
         navigation.setAttribute("aria-label", this.t("目录_标题"));
         const tabs: [CatalogTab, string, string][] = [["discover", "目录_发现", "compass"], ["browse", "目录_全部插件", "blocks"], ["try-list", "目录_试用清单", "clipboard-list"], ["sources", "目录_来源", "radio-tower"]];
+        if (Platform.isMobile || this.modalEl.ownerDocument.body.hasClass('is-mobile')) {
+            navigation.addClass('manager-catalog__mobile-navigation');
+            this.filterSelects.push(ScopeSelect.compact(navigation, this.t('目录_标题'), this.tab,
+                tabs.map(([value, key, icon]) => ({ value, label: this.t(key), icon })),
+                value => { const next = tabs.find(([tab]) => tab === value); if (next) this.switchTab(next[0]); }, 'compass'));
+        }
         const buttons: HTMLButtonElement[] = [];
-        for (const [tab, key, icon] of tabs) {
+        for (const [tab, key, icon] of navigation.hasClass("manager-catalog__mobile-navigation") ? [] : tabs) {
             const button = navigation.createEl("button", { cls: "manager-repo-page__switch", attr: { type: "button", role: "tab", id: `bpm-catalog-tab-${tab}`, "aria-controls": "bpm-catalog-panel", "aria-selected": `${this.tab === tab}` } });
             button.toggleClass("is-active", this.tab === tab);
             button.tabIndex = this.tab === tab ? 0 : -1;
@@ -196,17 +205,22 @@ export class CatalogModal extends Modal {
         const panel = workspace.createDiv("manager-repo-page__body");
         panel.id = "bpm-catalog-panel";
         panel.setAttribute("role", "tabpanel");
-        panel.setAttribute("aria-labelledby", `bpm-catalog-tab-${this.tab}`);
+        if (navigation.hasClass("manager-catalog__mobile-navigation")) panel.setAttribute("aria-label", this.t(tabs.find(([tab]) => tab === this.tab)?.[1] || "目录_标题"));
+        else panel.setAttribute("aria-labelledby", `bpm-catalog-tab-${this.tab}`);
         if (this.tab === "sources") { this.renderSources(panel); return; }
         if (this.selected) {
-            new ButtonComponent(panel).setButtonText(this.t("目录_返回列表")).onClick(() => {
+            const back = new ButtonComponent(panel).setButtonText(this.t("目录_返回列表")).onClick(() => {
                 this.selected = undefined;
                 this.repository = undefined;
                 this.generation++;
                 this.render();
                 this.contentEl.scrollTop = this.returnScroll;
             });
-            this.detail = panel.createDiv("manager-source-page");
+            back.buttonEl.addClass("manager-catalog__back");
+            const backIcon = back.buttonEl.createSpan('manager-catalog__back-icon');
+            setIcon(backIcon, 'arrow-left');
+            back.buttonEl.prepend(backIcon);
+            this.detail = panel.createDiv("manager-source-page manager-catalog__detail");
             this.renderDetail(this.selected);
             return;
         }
@@ -262,7 +276,23 @@ export class CatalogModal extends Modal {
             .setPlaceholder(this.t("目录_搜索")).setValue(this.query);
         search.inputEl.setAttribute("aria-label", this.t("目录_搜索"));
         search.onChange(value => { this.query = value; this.page = 0; this.renderList(); });
-        const filters = bar.controlEl.createDiv("manager-filter-control-group");
+        let filterParent = bar.controlEl;
+        if (Platform.isMobile || this.modalEl.ownerDocument.body.hasClass('is-mobile')) {
+            const details = bar.controlEl.createEl('details', { cls: 'manager-catalog-filters__details' });
+            details.open = this.filtersExpanded;
+            const summary = details.createEl('summary', { cls: 'bpm-mobile-header__filters-toggle' });
+            setIcon(summary.createSpan('bpm-mobile-header__filters-icon'), 'list-filter');
+            summary.createSpan({ cls: 'bpm-mobile-header__filters-label', text: this.t('通用_过滤排序_文本') });
+            setIcon(summary.createSpan('bpm-mobile-header__filters-arrow'), 'chevron-down');
+            details.addEventListener('toggle', () => {
+                this.filtersExpanded = details.open;
+                summary.toggleClass('is-open', details.open);
+                if (!details.open) this.filterSelects.forEach(select => select.close());
+            });
+            summary.toggleClass('is-open', details.open);
+            filterParent = details;
+        }
+        const filters = filterParent.createDiv("manager-filter-control-group");
         const sort = new ScopeSelect(filters, this.t("目录_排序"), "arrow-up-down", this.sort,
             [["discover", "目录_探索排序"], ["downloads", "目录_下载量"], ["name", "目录_名称"], ["updated", "目录_维护"]]
                 .map(([value, key]) => ({ value, label: this.t(key) })),
@@ -285,7 +315,7 @@ export class CatalogModal extends Modal {
             new ScopeSelect(filters, this.t('目录_近期维护'), 'calendar-clock', this.recentDays,
                 [0, 30, 180, 365].map(value => ({ value: `${value}`, label: value ? this.t('目录_天内', { days: value }) : this.t('目录_全部') })),
                 value => { this.recentDays = value; this.page = 0; this.renderList(); }));
-        bar.settingEl.createDiv({ cls: 'setting-item-description', text: this.t('目录_维护筛选说明') });
+        filterParent.createDiv({ cls: 'setting-item-description manager-catalog-filters__help', text: this.t('目录_维护筛选说明') });
     }
 
     private renderList(): void {
@@ -309,7 +339,7 @@ export class CatalogModal extends Modal {
         });
         const pages = Math.max(1, Math.ceil(entries.length / this.pageSize));
         this.page = Math.min(this.page, pages - 1);
-        const navigation = new Setting(this.list).setName(this.t("目录_数量", { count: entries.length, page: this.page + 1, pages }));
+        const navigation = new Setting(this.list).setClass("manager-workflow-modal__pagination").setName(this.t("目录_数量", { count: entries.length, page: this.page + 1, pages }));
         new ButtonComponent(navigation.controlEl).setButtonText(this.t("目录_上一页")).setDisabled(this.page === 0)
             .onClick(() => { this.page--; this.renderList(); });
         new ButtonComponent(navigation.controlEl).setButtonText(this.t("目录_下一页")).setDisabled(this.page >= pages - 1)
@@ -371,18 +401,22 @@ export class CatalogModal extends Modal {
         this.contentEl.scrollTop = 0;
     }
 
+    /** 列表与详情共用图标和双行身份信息；Share the same identity tile in list and detail views. */
+    private renderPluginIdentity(parent: HTMLElement, entry: CatalogEntry, metadata: string): void {
+        const name = parent.createDiv("manager-source-card__repo-line");
+        setIcon(name.createSpan({ cls: "manager-source-card__repo-icon" }), "blocks");
+        const identity = name.createDiv("manager-catalog-card__identity");
+        identity.createSpan({ cls: "manager-source-card__repo manager-catalog-card__name", text: entry.name, attr: { title: entry.name } });
+        identity.createSpan({ cls: "manager-catalog-card__meta", text: metadata, attr: { title: metadata } });
+    }
+
     private card(container: HTMLElement, entry: CatalogEntry, discovery?: { label: string; explanation: string }): void {
         const card = container.createDiv("manager-source-card manager-catalog-card");
         card.setAttribute("data-plugin-key", entry.key);
         const main = card.createDiv("manager-source-card__main");
         const header = main.createDiv("manager-source-card__header");
         const title = header.createDiv("manager-source-card__title-block");
-        const name = title.createDiv("manager-source-card__repo-line");
-        setIcon(name.createSpan({ cls: "manager-source-card__repo-icon" }), "blocks");
-        const identity = name.createDiv("manager-catalog-card__identity");
-        identity.createSpan({ cls: "manager-source-card__repo manager-catalog-card__name", text: entry.name, attr: { title: entry.name } });
-        const metadata = [entry.author || entry.publisher, entry.version].filter(Boolean).join(" · ");
-        identity.createSpan({ cls: "manager-catalog-card__meta", text: metadata, attr: { title: metadata } });
+        this.renderPluginIdentity(title, entry, [entry.author || entry.publisher, entry.version].filter(Boolean).join(" · "));
         const downloads = main.createDiv("manager-plugin-card__date-meta");
         const downloadCount = this.number(entry.stats?.downloads);
         const metric = downloads.createSpan({ cls: "manager-plugin-card__date-meta-item", attr: {
@@ -408,11 +442,13 @@ export class CatalogModal extends Modal {
             badges.createSpan({ cls: "manager-tag manager-theme-card__chip", text: label });
         }
         if (discovery) badges.createSpan({ cls: "manager-tag manager-theme-card__chip", text: discovery.label, attr: { title: discovery.explanation } });
-        const actions = header.createDiv("manager-source-page__actions manager-catalog-card__actions");
+        const actionParent = Platform.isMobile || this.modalEl.ownerDocument.body.hasClass('is-mobile') ? card : header;
+        const actions = actionParent.createDiv("manager-source-page__actions manager-catalog-card__actions");
         const detail = new ButtonComponent(actions).setIcon("info").setTooltip(this.t("目录_详情")).onClick(() => this.showEntry(entry));
         detail.buttonEl.setAttribute("aria-label", this.t("目录_详情"));
         this.tryButton(actions, entry);
         this.installButton(actions, entry);
+        actions.querySelectorAll('button').forEach(button => button.addClass('clickable-icon'));
     }
 
     private installButton(container: HTMLElement, entry: CatalogEntry, showLabel = false): void {
@@ -421,7 +457,7 @@ export class CatalogModal extends Modal {
         const label = this.t(self ? '更新规则_原因_self' : available ? (this.manager.appPlugins.manifests[entry.id] ? '目录_管理版本' : '目录_选择安装版本') : '目录_安装不支持');
         const button = new ButtonComponent(container).setIcon("download").setTooltip(label)
             .setDisabled(this.busy || self || !available);
-        if (showLabel) button.setButtonText(label);
+        if (showLabel) button.setButtonText(this.t(this.manager.appPlugins.manifests[entry.id] ? '目录_管理版本' : '目录_选择安装版本'));
         button.buttonEl.setAttribute("aria-label", label);
         button.onClick(() => this.openVersions(entry));
         this.actionButtons.push(button.buttonEl);
@@ -516,7 +552,7 @@ export class CatalogModal extends Modal {
     }
     /** 共用标题操作行，保持按钮与标题同行 / Shared heading actions keep controls beside the title. */
     private sectionHeader(container: HTMLElement, title: string, description?: string): HTMLElement {
-        const row = new Setting(container).setName(title).setHeading();
+        const row = new Setting(container).setClass("manager-catalog__section-heading").setName(title).setHeading();
         if (description) row.setDesc(description);
         return row.controlEl;
     }
@@ -532,18 +568,23 @@ export class CatalogModal extends Modal {
     private renderDetail(entry: CatalogEntry): void {
         this.detail.empty();
         this.actionButtons = this.actionButtons.filter(button => button.isConnected);
-        const overview = this.detail.createDiv("manager-source-card");
-        const primary = this.sectionHeader(overview, entry.name, `${entry.author || entry.publisher || this.unknown()} · ${entry.source.name}`);
+        const overview = this.detail.createDiv("manager-source-card manager-catalog__detail-overview");
+        this.renderPluginIdentity(overview, entry, `${entry.author || entry.publisher || this.unknown()} · ${entry.source.name}`);
         overview.createEl("p", { text: entry.description || this.t("目录_缺少描述") });
         if (entry.useCases.length) {
             const cases = overview.createEl("ul", { attr: { "aria-label": this.t("目录_适用场景") } });
             for (const useCase of entry.useCases) cases.createEl("li", { text: useCase });
         }
+        const primary = overview.createDiv("manager-catalog-card__actions manager-catalog__detail-actions");
         this.tryButton(primary, entry);
-        this.installButton(primary, entry, true);
+        this.installButton(primary, entry);
         const installed = this.manager.appPlugins.manifests[entry.id];
-        if (this.manager.history.available && installed && entry.id !== this.manager.manifest.id) new ButtonComponent(primary).setButtonText(this.t('回退_标题'))
+        if (this.manager.history.available && installed && entry.id !== this.manager.manifest.id) new ButtonComponent(primary).setIcon('history').setTooltip(this.t('回退_标题'))
             .onClick(() => { void this.manager.openPluginHistory(entry.id); });
+        primary.querySelectorAll('button').forEach(button => button.addClass('clickable-icon'));
+        if (entry.id === this.manager.manifest.id || !(entry.repo || entry.releases.some(release => release.manifest && release.main))) {
+            overview.createEl('p', { cls: 'setting-item-description', text: this.t(entry.id === this.manager.manifest.id ? '更新规则_原因_self' : '目录_安装不支持') });
+        }
         this.field(overview, installed ? '目录_已安装版本' : '目录_未安装', installed?.version || this.t('目录_未安装'));
         this.renderStarterMaterial(entry);
         const facts = this.detail.createEl("details", { cls: "manager-source-card" });

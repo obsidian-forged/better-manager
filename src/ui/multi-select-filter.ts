@@ -1,10 +1,12 @@
 import { setIcon } from 'obsidian';
+import { createFilterOptionAction, type FilterOptionAction } from './filter-option-action';
 
 export interface MultiSelectFilterOption {
     value: string;
     label: string;
     icon?: string;
     count?: number;
+    trailingAction?: FilterOptionAction;
 }
 
 export interface MultiSelectFilterOptions {
@@ -38,7 +40,7 @@ export class MultiSelectFilter {
     private options: MultiSelectFilterOption[];
     private values: string[];
     private open = false;
-    private readonly choices = new Map<string, { button: HTMLButtonElement; check: HTMLElement }>();
+    private readonly choices = new Map<string, { button: HTMLButtonElement; check: HTMLElement; action?: HTMLButtonElement }>();
     private pointerStart?: { x: number; y: number };
     private moved = false;
     private readonly outside = (event: Event): void => {
@@ -148,12 +150,16 @@ export class MultiSelectFilter {
         const all = this.options.find(option => option.value === this.config.allValue)
             ?? { value: this.config.allValue, label: this.config.allLabel };
         for (const option of [all, ...this.options.filter(option => option.value !== this.config.allValue)]) {
-            const button = this.menuEl.createEl('button', { cls: 'manager-multiselect-filter__option', attr: { type: 'button', role: 'option' } });
+            const row = option.trailingAction
+                ? this.menuEl.createDiv({ cls: 'manager-multiselect-filter__option-row', attr: { role: 'presentation' } }) : this.menuEl;
+            const button = row.createEl('button', { cls: 'manager-multiselect-filter__option', attr: { type: 'button', role: 'option' } });
             const check = button.createSpan('manager-multiselect-filter__check');
             if (option.icon) setIcon(button.createSpan('manager-multiselect-filter__check manager-scope-select__option-icon'), option.icon);
             button.createSpan({ cls: 'manager-multiselect-filter__option-label', text: option.label });
             if (option.count !== undefined) button.createSpan({ cls: 'manager-multiselect-filter__count', text: `${option.count}` });
-            this.choices.set(option.value, { button, check });
+            const action = option.trailingAction ? createFilterOptionAction(row, option.trailingAction,
+                () => { this.close(); this.buttonEl.focus(); }, event => !this.moved || event.detail === 0) : undefined;
+            this.choices.set(option.value, { button, check, action });
             button.addEventListener('click', event => {
                 if (this.moved && event.detail !== 0) return;
                 this.values = option.value === this.config.allValue ? [] : this.normalize(this.values.includes(option.value)
@@ -215,13 +221,18 @@ export class MultiSelectFilter {
     }
 
     refreshOptions(options: MultiSelectFilterOption[], values = this.values): void {
-        const focused = [...this.choices].find(([, choice]) => choice.button === this.doc.activeElement)?.[0];
+        const focused = [...this.choices].find(([, choice]) => choice.button === this.doc.activeElement
+            || Boolean(choice.action && choice.action === this.doc.activeElement));
+        const focusedAction = Boolean(focused?.[1].action && focused[1].action === this.doc.activeElement);
         this.options = options;
         const available = new Set(options.map(option => option.value));
         this.values = this.normalize(values.filter(value => available.has(value)));
         this.renderOptions();
         this.updateSelection();
-        if (this.open && focused !== undefined) this.choices.get(focused)?.button.focus();
+        if (this.open && focused) {
+            const choice = this.choices.get(focused[0]);
+            (focusedAction ? choice?.action ?? choice?.button : choice?.button)?.focus();
+        }
     }
 
     close(): void {

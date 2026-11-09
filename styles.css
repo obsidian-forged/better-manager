@@ -868,7 +868,6 @@ body.is-tablet .manager-container--mobile .setting-item:not(.manager-item) > .se
 .manager-editor__item {
     display: flex;
     align-items: center;
-    height: 100%;
     padding: 6px 3px;
     border: #fff solid 0px;
     border-radius: var(--i18n-border-radius);
@@ -2977,6 +2976,33 @@ body.is-tablet .manager-container--mobile .bpm-mobile-filter-fields .manager-fil
 .manager-multiselect-filter .manager-multiselect-filter__menu button.manager-multiselect-filter__option.is-selected {
     background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
     color: var(--text-accent);
+}
+
+.manager-multiselect-filter__option-row {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-1);
+    min-width: 0;
+}
+
+.manager-multiselect-filter .manager-multiselect-filter__menu .manager-multiselect-filter__option-row > button.manager-multiselect-filter__option {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+}
+
+.manager-multiselect-filter .manager-multiselect-filter__menu button.manager-multiselect-filter__option-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 var(--bpm-ui-control-size, var(--input-height));
+    width: var(--bpm-ui-control-size, var(--input-height));
+    height: var(--bpm-ui-control-size, var(--input-height));
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    box-shadow: none;
+    color: var(--text-muted);
 }
 
 .manager-multiselect-filter__check {
@@ -8565,9 +8591,7 @@ body.is-tablet .ribbon-manager-control-visibility button {
 
     .manager-tag-editor__summary,
     .manager-setting-tag__header,
-    .manager-tag-editor__item.setting-item,
     .manager-tag-editor__add-panel.setting-item,
-    .manager-tag-editor__add-trigger.setting-item,
     .manager-setting-tag__item.setting-item {
         align-items: stretch;
         flex-direction: column;
@@ -8575,10 +8599,8 @@ body.is-tablet .ribbon-manager-control-visibility button {
 
     .manager-tag-editor__summary-stats,
     .manager-setting-tag__stats,
-    .manager-tag-editor__item-actions.setting-item-control,
     .manager-setting-tag__controls.setting-item-control,
-    .manager-tag-editor__add-panel .setting-item-control,
-    .manager-tag-editor__add-trigger .setting-item-control {
+    .manager-tag-editor__add-panel .setting-item-control {
         width: 100%;
         min-width: 0;
         justify-content: flex-start;
@@ -10354,16 +10376,12 @@ body.is-tablet .ribbon-manager-control-visibility button {
         max-height: 86vh;
     }
 
-    .manager-tag-editor__summary,
-    .manager-tag-editor__item.setting-item,
-    .manager-tag-editor__add-trigger.setting-item {
+    .manager-tag-editor__summary {
         align-items: stretch;
         flex-direction: column;
     }
 
-    .manager-tag-editor__summary-stats,
-    .manager-tag-editor__item-actions.setting-item-control,
-    .manager-tag-editor__add-trigger .setting-item-control {
+    .manager-tag-editor__summary-stats {
         justify-content: flex-start;
         width: 100%;
         min-width: 0;
@@ -10487,14 +10505,6 @@ body.is-tablet .ribbon-manager-control-visibility button {
         display: flex;
         gap: 10px;
         padding: 12px;
-    }
-
-    .manager-tag-editor__item>.setting-item-control,
-    .manager-tag-editor__item.is-editing>.setting-item-control,
-    .manager-tag-editor__add-trigger>.setting-item-control {
-        display: flex;
-        justify-content: flex-start;
-        width: 100%;
     }
 
     .manager-tag-editor__preview-line {
@@ -11381,11 +11391,7 @@ body.is-phone .manager-container.manager-container--main.manager-container--mobi
         max-height: 88vh;
     }
 
-    .manager-taxonomy-editor .manager-tag-editor__titlebar.setting-item,
     .manager-taxonomy-editor .manager-tag-editor__summary,
-    .manager-taxonomy-editor .manager-tag-editor__item.setting-item,
-    .manager-taxonomy-editor .manager-tag-editor__item.is-editing,
-    .manager-taxonomy-editor .manager-tag-editor__add-trigger.setting-item,
     .manager-taxonomy-setting__header,
     .manager-taxonomy-setting__row.setting-item {
         display: flex;
@@ -11393,10 +11399,7 @@ body.is-phone .manager-container.manager-container--main.manager-container--mobi
         align-items: stretch;
     }
 
-    .manager-taxonomy-editor .manager-tag-editor__item>.setting-item-control,
-    .manager-taxonomy-editor .manager-tag-editor__item.is-editing>.setting-item-control,
     .manager-taxonomy-editor .manager-tag-editor__summary-stats,
-    .manager-taxonomy-editor .manager-tag-editor__add-trigger>.setting-item-control,
     .manager-taxonomy-setting__stats,
     .manager-taxonomy-setting__controls.setting-item-control {
         justify-content: flex-start;
@@ -11549,8 +11552,27 @@ body.is-phone .manager-container.manager-container--main.manager-container--mobi
 
 .modal.manager-taxonomy-editor.manager-tag-editor .manager-container__header {
     padding: 0;
+    flex: 0 0 auto;
     border-bottom: 1px solid color-mix(in srgb, var(--background-modifier-border) 64%, transparent);
     background: var(--background-primary);
+}
+
+.modal.manager-taxonomy-editor .modal-close-button,
+.modal.manager-taxonomy-editor .modal-header-button {
+    display: none;
+}
+
+.modal.manager-taxonomy-editor .modal-title {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    text-align: start;
+}
+
+.modal.manager-taxonomy-editor.manager-tag-editor .manager-tag-editor__titlebar > .setting-item-control {
+    width: auto;
+    min-width: 0;
+    align-self: start;
 }
 
 .modal.manager-taxonomy-editor.manager-tag-editor .manager-tag-editor__titlebar.setting-item {
@@ -11623,6 +11645,8 @@ body.is-phone .manager-container.manager-container--main.manager-container--mobi
 
 .modal.manager-taxonomy-editor.manager-tag-editor .manager-tag-editor__summary-title {
     font-weight: 700;
+    flex: 0 0 auto;
+    white-space: nowrap;
 }
 
 .modal.manager-taxonomy-editor.manager-tag-editor .manager-tag-editor__summary-desc {
@@ -11680,6 +11704,7 @@ body.is-phone .manager-container.manager-container--main.manager-container--mobi
     flex-wrap: wrap;
     justify-content: flex-end;
     min-width: 0;
+    width: auto;
 }
 
 .modal.manager-taxonomy-editor.manager-tag-editor .manager-tag-editor__preview-line {
@@ -11690,7 +11715,7 @@ body.is-phone .manager-container.manager-container--main.manager-container--mobi
 
 .modal.manager-taxonomy-editor.manager-tag-editor .manager-tag-editor__chip-slot {
     min-width: 0;
-    max-width: 260px;
+    max-width: min(260px, 100%);
     min-height: 0;
     padding: 0;
     border: 0;
@@ -11699,6 +11724,10 @@ body.is-phone .manager-container.manager-container--main.manager-container--mobi
 
 .modal.manager-taxonomy-editor.manager-tag-editor .manager-tag-editor__chip.manager-tag {
     margin-left: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-size: 11px;
     font-weight: 700;
 }
@@ -11706,7 +11735,7 @@ body.is-phone .manager-container.manager-container--main.manager-container--mobi
 .modal.manager-taxonomy-editor.manager-tag-editor .manager-tag-editor__id {
     display: inline-flex;
     align-items: center;
-    max-width: 220px;
+    max-width: min(220px, 100%);
     border: 0;
     background: color-mix(in srgb, var(--background-secondary) 68%, transparent);
     color: var(--text-muted);
@@ -11737,10 +11766,7 @@ body.is-phone .manager-container.manager-container--main.manager-container--mobi
 }
 
 @media (max-width: 760px) {
-    .modal.manager-taxonomy-editor.manager-tag-editor .manager-tag-editor__titlebar.setting-item,
-.modal.manager-taxonomy-editor.manager-tag-editor .manager-tag-editor__summary,
-.modal.manager-taxonomy-editor.manager-tag-editor .manager-tag-editor__item.setting-item,
-.modal.manager-taxonomy-editor.manager-tag-editor .manager-tag-editor__add-trigger.setting-item,
+    .modal.manager-taxonomy-editor.manager-tag-editor .manager-tag-editor__summary,
 .modal.manager-taxonomy-editor.manager-tag-editor .manager-tag-editor__create-panel {
         display: flex;
         flex-direction: column;
@@ -11752,9 +11778,7 @@ body.is-phone .manager-container.manager-container--main.manager-container--mobi
         padding: 14px;
     }
 
-    .modal.manager-taxonomy-editor.manager-tag-editor .manager-tag-editor__summary-stats,
-.modal.manager-taxonomy-editor.manager-tag-editor .manager-tag-editor__item>.setting-item-control,
-.modal.manager-taxonomy-editor.manager-tag-editor .manager-tag-editor__add-trigger>.setting-item-control {
+    .modal.manager-taxonomy-editor.manager-tag-editor .manager-tag-editor__summary-stats {
         justify-content: flex-start;
         width: 100%;
     }
@@ -11954,6 +11978,24 @@ body.is-phone .manager-container.manager-container--main.manager-container--mobi
 .manager-setting__content .manager-taxonomy-setting .manager-taxonomy-setting__row.setting-item {
         min-height: 56px;
         padding: 10px 12px;
+    }
+
+    .modal.manager-taxonomy-editor.manager-tag-editor .manager-tag-editor__titlebar.setting-item {
+        min-height: 0;
+        gap: var(--size-4-2);
+        padding: var(--size-4-3);
+    }
+
+    .modal.manager-taxonomy-editor.manager-tag-editor .manager-tag-editor__item.is-editing > .setting-item-control {
+        grid-column: 1 / -1;
+        width: 100%;
+        justify-content: flex-start;
+    }
+
+    .modal.manager-taxonomy-editor.manager-tag-editor .manager-tag-editor__item.is-editing .manager-tag-editor__name-input {
+        flex: 1 1 0;
+        width: auto;
+        min-width: 0;
     }
 
     .modal.manager-taxonomy-editor.manager-tag-editor input[type="color"],
@@ -15821,3 +15863,428 @@ body.is-mobile .modal.mod-settings .vertical-tab-content.manager-setting__root {
 .manager-setting__overview-arrow { display: inline-flex; align-items: center; color: var(--text-faint); }
 .manager-setting__overview-entry .setting-item-info { gap: var(--size-4-2); }
 .manager-setting__overview-entry .setting-item-name { display: inline-flex; align-items: center; gap: var(--size-4-2); }
+
+/* Update rules, store and restore points share a compact, touch-safe modal shell. */
+.modal.manager-workflow-modal {
+    width: min(860px, 92vw);
+    max-height: 90vh;
+}
+.modal.manager-workflow-modal .modal-content {
+    min-width: 0;
+    padding: var(--size-4-3);
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+.manager-workflow-modal__list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-2);
+}
+.manager-workflow-modal__search,
+.manager-workflow-modal__search .search-input-container,
+.manager-workflow-modal__search input {
+    width: 100%;
+    min-width: 0;
+}
+.manager-workflow-modal__search {
+    margin-bottom: var(--size-4-2);
+}
+.modal.manager-container.manager-workflow-modal .modal-content .setting-item {
+    min-width: 0;
+    padding: var(--size-4-2) 0;
+    gap: var(--size-4-2);
+    border-top: 0;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+}
+.modal.manager-container.manager-workflow-modal .modal-content .setting-item-info {
+    min-width: 0;
+    flex: 1 1 140px;
+    margin: 0;
+}
+.modal.manager-container.manager-workflow-modal .modal-content .setting-item-control {
+    width: auto;
+    min-width: 0;
+    max-width: 100%;
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--size-4-2);
+}
+.modal.manager-container.manager-workflow-modal .modal-content .setting-item-control:empty {
+    display: none;
+}
+.modal.manager-container.manager-workflow-modal .modal-content .setting-item-control > :is(button, input, select) {
+    width: auto;
+    max-width: 100%;
+    min-width: 0;
+    margin: 0;
+}
+.modal.manager-workflow-modal .setting-item-name,
+.modal.manager-workflow-modal .setting-item-description {
+    overflow-wrap: anywhere;
+}
+.modal.manager-workflow-modal .manager-workflow-modal__card {
+    padding: var(--size-4-3);
+    border-radius: var(--radius-m);
+}
+.modal.manager-workflow-modal .manager-workflow-modal__card-heading .setting-item-name {
+    font-weight: var(--font-semibold);
+}
+.modal.manager-container.manager-workflow-modal .modal-content .manager-workflow-modal__card-heading {
+    padding-top: 0;
+    padding-bottom: var(--size-4-2);
+    border-bottom: 1px solid var(--background-modifier-border);
+    flex-wrap: nowrap;
+}
+.modal.manager-container.manager-workflow-modal .modal-content .manager-workflow-modal__inline {
+    flex-wrap: nowrap;
+}
+.modal.manager-container.manager-workflow-modal .modal-content .manager-workflow-modal__inline .setting-item-control {
+    max-width: 58%;
+}
+.modal.manager-container.manager-workflow-modal .modal-content .manager-workflow-modal__pagination .setting-item-control {
+    flex-wrap: nowrap;
+}
+.modal.manager-workflow-modal .manager-workflow-modal__pagination button {
+    padding-inline: var(--size-4-2);
+}
+.modal.manager-container.manager-workflow-modal .modal-content .manager-workflow-modal__form .setting-item-control {
+    flex: 1 1 100%;
+    width: 100%;
+}
+.modal.manager-container.manager-workflow-modal .modal-content .manager-workflow-modal__form .setting-item-control input {
+    flex: 1 1 100px;
+}
+.modal.manager-workflow-modal .manager-workflow-modal__actions .setting-item-info:empty {
+    display: none;
+}
+.modal.manager-container.manager-workflow-modal .modal-content .manager-workflow-modal__actions .setting-item-control {
+    flex: 1 1 auto;
+}
+.modal.manager-workflow-modal :is(pre, table) {
+    max-width: 100%;
+    overflow-x: auto;
+}
+body.is-mobile .modal.manager-workflow-modal {
+    width: calc(100vw - var(--size-4-4));
+}
+body.is-mobile .manager-catalog .manager-repo-page__header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--size-4-2);
+}
+body.is-mobile .manager-catalog .manager-repo-page__stats {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+}
+body.is-mobile .manager-catalog .manager-catalog__mobile-navigation {
+    display: flex;
+    padding: 0;
+    background: transparent;
+}
+body.is-mobile .manager-catalog__mobile-navigation > .manager-scope-select--compact {
+    width: 100%;
+    min-width: 0;
+}
+body.is-mobile .manager-catalog .manager-catalog-filters .manager-filter-control-group {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    gap: var(--size-4-2);
+}
+body.is-mobile .manager-catalog .manager-catalog-filters .manager-filter-field {
+    width: 100%;
+    min-width: 0;
+}
+body.is-mobile .manager-catalog .manager-transfer-grid {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.modal.manager-workflow-modal {
+    padding: 0;
+}
+.modal.manager-workflow-modal .modal-header.manager-workflow-modal__header {
+    display: block;
+    flex: 0 0 auto;
+    width: 100%;
+    min-height: 0;
+    height: auto;
+    padding: var(--size-4-3);
+    margin: 0;
+    box-sizing: border-box;
+}
+.modal.manager-workflow-modal .modal-title.manager-workflow-modal__title {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+    width: 100%;
+    max-width: none;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    text-align: start;
+    font-size: var(--font-ui-medium);
+    line-height: 1.3;
+}
+.manager-workflow-modal__heading {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.manager-workflow-modal__icon {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: var(--bpm-ui-icon-button-size);
+    height: var(--bpm-ui-icon-button-size);
+    color: var(--interactive-accent);
+}
+.manager-workflow-modal__icon svg {
+    width: var(--icon-size);
+    height: var(--icon-size);
+}
+.modal.manager-workflow-modal .manager-workflow-modal__close.clickable-icon {
+    width: var(--bpm-ui-icon-button-size);
+    height: var(--bpm-ui-icon-button-size);
+    padding: 0;
+    margin: 0;
+}
+.modal.manager-workflow-modal .modal-content > .setting-item-description:first-child {
+    margin-top: 0;
+    margin-bottom: var(--size-4-2);
+}
+
+/* Catalog phone navigation owns the entire row, overriding legacy segmented widths. */
+body.is-mobile .modal.manager-catalog .manager-catalog__mobile-navigation {
+    --bpm-repo-group-width: 100%;
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    flex: 0 0 auto;
+    align-self: stretch;
+    margin-inline: 0;
+    justify-content: stretch;
+    overflow: visible;
+}
+body.is-mobile .modal.manager-catalog .manager-catalog__mobile-navigation :is(.manager-scope-select--compact, .manager-multiselect-filter, .manager-multiselect-filter__trigger) {
+    width: 100%;
+    min-width: 0;
+}
+body.is-mobile .modal.manager-catalog .manager-catalog-filters .manager-bar__search > .setting-item-control,
+body.is-mobile .modal.manager-catalog .manager-catalog-filters :is(.manager-search-line, .manager-filter-field--search, .search-input-container, .search-input-container input) {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+}
+body.is-mobile .modal.manager-catalog .manager-catalog-filters .manager-bar__search > .setting-item-control {
+    flex-direction: column;
+    align-items: stretch;
+}
+body.is-mobile .modal.manager-catalog .manager-catalog-filters .manager-bar__search > .setting-item-info {
+    display: none;
+}
+body.is-mobile .modal.manager-catalog .manager-catalog-filters__details {
+    width: 100%;
+    min-width: 0;
+}
+body.is-mobile .modal.manager-catalog .manager-catalog-filters__details > summary {
+    width: 100%;
+    box-sizing: border-box;
+    list-style: none;
+    margin-bottom: 0;
+    text-align: start;
+}
+body.is-mobile .modal.manager-catalog .manager-catalog-filters__details > summary::-webkit-details-marker {
+    display: none;
+}
+body.is-mobile .modal.manager-catalog .manager-catalog-filters__details[open] > summary {
+    margin-bottom: var(--size-4-2);
+}
+body.is-mobile .modal.manager-catalog .manager-filter-control-group > .manager-filter-field {
+    flex-direction: column;
+    align-items: stretch;
+    overflow: visible;
+}
+body.is-mobile .modal.manager-catalog .manager-filter-control-group .manager-filter-field__label {
+    flex: 0 0 auto;
+    width: 100%;
+    min-height: var(--size-4-6);
+    box-sizing: border-box;
+    border-right: 0;
+    border-bottom: 1px solid var(--background-modifier-border);
+    padding: var(--size-2-2) var(--size-4-2);
+    gap: var(--size-2-2);
+}
+body.is-mobile .modal.manager-catalog .manager-filter-control-group .manager-filter-field__text {
+    overflow: visible;
+    text-overflow: clip;
+}
+body.is-mobile .modal.manager-catalog .manager-filter-control-group :is(.manager-filter-field__control, .manager-filter-select-group) {
+    width: 100%;
+    height: auto;
+}
+body.is-mobile .modal.manager-catalog .manager-catalog-filters__help {
+    margin-top: var(--size-4-2);
+    text-align: start;
+}
+
+/* Vertical catalog filters must escape the legacy single-line input height. */
+body.is-mobile .modal.manager-catalog .manager-filter-control-group > .manager-filter-field {
+    height: auto;
+    min-height: 0;
+    align-self: stretch;
+}
+body.is-mobile .modal.manager-catalog .manager-filter-control-group {
+    grid-auto-rows: auto;
+    align-items: stretch;
+}
+body.is-mobile .modal.manager-catalog .manager-catalog-card .manager-source-card__header {
+    grid-template-columns: minmax(0, 1fr);
+}
+body.is-mobile .modal.manager-catalog .manager-catalog-card__actions {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: nowrap;
+    width: 100%;
+    gap: var(--size-4-2);
+    padding: var(--size-4-2) var(--size-4-3);
+    box-sizing: border-box;
+}
+body.is-mobile .modal.manager-catalog .manager-catalog-card__actions > button.clickable-icon {
+    flex: 0 0 var(--bpm-ui-icon-button-size);
+    width: var(--bpm-ui-icon-button-size);
+    height: var(--bpm-ui-icon-button-size);
+    min-width: var(--bpm-ui-icon-button-size);
+    min-height: var(--bpm-ui-icon-button-size);
+    max-width: var(--bpm-ui-icon-button-size);
+    padding: 0;
+    margin: 0;
+    border-radius: var(--bpm-radius-sm);
+}
+
+/* Store statistics are information, never oversized action pills. */
+.modal.manager-catalog .manager-repo-page__stats {
+    gap: var(--size-4-3);
+    padding: 0;
+}
+.modal.manager-catalog .manager-repo-page__stat {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--size-2-2);
+    width: auto;
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
+}
+.modal.manager-catalog .manager-repo-page__stat-value {
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text-normal);
+}
+.modal.manager-catalog .manager-catalog--detail .manager-repo-page__title-block {
+    display: none;
+}
+.modal.manager-catalog .manager-catalog--detail .manager-repo-page__header {
+    padding-block: var(--size-4-2);
+    gap: 0;
+}
+.modal.manager-catalog .manager-catalog__back {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--size-2-2);
+    flex: 0 0 auto;
+    width: auto;
+    max-width: 100%;
+    height: var(--bpm-ui-icon-button-size);
+    min-height: var(--bpm-ui-icon-button-size);
+    padding: 0 var(--size-4-2);
+    margin: 0 0 var(--size-4-2);
+    border: 1px solid var(--bpm-border);
+    border-radius: var(--bpm-radius-sm);
+    background: var(--bpm-card);
+    box-shadow: none;
+    color: var(--text-normal);
+    font-size: var(--font-ui-small);
+}
+.modal.manager-catalog .manager-catalog__back:hover {
+    background: var(--bpm-card-hover);
+}
+.modal.manager-catalog .manager-catalog__back-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: var(--icon-s);
+    height: var(--icon-s);
+    line-height: 0;
+}
+.modal.manager-catalog .manager-catalog__back-icon svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+.modal.manager-catalog .manager-catalog__detail {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-2);
+}
+.modal.manager-catalog .manager-catalog__detail > .manager-source-card {
+    height: auto;
+    min-height: 0;
+    padding: var(--size-4-3);
+    gap: var(--size-4-2);
+}
+.modal.manager-catalog .manager-catalog__detail :is(p, ul) {
+    margin-block: var(--size-2-2);
+}
+.modal.manager-container.manager-workflow-modal .modal-content .manager-catalog__detail .setting-item {
+    padding: var(--size-2-2) 0;
+    margin: 0;
+    min-height: 0;
+    height: auto;
+    gap: var(--size-4-2);
+}
+.modal.manager-container.manager-workflow-modal .modal-content .manager-catalog__detail .manager-catalog__section-heading {
+    padding-top: 0;
+    border: 0;
+}
+.modal.manager-catalog .manager-catalog__section-heading .setting-item-name {
+    font-size: var(--font-ui-medium);
+}
+.modal.manager-catalog .manager-catalog__detail-actions {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    padding: 0;
+    gap: var(--size-4-2);
+}
+.modal.manager-catalog .manager-catalog__detail-actions > button.clickable-icon {
+    flex: 0 0 var(--bpm-ui-icon-button-size);
+    width: var(--bpm-ui-icon-button-size);
+    height: var(--bpm-ui-icon-button-size);
+    min-width: var(--bpm-ui-icon-button-size);
+    min-height: var(--bpm-ui-icon-button-size);
+    padding: 0;
+    margin: 0;
+}
+.modal.manager-catalog .manager-repo-page__stat {
+    height: auto;
+    block-size: auto;
+}
+.modal.manager-container.manager-catalog .manager-catalog__detail .manager-catalog__detail-actions {
+    padding: 0;
+}

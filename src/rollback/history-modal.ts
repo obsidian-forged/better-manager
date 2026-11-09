@@ -1,3 +1,4 @@
+import { renderWorkflowModalHeader } from '../ui/workflow-modal';
 import { App, ButtonComponent, Modal, Notice, Setting } from 'obsidian';
 import type Manager from '../main';
 import type { BuildSnapshot, RestorePlan } from './plugin-history';
@@ -16,7 +17,7 @@ export class HistoryModal extends Modal {
     onOpen(): void {
         if (!this.manager.history.available) { this.close(); return; }
         this.closed = false;
-        this.manager.beginSettingsEditing(this); this.titleEl.setText(this.t('回退_标题')); this.modalEl.addClass('manager-container', 'manager-history'); this.run(() => this.load());
+        this.manager.beginSettingsEditing(this); renderWorkflowModalHeader(this, this.t('回退_标题'), 'history', this.t('通用_关闭_文本')); this.modalEl.addClass('manager-container', 'manager-history', 'manager-workflow-modal'); this.run(() => this.load());
     }
     private run(action: () => Promise<void>): void {
         if (this.busy || this.closed) return;
@@ -43,16 +44,16 @@ export class HistoryModal extends Modal {
             .setValue(this.manager.history.enabled()).onChange(value => this.run(async () => {
                 this.manager.settings.PLUGIN_ROLLBACK_ENABLED = value; await this.manager.saveSettings(); await this.load();
             })));
-        new Setting(this.contentEl).setName(this.t('回退_插件')).addDropdown(dropdown => {
+        new Setting(this.contentEl).setClass('manager-workflow-modal__inline').setName(this.t('回退_插件')).addDropdown(dropdown => {
             for (const manifest of Object.values(this.manager.appPlugins.manifests).filter(manifest => manifest.id !== this.manager.manifest.id)) dropdown.addOption(manifest.id, manifest.name);
             dropdown.setValue(this.pluginId).onChange(value => { if (this.busy) return; this.pluginId = value; this.label = ''; this.run(() => this.load()); });
         });
         if (!this.pluginId) return;
-        const controls = new Setting(this.contentEl).setName(this.t('回退_创建')).setDesc(this.t('回退_命名说明'));
+        const controls = new Setting(this.contentEl).setClass('manager-workflow-modal__form').setName(this.t('回退_创建')).setDesc(this.t('回退_命名说明'));
         controls.addText(text => text.setPlaceholder(this.t('回退_名称')).setValue(this.label).onChange(value => { this.label = value; }));
         controls.addButton(button => button.setButtonText(this.t('回退_创建')).setDisabled(!this.manager.history.enabled())
             .onClick(() => this.run(async () => { await this.manager.history.create(this.pluginId, this.label); this.label = ''; await this.load(); })));
-        const list = this.contentEl.createDiv();
+        const list = this.contentEl.createDiv('manager-workflow-modal__list');
         try {
             const snapshots = await this.manager.history.list(this.pluginId);
             if (this.closed || generation !== this.generation) return;
@@ -61,12 +62,13 @@ export class HistoryModal extends Modal {
         } catch (error) { if (!this.closed && generation === this.generation) list.createEl('p', { text: error instanceof Error ? error.message : this.t('安装_错误_通用'), attr: { role: 'alert' } }); }
     }
     private renderPoint(parent: HTMLElement, snapshot: BuildSnapshot): void {
-        const row = new Setting(parent).setName(`${snapshot.label || this.t(snapshot.automatic ? '回退_自动' : '回退_手动')} · ${snapshot.version}`)
+        const card = parent.createDiv('manager-source-card manager-workflow-modal__card');
+        const row = new Setting(card).setClass('manager-workflow-modal__card-heading').setName(`${snapshot.label || this.t(snapshot.automatic ? '回退_自动' : '回退_手动')} · ${snapshot.version}`)
             .setDesc(new Date(snapshot.createdAt).toLocaleString());
         row.addButton(button => button.setButtonText(this.t('回退_预览')).setDisabled(!this.manager.history.enabled())
             .onClick(() => this.run(() => this.preview(snapshot.id))));
         let label = snapshot.label;
-        new Setting(parent).setName(this.t('回退_名称')).addText(text => text.setValue(label).onChange(value => { label = value; }))
+        new Setting(card).setClass('manager-workflow-modal__form').setName(this.t('回退_名称')).addText(text => text.setValue(label).onChange(value => { label = value; }))
             .addButton(button => button.setButtonText(this.t('回退_保存')).onClick(() => this.run(async () => {
                 await this.manager.history.rename(this.pluginId, snapshot.id, label); await this.load();
             })))
@@ -115,7 +117,7 @@ export class HistoryModal extends Modal {
         let restoreButton: ButtonComponent | undefined;
         if (!reviewed) new Setting(this.contentEl).setName(this.t('回退_确认历史值')).setDesc(this.t('回退_迁移警告'))
             .addToggle(toggle => toggle.setValue(false).onChange(value => { reviewed = value; restoreButton?.setDisabled(!value); }));
-        const actions = new Setting(this.contentEl);
+        const actions = new Setting(this.contentEl).setClass('manager-workflow-modal__actions');
         actions.addButton(button => { restoreButton = button; button.setButtonText(this.t('回退_确认')).setCta().setDisabled(!reviewed).onClick(() => this.run(async () => {
             if (!reviewed) return;
             button.setDisabled(true);

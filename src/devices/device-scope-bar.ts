@@ -76,26 +76,29 @@ export class DeviceScopeBar {
         this.close();
         const devices = this.manager.devices;
         const t = (key: string, vars?: Record<string, string | number>) => this.manager.translator.t(key, vars);
-        const enabled = devices.data.enabled;
-        const scope = devices.selectedScope(page);
+        const enabled = devices.data.enabled && featureEnabled(this.manager.settings, 'devices');
+        const hasApplyMode = page === 'plugins' || page === 'themes';
+        if (inline) container.empty();
+        container.hidden = !enabled && !hasApplyMode;
+        if (container.hidden) return;
         const host = inline ? container : container.createDiv('manager-device-scope');
-        if (inline) { container.empty(); container.addClass('manager-device-scope', 'manager-device-scope--inline'); }
+        if (inline) container.addClass('manager-device-scope', 'manager-device-scope--inline');
         host.addClass('manager-overview-controls');
         const selects: ScopeSelect[] = [];
-        if (featureEnabled(this.manager.settings, 'devices')) {
+        if (enabled) {
+            const scope = devices.selectedScope(page);
             const options = DEVICE_TYPES.flatMap(type => devices.presetsFor(type).map(preset => ({
                 value: scopeKey(preset.id), label: preset.name + (preset.id === devices.boundPresetId ? ' (' + t('设备_本机') + ')' : ''), group: devices.label(type),
             })));
             const select = new ScopeSelect(host, t('设备_作用域短'), 'monitor-smartphone', scope.key, options, value => {
                 void devices.selectScope(page, value).then(() => this.onChange()).catch(error => devices.report(error));
-            }, !enabled, enabled ? (devices.isLiveScope(scope) ? t('设备_本机') : t('设备_仅保存')) : t('设备_未启用_短'));
+            }, false, devices.isLiveScope(scope) ? t('设备_本机') : t('设备_仅保存'));
             select.field.addClass('manager-overview-controls__device');
             selects.push(select);
             const quickApply = select.control.createEl('button', { cls: 'manager-device-scope__quick-apply', attr: {
                 type: 'button', 'aria-label': t('设备_快速应用'), title: t('设备_快速应用'),
             } });
             setIcon(quickApply, 'copy-check');
-            quickApply.disabled = !enabled;
             quickApply.addEventListener('click', event => { event.stopPropagation(); this.openQuickApplyMenu(event, page); });
         }
         if (page === 'plugins' || page === 'themes') {

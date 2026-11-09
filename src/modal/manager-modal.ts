@@ -392,6 +392,7 @@ export class ManagerModal extends Modal {
     tagMultiSelect?: MultiSelectFilterControl;
     delayMultiSelect?: MultiSelectFilterControl;
     private bulkEditMode = false;
+    private bulkStatusChanging = false;
     private bulkSelectedPluginIds = new Set<string>();
     actionCollapsed = false;
     filterCollapsed = false;
@@ -1870,13 +1871,13 @@ export class ManagerModal extends Modal {
                 // setSubmenu 尚未公开在 SDK 类型中；旧版缺失时仍用原生 Menu 展开。
                 // The SDK does not declare setSubmenu; older runtimes keep a native-menu fallback.
                 const submenuItem = item as MenuItem & { setSubmenu?: () => Menu };
-                if (typeof submenuItem.setSubmenu === "function") populate(submenuItem.setSubmenu());
-                else item.onClick(() => {
+                if (!Platform.isMobile && typeof submenuItem.setSubmenu === "function") populate(submenuItem.setSubmenu());
+                else item.onClick(() => this.replaceActionMenu(menu, () => {
                     const submenu = new Menu();
                     populate(submenu);
                     const rect = anchor.getBoundingClientRect();
-                    submenu.showAtPosition({ x: rect.left, y: rect.bottom });
-                });
+                    submenu.showAtPosition({ x: rect.left, y: rect.bottom }, anchor.ownerDocument);
+                }));
             });
         };
         addSubmenu(t("菜单_快速添加分组"), "folder-tree", this.settings.GROUPS.length > 0, (submenu) => {
@@ -2115,7 +2116,7 @@ export class ManagerModal extends Modal {
         if (value && !toolEnabled(this.settings, 'bulkEdit')) return;
         if (value && this.activePage !== "plugins") return;
         this.bulkEditMode = value;
-        if (value) this.editorMode = false;
+        if (value) { this.editorMode = false; this.layoutSettingsPreview = false; }
         if (!value) this.bulkSelectedPluginIds.clear();
         this.applyEditingStyle();
         this.renderContent();
@@ -2125,6 +2126,7 @@ export class ManagerModal extends Modal {
     private async setEditorMode(value: boolean) {
         if (value && !toolEnabled(this.settings, 'layoutEditor')) return;
         if (value && this.activePage !== "plugins") return;
+        if (!value) this.layoutSettingsPreview = false;
         if (this.editorMode === value) {
             this.applyEditingStyle();
             this.syncPageChrome();
@@ -2264,6 +2266,7 @@ export class ManagerModal extends Modal {
         text.createSpan({ cls: "manager-bulk-bar__count", text: t("批量编辑_已选择数量", { count: selectedCount, total: displayedCount }) });
 
         const actions = bar.createDiv("manager-bulk-bar__actions");
+        this.createBulkActionButton(actions, "list-checks", t("批量编辑_全选当前列表"), () => this.selectDisplayedPlugins(), displayedCount === 0);
         const hideSelection = selectedCount === 0 || this.getSelectedManagerPlugins().some((plugin) => !this.settings.HIDES.includes(plugin.id));
         this.createBulkActionButton(actions, hideSelection ? "eye-off" : "eye", t(hideSelection ? "批量编辑_隐藏" : "批量编辑_取消隐藏"), () => {
             this.action(async () => { await this.applyBulkHidden(); })();
@@ -2287,7 +2290,7 @@ export class ManagerModal extends Modal {
         const summaryIcon = summary.createSpan({ cls: "manager-bulk-bar__summary-icon" });
         setIcon(summaryIcon, "pen-line");
         const text = summary.createDiv("manager-bulk-bar__summary-text");
-        text.createSpan({ cls: "manager-bulk-bar__title", text: t("管理器_编辑模式_标题") });
+        text.createSpan({ cls: "manager-bulk-bar__title", text: t(this.layoutSettingsPreview ? "排序_编辑自定义布局" : "管理器_编辑模式_标题") });
 
         const actions = bar.createDiv("manager-bulk-bar__actions");
         if (canEditLayout) {
@@ -2402,9 +2405,91 @@ export class ManagerModal extends Modal {
     }
 
     private async applyBulkEnabled(targetEnabled: boolean) {
+        await this.applyPluginsEnabled(this.getSelectedManagerPlugins(), targetEnabled);
+    }
+
+    private replaceActionMenu(menu: Menu, showNext: () => void): void {
+        menu.onHide(showNext);
+        menu.hide();
+    }
+
+    /** 手机端逐层替换操作面板，桌面保留原生子菜单；Replace touch sheets instead of stacking them. */
+    private addActionBranch(menu: Menu, title: string, icon: string, event: MouseEvent, populate: (target: Menu) => void, disabled = false): void {
+        menu.addItem(item => {
+            item.setTitle(title).setIcon(icon).setDisabled(disabled);
+            if (disabled) return;
+            const branch = item as MenuItem & { setSubmenu?: () => Menu };
+            if (!Platform.isMobile && typeof branch.setSubmenu === 'function') populate(branch.setSubmenu());
+            else item.onClick(() => this.replaceActionMenu(menu, () => {
+                const next = new Menu();
+                populate(next);
+                next.showAtMouseEvent(event);
+            }));
+        });
+    }
+
+    private showOneClickMenu(event: MouseEvent): void {
+        const menu = new Menu();
+        const t = (key: string) => this.manager.translator.t(key);
+        if (toolEnabled(this.settings, 'batchUpdate') && toolEnabled(this.settings, 'updates')) {
+            menu.addItem(item => item.setTitle(t('批量更新_标题')).setIcon('download')
+                .onClick(this.action(async () => { await this.manager.openBatchUpdates(); })));
+        }
+        for (const enabled of [true, false]) {
+            if (!toolEnabled(this.settings, enabled ? 'enableAll' : 'disableAll')) continue;
+            menu.addItem(item => item.setTitle(t(enabled ? '批量编辑_启用当前列表' : '批量编辑_禁用当前列表'))
+                .setIcon(enabled ? 'power' : 'power-off').onClick(this.action(async () => {
+                    const displayed = new Set(this.getSelectableDisplayedPluginIds());
+                    await this.applyPluginsEnabled(this.settings.Plugins.filter(plugin => displayed.has(plugin.id)), enabled);
+                })));
+        }
+        for (const kind of ['group', 'tag'] as const) {
+            if (!toolEnabled(this.settings, kind === 'group' ? 'groupStatus' : 'tagStatus')) continue;
+            const entries = kind === 'group' ? this.settings.GROUPS : this.settings.TAGS;
+            this.addActionBranch(menu, t(kind === 'group' ? '批量编辑_分组开关' : '批量编辑_标签开关'),
+                kind === 'group' ? 'folder-tree' : 'tags', event,
+                target => this.populateCategoryStatusMenu(target, event, kind), entries.length === 0);
+        }
+        menu.showAtMouseEvent(event);
+    }
+
+    /** 分类操作覆盖该分类全部成员；Category operations do not inherit overview filters. */
+    private populateCategoryStatusMenu(menu: Menu, event: MouseEvent, kind: "group" | "tag"): void {
+        const entries = kind === "group" ? this.settings.GROUPS : this.settings.TAGS;
+        const populate = (target: Menu, id: string) => {
+            for (const enabled of [true, false]) {
+                target.addItem(item => item
+                    .setTitle(this.manager.translator.t(enabled ? "批量编辑_全部启用" : "批量编辑_全部禁用"))
+                    .setIcon(enabled ? "power" : "power-off")
+                    .onClick(this.action(async () => {
+                        const plugins = this.settings.Plugins.filter(plugin => kind === "group" ? plugin.group === id : plugin.tags.includes(id));
+                        await this.applyPluginsEnabled(plugins, enabled);
+                    })));
+            }
+        };
+        for (const entry of entries) {
+            this.addActionBranch(menu, entry.name || entry.id, kind === 'group' ? 'folder-tree' : 'tags', event,
+                target => populate(target, entry.id));
+        }
+    }
+
+    private canChangePluginStatus(plugin: ManagerPlugin, targetEnabled: boolean): boolean {
+        if (plugin.id === this.manager.manifest.id || plugin.tags.includes(BPM_IGNORE_TAG)) return false;
+        const foreign = this.manager.devices?.isProjectingForeign("plugins") === true;
+        return foreign || !targetEnabled || !Platform.isMobileApp || !this.appPlugins.manifests[plugin.id]?.isDesktopOnly;
+    }
+
+    private async applyPluginsEnabled(selectedPlugins: ManagerPlugin[], targetEnabled: boolean) {
+        if (this.bulkStatusChanging) return;
+        this.bulkStatusChanging = true;
+        try { await this.performPluginsEnabled(selectedPlugins, targetEnabled); }
+        finally { this.bulkStatusChanging = false; }
+    }
+
+    private async performPluginsEnabled(selectedPlugins: ManagerPlugin[], targetEnabled: boolean) {
         const t = (k: string, vars?: Record<string, string | number | boolean | null | undefined>) => this.manager.translator.t(k, vars);
-        const selectedPlugins = this.getSelectedManagerPlugins();
-        const plugins = selectedPlugins.filter((plugin) => plugin.id !== this.manager.manifest.id && !plugin.tags.includes(BPM_IGNORE_TAG));
+        const plugins = [...new Map(selectedPlugins.map(plugin => [plugin.id, plugin])).values()]
+            .filter(plugin => this.canChangePluginStatus(plugin, targetEnabled));
         if (plugins.length === 0) {
             new Notice(t("批量编辑_无可操作插件"));
             return;
@@ -2418,23 +2503,31 @@ export class ManagerModal extends Modal {
         }))) return;
         const progress = this.showInlineProgress(t("管理器_应用更改中_提示"));
         let processed = 0;
-        for (const plugin of plugins) {
-            const foreign = Boolean(this.manager.devices?.isProjectingForeign('plugins'));
-            const isEnabled = foreign ? Boolean(plugin.enabled) : this.isManagedPluginEnabled(plugin.id);
-            if (isEnabled !== targetEnabled) {
-                await this.manager.overview.setPluginState(plugin.id, { enabled: targetEnabled });
-                this.singleStartedPluginIds.delete(plugin.id);
+        const failures: string[] = [];
+        try {
+            for (const selected of plugins) {
+                const plugin = this.settings.Plugins.find(item => item.id === selected.id);
+                if (!plugin || !this.canChangePluginStatus(plugin, targetEnabled)) continue;
+                const foreign = Boolean(this.manager.devices?.isProjectingForeign('plugins'));
+                const isEnabled = foreign ? Boolean(plugin.enabled) : this.isManagedPluginEnabled(plugin.id);
+                try {
+                    if (isEnabled !== targetEnabled) {
+                        await this.manager.overview.setPluginState(plugin.id, { enabled: targetEnabled });
+                        this.singleStartedPluginIds.delete(plugin.id);
+                    }
+                    processed++;
+                } catch (error) {
+                    failures.push(`${plugin.name || plugin.id}: ${error instanceof Error ? error.message : t("批量编辑_操作失败")}`);
+                }
+                progress.update(processed + failures.length, plugins.length, plugin.id);
             }
-            processed++;
-            progress.update(processed, plugins.length, plugin.id);
-        }
-        progress.hide();
-        await this.manager.saveSettings();
+        } finally { progress.hide(); }
         Commands(this.app, this.manager);
         // 批量启停后可能出现新 ribbon 图标，统一登记一次
         this.manager.applyRibbonSettings();
         await this.reloadShowData();
-        new Notice(t("批量编辑_已更新状态", { count: plugins.length }));
+        new Notice(t("批量编辑_已更新状态", { count: processed }));
+        if (failures.length > 0) new Notice(t("批量编辑_启停失败", { count: failures.length, reason: failures[0] }), 8000);
     }
 
     private showInlineProgress(text: string, subText?: string) {
@@ -2451,6 +2544,7 @@ export class ManagerModal extends Modal {
 
     // 编辑模式
     editorMode = false;
+    private layoutSettingsPreview = false;
     // 测试模式
     developerMode = false;
 
@@ -2779,7 +2873,16 @@ export class ManagerModal extends Modal {
     private renderOverviewSort(parent: HTMLElement): void {
         this.overviewSortSelect?.close();
         this.overviewSortSelect = new ScopeSelect(parent, this.manager.translator.t('通用_排序_文本'), 'arrow-up-down',
-            this.getPluginOverviewSort(), this.getPluginOverviewSortOptions().map(([value, label]) => ({ value, label })),
+            this.getPluginOverviewSort(), this.getPluginOverviewSortOptions().map(([value, label]) => ({ value, label,
+                trailingAction: value === 'layout' && toolEnabled(this.settings, 'layoutEditor') ? {
+                    label: this.manager.translator.t('排序_编辑自定义布局'), icon: 'settings',
+                    onClick: this.action(async () => {
+                        this.layoutSettingsPreview = true;
+                        await this.setEditorMode(true);
+                        this.renderContent();
+                    }),
+                } : undefined,
+            })),
             value => { this.action(async () => { await this.setPluginOverviewSort(value); })(); });
         this.overviewSortSelect.field.addClass('manager-filter-field--sort');
     }
@@ -2871,11 +2974,13 @@ export class ManagerModal extends Modal {
             if (order !== undefined) btn.buttonEl.setCssProps({ "--manager-tool-order": `${order}` });
         };
 
-        const batchUpdateButton = new ButtonComponent(actionBar.controlEl);
-        markTool(batchUpdateButton, 'plugin', 15);
-        batchUpdateButton.setIcon('download').setTooltip(t('批量更新_标题'));
-        batchUpdateButton.buttonEl.setAttribute('aria-label', t('批量更新_标题'));
-        batchUpdateButton.onClick(() => { this.action(async () => { await this.manager.openBatchUpdates(); })(); });
+        const mobileOverflowActions: Array<{ button: ButtonComponent; label: string; icon: string }> = [];
+        const oneClickButton = new ButtonComponent(actionBar.controlEl);
+        markTool(oneClickButton, 'plugin', 17);
+        oneClickButton.setIcon('zap').setTooltip(t('功能开关_oneClick'));
+        oneClickButton.buttonEl.setAttribute('aria-label', t('功能开关_oneClick'));
+        oneClickButton.onClick(event => this.showOneClickMenu(event));
+        mobileOverflowActions.push({ button: oneClickButton, label: t('功能开关_oneClick'), icon: 'zap' });
         const rulesButton = new ButtonComponent(actionBar.controlEl);
         markTool(rulesButton, 'plugin', 16);
         rulesButton.setIcon('list-filter').setTooltip(t('更新规则_标题'));
@@ -2892,7 +2997,6 @@ export class ManagerModal extends Modal {
         bulkEditButton.onClick(() => {
             this.setBulkEditMode(!this.bulkEditMode);
         });
-        const mobileOverflowActions: Array<{ button: ButtonComponent; label: string; icon: string }> = [];
 
         // [操作行] 检查更新
         const updateButton = new ButtonComponent(actionBar.controlEl);
@@ -3084,13 +3188,13 @@ export class ManagerModal extends Modal {
             for (const action of mobileOverflowActions) {
                 const button = action.button.buttonEl;
                 if (button.hasClass('manager-feature-disabled') || !isToolInPage(button.dataset.scope ?? '', this.activePage, this.editorMode)) continue;
-                menu.addItem(item => item.setTitle(action.label).setIcon(action.icon).setDisabled(button.disabled).onClick(() => button.click()));
+                menu.addItem(item => item.setTitle(action.label).setIcon(action.icon).setDisabled(button.disabled).onClick(() => this.replaceActionMenu(menu, () => button.click())));
             }
             menu.showAtMouseEvent(event);
         });
 
         const toolFeatures: Array<[ButtonComponent, ToolId]> = [
-            [updateButton, 'updates'], [batchUpdateButton, 'updates'], [rulesButton, 'updates'], [bulkEditButton, 'bulkEdit'], [editorButton, 'layoutEditor'],
+            [oneClickButton, 'oneClick'], [updateButton, 'updates'], [rulesButton, 'updates'], [bulkEditButton, 'bulkEdit'], [editorButton, 'layoutEditor'],
             [addSeparatorButton, 'layoutEditor'], [hiddenResetButton, 'layoutEditor'], [reloadButton, 'reload'],
             [catalogButton, 'catalog'], [marketButton, 'pluginMarket'], [appearanceMarketButton, 'appearanceMarket'],
             [saveAppearanceProfileButton, 'appearanceProfiles'],
@@ -5031,7 +5135,7 @@ export class ManagerModal extends Modal {
         pluginSettingsById: Map<string, ManagerPlugin>,
         dateMetaById: Map<string, PluginDateMeta>
     ): PluginLayoutItem[] {
-        const sort = this.getPluginOverviewSort();
+        const sort = this.layoutSettingsPreview && this.editorMode ? 'layout' : this.getPluginOverviewSort();
         if (sort === "layout") return layoutItems;
 
         const plugins = layoutItems
@@ -5104,7 +5208,7 @@ export class ManagerModal extends Modal {
     }
 
     private shouldRenderPluginLayoutSeparators(): boolean {
-        return this.getPluginOverviewSort() === "layout"
+        return (this.layoutSettingsPreview && this.editorMode || this.getPluginOverviewSort() === "layout")
             && !this.hasActiveStatusFilter()
             && this.getGroupFilterValues().length === 0
             && this.getTagFilterValues().length === 0

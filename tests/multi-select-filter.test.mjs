@@ -7,6 +7,11 @@ const bundle = await build({ entryPoints: ['src/ui/multi-select-filter.ts'], bun
 const loaded = { exports: {} };
 new Function('require', 'module', 'exports', bundle.outputFiles[0].text)(() => ({ setIcon(element, icon) { element.icon = icon; } }), loaded, loaded.exports);
 const { MultiSelectFilter } = loaded.exports;
+const scopeBundle = await build({ entryPoints: ['src/ui/scope-select.ts'], bundle: true, platform: 'node', format: 'cjs',
+    write: false, external: ['obsidian'] });
+const scopeLoaded = { exports: {} };
+new Function('require', 'module', 'exports', scopeBundle.outputFiles[0].text)(() => ({ setIcon(element, icon) { element.icon = icon; } }), scopeLoaded, scopeLoaded.exports);
+const { ScopeSelect } = scopeLoaded.exports;
 
 class Events {
     listeners = new Map();
@@ -16,10 +21,11 @@ class Events {
     }
     removeEventListener(type, listener) { this.listeners.get(type)?.delete(listener); }
     dispatch(type, init = {}) {
-        const event = { target: this, detail: 1, stopPropagation() { this.stopped = true; }, preventDefault() {}, ...init };
+        const event = { target: this, detail: 1, stopPropagation() { this.stopped = true; }, preventDefault() { this.defaultPrevented = true; }, ...init };
         for (let target = this; target && !event.stopped; target = target.parentElement ?? (target instanceof Element ? target.ownerDocument : null)) {
             for (const listener of target.listeners.get(type) ?? []) listener(event);
         }
+        return event;
     }
     listenerCount() { return [...this.listeners.values()].reduce((count, listeners) => count + listeners.size, 0); }
 }
@@ -48,6 +54,12 @@ class Element extends Events {
     setCssStyles(styles) { this.styles = { ...this.styles, ...styles }; }
     getBoundingClientRect() { return this.rect; }
     empty() { this.children = []; }
+    get textContent() { return this.text; }
+    querySelectorAll(selector) {
+        const matches = child => selector.startsWith('.') ? child.classes.has(selector.slice(1)) : child.tag === selector;
+        return this.children.flatMap(child => [...(matches(child) ? [child] : []), ...child.querySelectorAll(selector)]);
+    }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
     focus() { this.ownerDocument.activeElement = this; }
     closest(selector) {
         for (let node = this; node; node = node.parentElement) if (node.classes.has(selector.slice(1))) return node;
@@ -67,7 +79,7 @@ function fixture(overrides = {}) {
     const select = new MultiSelectFilter(parent, { label: 'Status', allValue: 'all', allLabel: 'All',
         options: [{ value: 'enabled', label: 'Enabled' }, { value: 'disabled', label: 'Disabled' }], values: [],
         onChange: values => changes.push(values), ...overrides });
-    const choices = () => select.menuEl.children.filter(child => child.tag === 'button');
+    const choices = () => select.menuEl.querySelectorAll('.manager-multiselect-filter__option');
     const summary = () => select.buttonEl.children.find(child => child.classes.has('manager-multiselect-filter__summary')).text;
     const count = () => select.buttonEl.children.find(child => child.classes.has('manager-multiselect-filter__count')).text;
     return { select, parent, choices, summary, count, changes, doc, view };
@@ -173,4 +185,93 @@ test('settings action sits after the options and closes the menu before navigati
     settings.dispatch('click');
     assert.equal(opened, 1);
     assert.equal(select.buttonEl.getAttribute('aria-expanded'), 'false');
+});
+
+test('trailing option actions are independent sibling buttons and close before running', () => {
+    let opened = 0;
+    const { select, choices, changes, doc } = fixture({ options: [{ value: 'custom', label: 'Custom layout',
+        trailingAction: { label: 'Configure custom layout', onClick: () => {
+            assert.equal(select.buttonEl.getAttribute('aria-expanded'), 'false'); opened++;
+        } } }] });
+    select.buttonEl.dispatch('click');
+    const option = choices()[1], action = select.menuEl.querySelector('.manager-multiselect-filter__option-action');
+    assert.equal(action.tag, 'button');
+    assert.equal(action.getAttribute('aria-label'), 'Configure custom layout');
+    assert.equal(action.icon, 'settings-2');
+    assert.equal(action.parentElement, option.parentElement);
+    assert.notEqual(action.parentElement.tag, 'button');
+    action.dispatch('click');
+    assert.equal(opened, 1); assert.deepEqual(changes, []);
+    assert.equal(option.getAttribute('aria-selected'), 'false');
+    assert.equal(doc.activeElement, select.buttonEl);
+    select.buttonEl.dispatch('click'); option.dispatch('click');
+    assert.deepEqual(changes, [['custom']]); assert.equal(opened, 1);
+    select.close();
+});
+
+test('trailing actions support Enter and Space without selection, repeats, or menu closure when requested', () => {
+    let opened = 0;
+    const options = [{ value: 'custom', label: 'Custom layout', trailingAction: {
+        label: 'Configure layout', closeOnClick: false, onClick: () => { opened++; },
+    } }];
+    const { select, changes, doc } = fixture({ options });
+    select.buttonEl.dispatch('click');
+    let action = select.menuEl.querySelector('.manager-multiselect-filter__option-action');
+    action.focus();
+    for (const key of ['Enter', ' ']) {
+        const event = action.dispatch('keydown', { key });
+        assert.equal(event.defaultPrevented, true);
+        assert.equal(event.stopped, true);
+    }
+    action.dispatch('keydown', { key: 'Enter', repeat: true });
+    assert.equal(opened, 2); assert.deepEqual(changes, []);
+    assert.equal(select.buttonEl.getAttribute('aria-expanded'), 'true');
+    select.menuEl.scrollTop = 57;
+    select.refreshOptions(options);
+    action = select.menuEl.querySelector('.manager-multiselect-filter__option-action');
+    assert.equal(doc.activeElement, action); assert.equal(select.menuEl.scrollTop, 57);
+    select.close();
+});
+
+test('scrolling across an option action does not activate it, while keyboard activation still works', () => {
+    let opened = 0;
+    const { select, changes } = fixture({ options: [{ value: 'custom', label: 'Custom layout',
+        trailingAction: { label: 'Configure', onClick: () => { opened++; } } }] });
+    select.buttonEl.dispatch('click');
+    const action = select.menuEl.querySelector('.manager-multiselect-filter__option-action');
+    action.dispatch('pointerdown', { clientX: 10, clientY: 10 });
+    action.dispatch('pointermove', { clientX: 10, clientY: 30 });
+    action.dispatch('click');
+    assert.equal(opened, 0); assert.deepEqual(changes, []);
+    action.dispatch('keydown', { key: 'Enter' });
+    assert.equal(opened, 1); assert.deepEqual(changes, []);
+});
+
+test('ScopeSelect shares trailing actions without mixing option selection or arrow navigation', () => {
+    const { parent, doc } = fixture();
+    let opened = 0;
+    const changes = [];
+    const select = ScopeSelect.compact(parent, 'Sort', 'name', [
+        { value: 'name', label: 'Name' },
+        { value: 'custom', label: 'Custom layout', trailingAction: { label: 'Configure layout',
+            onClick: () => { opened++; } } },
+    ], value => changes.push(value));
+    const menu = select.trigger.parentElement.querySelector('.manager-multiselect-filter__menu');
+    const options = menu.querySelectorAll('.manager-multiselect-filter__option');
+    const action = menu.querySelector('.manager-multiselect-filter__option-action');
+    select.trigger.dispatch('click');
+    select.trigger.dispatch('keydown', { key: 'ArrowDown' });
+    assert.equal(doc.activeElement, options[0]);
+    options[0].dispatch('keydown', { key: 'ArrowDown' });
+    assert.equal(doc.activeElement, options[1]);
+    options[1].dispatch('keydown', { key: 'ArrowDown' });
+    assert.equal(doc.activeElement, options[0]);
+    action.dispatch('keydown', { key: ' ' });
+    assert.equal(opened, 1); assert.deepEqual(changes, []);
+    assert.equal(select.trigger.getAttribute('aria-expanded'), 'false');
+    assert.equal(options[0].getAttribute('aria-selected'), 'true');
+    select.trigger.dispatch('click'); options[1].dispatch('click');
+    assert.deepEqual(changes, ['custom']); assert.equal(opened, 1);
+    assert.equal(options[1].getAttribute('aria-selected'), 'true');
+    select.close();
 });
