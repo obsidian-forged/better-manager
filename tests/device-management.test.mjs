@@ -1676,6 +1676,7 @@ test('single-machine mode keeps device records in data.json and never writes dev
     const original = JSON.stringify({ id: 'other', name: 'Old tablet', type: 'tablet', lastSeen: 5, updatedAt: 5 });
     const adapter = memoryAdapter({ [otherPath]: original });
     const { manager, settings } = await fixture({ adapter, localOnly: true });
+    manager.localSettingsFresh = true;
     // 旧设备文件启动时并入 data.json 一次，之后不再写入；Legacy files are absorbed once.
     assert.equal(adapter.files[otherPath], original);
     assert.equal(settings.DEVICE_MANAGEMENT.devices.find(device => device.id === 'other')?.name, 'Old tablet');

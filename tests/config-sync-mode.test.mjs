@@ -21,21 +21,24 @@ async function load(entry) {
 }
 const { default: Manager } = await load('src/main.ts');
 const { DEFAULT_SETTINGS } = await load('src/settings/data.ts');
-const { CONFIG_MODE_STORAGE_KEY, CONFIG_CLEANUP_STORAGE_KEY } = await load('src/settings/config-mode.ts');
+const { CONFIG_LOCAL_ESTABLISHED_STORAGE_KEY, CONFIG_MODE_STORAGE_KEY, CONFIG_CLEANUP_STORAGE_KEY } = await load('src/settings/config-mode.ts');
 
 const disk = (overrides = {}) => ({ ...structuredClone(DEFAULT_SETTINGS), ...overrides });
 
 function storage(appLocals) {
     return { loadLocalStorage: key => appLocals.get(key), saveLocalStorage: (key, value) => { appLocals.set(key, value); } };
 }
-async function localFixture(initial = disk()) {
+async function localFixture(initial = disk(), existingLocals) {
     const manager = new Manager();
     let stored = structuredClone(initial);
-    const writes = [], locals = new Map([[CONFIG_MODE_STORAGE_KEY, 'off']]);
-    manager.settings = structuredClone(initial);
+    const writes = [], locals = existingLocals ?? new Map([[CONFIG_MODE_STORAGE_KEY, 'off']]);
+    manager.settings = structuredClone(initial ?? disk());
     manager.translator = { t: key => key };
     manager.manifest = { id: 'self' };
-    manager.app = { vault: { getName: () => 'test', configDir: '.obsidian' }, ...storage(locals) };
+    manager.app = { vault: { getName: () => 'test', configDir: '.obsidian', adapter: {
+        exists: async path => path.endsWith('/data.json') && stored !== null,
+    } }, ...storage(locals) };
+    manager.appPlugins = { enabledPlugins: new Set() };
     manager.loadData = async () => structuredClone(stored);
     manager.saveData = async value => { writes.push(structuredClone(value)); stored = structuredClone(value); };
     manager.reportError = (context, error) => { manager.syncErrors = manager.syncErrors || []; manager.syncErrors.push({ context, error }); };
@@ -97,21 +100,141 @@ test('uses the atomic adapter.process when the file exists and merges inside it'
     assert.equal(written.RECENT_INSTALL_DAYS, 66);
 });
 
-test('a temporarily missing or empty data.json is restored from memory instead of reset to defaults', async () => {
-    const f = await localFixture(), { manager } = f;
-    manager.settings.RECENT_INSTALL_DAYS = 14;
+test('a partial external file cannot remove device management during a merge', async () => {
+    const management = { enabled: false, defaultPresets: { computer: 'c', tablet: '', phone: '' },
+        presets: { computer: [], tablet: [], phone: [] }, devices: [] };
+    const f = await localFixture(disk({ DEVICE_MANAGEMENT: management })), { manager } = f;
+    f.replaceDisk({ CENTER: false, SEARCH: '' });
     manager.settings.CENTER = true;
     await manager.saveSettings({ captureDevice: false });
-    f.replaceDisk(null);
     assert.equal(await manager.savePendingSettings(), true);
-    assert.equal(f.disk().RECENT_INSTALL_DAYS, 14);
-    assert.equal(f.disk().CENTER, true);
-    f.replaceDisk({});
-    manager.settings.CENTER = false;
+    assert.ok(manager.settings.DEVICE_MANAGEMENT, 'device management must survive a partial external file');
+});
+
+test('automatic saves never recreate a previously established file that is temporarily missing or empty', async () => {
+    for (const missing of [null, {}]) {
+        const f = await localFixture(), { manager } = f;
+        assert.equal(f.locals.get(CONFIG_LOCAL_ESTABLISHED_STORAGE_KEY), 'yes');
+        manager.settings.RECENT_INSTALL_DAYS = 14;
+        f.replaceDisk(missing);
+        await manager.saveSettings({ captureDevice: false, automatic: true });
+        assert.deepEqual(f.disk(), missing);
+        manager.settings.CENTER = true;
+        await manager.saveSettings({ captureDevice: false });
+        assert.equal(await manager.savePendingSettings(), false, 'an explicit retry cannot treat a known file as a new install');
+        assert.deepEqual(f.disk(), missing);
+        assert.equal(manager.hasUnsavedSettings, true, 'the attempted edit remains pending');
+    }
+});
+
+test('an automatic startup save does not create a new data.json, but an explicit first save can', async () => {
+    const f = await localFixture(null), { manager } = f;
+    manager.settings.CENTER = true;
+    await manager.saveSettings({ captureDevice: false, automatic: true });
+    assert.equal(f.disk(), null);
+    assert.equal(f.writes.length, 0);
+    assert.equal(manager.hasUnsavedSettings, true, 'the blocked automatic write remains visible as pending');
     await manager.saveSettings({ captureDevice: false });
     assert.equal(await manager.savePendingSettings(), true);
+    assert.equal(f.disk().CENTER, true);
+    assert.equal(f.locals.get(CONFIG_LOCAL_ESTABLISHED_STORAGE_KEY), 'yes');
+});
+
+test('automatic saves stay pending with sync enabled and explicit Save merges the latest file', async () => {
+    const f = await localFixture(), { manager } = f;
+    manager.syncServiceDetected = true;
+    manager.settings.CENTER = true;
+    await manager.saveSettings({ captureDevice: false, automatic: true });
+    assert.equal(f.disk().CENTER, disk().CENTER);
+    assert.equal(manager.hasUnsavedSettings, true);
+    f.replaceDisk(disk({ RECENT_INSTALL_DAYS: 73 }));
+    await manager.saveSettings({ captureDevice: false });
+    assert.equal(await manager.savePendingSettings(), true);
+    assert.equal(f.disk().CENTER, true);
+    assert.equal(f.disk().RECENT_INSTALL_DAYS, 73);
+});
+
+test('converting a protected file in single-machine mode waits for explicit Save when sync is enabled', async () => {
+    const legacy = disk({ CENTER: true, _bpmRevision: { id: 'old-protected-revision' } });
+    const f = await localFixture(legacy), { manager } = f;
+    manager.syncServiceDetected = true;
+    manager.settings.CENTER = false;
+    await manager.saveSettings({ captureDevice: false, automatic: true });
+    assert.deepEqual(f.disk(), legacy);
+    await manager.saveSettings({ captureDevice: false });
+    f.replaceDisk(disk({ RECENT_INSTALL_DAYS: 73, _bpmRevision: { id: 'old-protected-revision' } }));
+    assert.equal(await manager.savePendingSettings(), true);
     assert.equal(f.disk().CENTER, false);
-    assert.equal(f.disk().RECENT_INSTALL_DAYS, 14);
+    assert.equal(f.disk().RECENT_INSTALL_DAYS, 73);
+    assert.equal(f.disk()._bpmRevision, undefined);
+});
+
+test('a failed sync check keeps automatic settings changes pending', async () => {
+    const f = await localFixture(), { manager } = f;
+    manager.syncServiceDetectionFailed = true;
+    manager.settings.CENTER = true;
+    await manager.saveSettings({ captureDevice: false, automatic: true });
+    assert.equal(f.disk().CENTER, disk().CENTER);
+    assert.equal(manager.hasUnsavedSettings, true);
+});
+
+test('an unverified missing-file state is never treated as a fresh install', async () => {
+    const f = await localFixture(null), { manager } = f;
+    manager.app.vault.adapter.exists = async () => { throw new Error('adapter unavailable'); };
+    await manager.loadSettings();
+    assert.equal(manager.localSettingsFresh, false);
+    manager.settings.CENTER = true;
+    await manager.saveSettings({ captureDevice: false, automatic: true });
+    await manager.saveSettings({ captureDevice: false });
+    assert.equal(await manager.savePendingSettings(), false);
+    assert.equal(f.disk(), null);
+});
+
+test('the FNS plugin is detected before the warning dialog runs', async () => {
+    const manager = new Manager();
+    manager.app = { vault: { configDir: '.obsidian', adapter: {
+        exists: async () => false,
+        read: async () => { throw new Error('core plugin list should not be read'); },
+    } } };
+    manager.appPlugins = { enabledPlugins: new Set(['fast-note-sync']) };
+    assert.equal(await manager.hasEnabledSyncService(), true);
+});
+
+test('an FNS plugin enabled after startup is detected before a background write', async () => {
+    const f = await localFixture(), { manager } = f;
+    manager.appPlugins.enabledPlugins.add('fast-note-sync');
+    manager.settings.CENTER = true;
+    await manager.saveSettings({ captureDevice: false, automatic: true });
+    assert.equal(f.disk().CENTER, disk().CENTER);
+    assert.equal(manager.hasUnsavedSettings, true);
+});
+
+test('the established-file guard survives a plugin restart while the shared file is missing', async () => {
+    const first = await localFixture();
+    const reopened = await localFixture(null, first.locals);
+    reopened.manager.settings.SEARCH = 'stale local value';
+    await reopened.manager.saveSettings({ captureDevice: false, automatic: true });
+    assert.equal(reopened.disk(), null);
+    assert.equal(reopened.writes.length, 0);
+    await reopened.manager.saveSettings({ captureDevice: false });
+    assert.equal(await reopened.manager.savePendingSettings(), false);
+    assert.equal(reopened.disk(), null);
+});
+
+test('an atomic writer that observes a missing file cancels without falling back to saveData', async () => {
+    const f = await localFixture(), { manager } = f;
+    let text = JSON.stringify(f.disk()), calls = 0;
+    manager.app.vault.adapter = {
+        exists: async path => path.endsWith('/data.json'),
+        process: async (path, update) => { calls++; return update(''); },
+    };
+    manager.loadData = async () => text.trim() ? JSON.parse(text) : null;
+    manager.saveData = async value => { f.writes.push(structuredClone(value)); text = JSON.stringify(value); };
+    manager.settings.SEARCH = 'must remain pending';
+    await manager.saveSettings({ automatic: true, captureDevice: false });
+    assert.equal(calls, 1);
+    assert.equal(text, JSON.stringify(f.disk()));
+    assert.equal(f.writes.length, 0);
 });
 
 test('an idle local session adopts external changes without writing', async () => {
@@ -122,6 +245,25 @@ test('an idle local session adopts external changes without writing', async () =
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(manager.settings.RECENT_INSTALL_DAYS, 55);
     assert.equal(f.writes.length, before, 'adoption must not publish a write');
+});
+
+test('an external preset update wins over a skewed local wall-clock timestamp without a write echo', async () => {
+    const preset = { id: 'computer', name: 'Computer', configured: true, updatedAt: 900,
+        plugins: { tasks: { enabled: true, delay: '' } }, ribbon: [], ribbonGroups: [], ribbonEnabled: false,
+        filters: {}, appearance: { theme: '', snippets: {} } };
+    const initial = disk({ DEVICE_MANAGEMENT: { enabled: true, defaultPresets: { computer: 'computer', phone: '', tablet: '' },
+        presets: { computer: [preset], phone: [], tablet: [] }, devices: [] } });
+    const f = await localFixture(initial), { manager } = f;
+    const remote = structuredClone(f.disk());
+    remote.DEVICE_MANAGEMENT.presets.computer[0].updatedAt = 10;
+    remote.DEVICE_MANAGEMENT.presets.computer[0].plugins.tasks.enabled = false;
+    f.replaceDisk(remote);
+    manager.onExternalSettingsChange();
+    await new Promise(resolve => setImmediate(resolve));
+    const adopted = manager.settings.DEVICE_MANAGEMENT.presets.computer[0];
+    assert.equal(adopted.updatedAt, 10);
+    assert.equal(adopted.plugins.tasks.enabled, false);
+    assert.equal(f.writes.length, 0);
 });
 
 test('automatic save merges external fields and adopts them', async () => {

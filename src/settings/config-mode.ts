@@ -1,6 +1,8 @@
 /** 同步保护是每台设备自己的选择，不能随 data.json 同步到其他机器。 */
 export const CONFIG_MODE_STORAGE_KEY = 'bpm-config-sync-protection';
 export const CONFIG_CLEANUP_STORAGE_KEY = 'bpm-config-cleanup-pending';
+/** 本机曾经成功建立过 data.json；同步暂缺时不得把它当成首次安装。 */
+export const CONFIG_LOCAL_ESTABLISHED_STORAGE_KEY = 'bpm-local-settings-established';
 
 /**
  * 解析本机的同步保护开关：

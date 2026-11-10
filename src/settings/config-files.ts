@@ -11,8 +11,9 @@ export interface ConfigFileAdapter {
     mkdir(path: string): Promise<void>;
     remove(path: string): Promise<void>;
     list(path: string): Promise<{ files: string[]; folders: string[] }>;
+    process?(path: string, update: (text: string) => string): Promise<string>;
 }
-export interface ConfigAnchor { head?: string; conflict?: string; transaction?: string; transactionTarget?: string; transactionBase?: string; }
+export interface ConfigAnchor { head?: string; conflict?: string; transaction?: string; transactionTarget?: string; transactionBase?: string; sharedEstablished?: boolean; }
 export interface ConfigLocalAnchor { read(): unknown; write(value: ConfigAnchor): void; }
 interface StoredState { owner: string; config: ConfigRecord; files: Record<string, string | null>; }
 const record = (value: unknown): value is ConfigRecord => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -40,6 +41,7 @@ export class ConfigFiles implements ConfigProtectionIO {
     private initialShared?: unknown;
     private incomplete = false;
     private cacheRecovered = false;
+    private sharedEstablished = false;
     get hasPendingBundle(): boolean { return this.incomplete; }
     get hasPendingTransaction(): boolean { return Boolean(this.anchor.transactionTarget && this.anchor.transactionBase); }
     get localCacheRebuilt(): boolean { return this.cacheRecovered; }
@@ -58,7 +60,11 @@ export class ConfigFiles implements ConfigProtectionIO {
             conflict: safeId(anchor.conflict) ? anchor.conflict : undefined,
             transaction: safeId(anchor.transaction) ? anchor.transaction : undefined,
             transactionTarget: safeId(anchor.transactionTarget) ? anchor.transactionTarget : undefined,
-            transactionBase: safeId(anchor.transactionBase) ? anchor.transactionBase : undefined };
+            transactionBase: safeId(anchor.transactionBase) ? anchor.transactionBase : undefined,
+            sharedEstablished: typeof anchor.sharedEstablished === 'boolean' ? anchor.sharedEstablished : undefined };
+        // Old anchors already refer to an existing shared configuration. A new, empty
+        // installation records false until its first real file appears or is published.
+        this.sharedEstablished = this.anchor.sharedEstablished ?? Boolean(this.anchor.head);
     }
 
     private async read(path: string): Promise<string | undefined> { return await this.adapter.exists(path) ? this.adapter.read(path) : undefined; }
@@ -84,7 +90,15 @@ export class ConfigFiles implements ConfigProtectionIO {
             if (current && !current()) throw new ConfigEditorReopened();
             await guard?.();
             if (current && !current()) throw new ConfigEditorReopened();
-            await this.adapter.write(path, text);
+            if (guard && previous !== undefined && this.adapter.process) {
+                // DataAdapter.process serializes cooperating adapter users. A sync engine
+                // writing outside that adapter can still race; this is not a filesystem CAS.
+                await this.adapter.process(path, actual => {
+                    if (actual !== previous) throw new ConfigDiskChanged();
+                    if (current && !current()) throw new ConfigEditorReopened();
+                    return text;
+                });
+            } else await this.adapter.write(path, text);
         };
         const retainedWrite = () => this.privateWrites ? this.privateWrites.write(path, text, write) : write();
         if (this.sharedWrites) await this.sharedWrites.write(path, text, retainedWrite); else await retainedWrite();
@@ -99,6 +113,7 @@ export class ConfigFiles implements ConfigProtectionIO {
         await this.writeChanged(`${this.privateRoot}/${name}`, settingsFingerprint(serializable), immutable);
     }
     private saveAnchor(next: ConfigAnchor): void {
+        next = { ...next, sharedEstablished: this.sharedEstablished };
         if (settingsFingerprint(next) === settingsFingerprint(this.anchor)) return;
         this.local.write(next); this.anchor = next;
     }
@@ -201,6 +216,17 @@ export class ConfigFiles implements ConfigProtectionIO {
     }
     async readShared(allowTrustedFallback = false): Promise<ConfigSnapshot> {
         const text = await this.read(`${this.root}/data.json`);
+        if (text !== undefined && !this.sharedEstablished) {
+            this.sharedEstablished = true;
+            this.saveAnchor(this.anchor);
+        }
+        if (text === undefined && this.sharedEstablished || text !== undefined && !text.trim()) {
+            this.incomplete = true;
+            const trusted = this.anchor.head ? (await this.readState(this.anchor.head)).snapshot : this.observed;
+            if (allowTrustedFallback && trusted) { this.observed = trusted; return trusted; }
+            const previous = trusted ?? await decodeConfig(this.initialShared ?? {}, this.hash);
+            throw new IncompleteConfigBundle(previous, [{ path: 'data.json', kind: text === undefined ? 'missing' : 'different' }]);
+        }
         let raw: unknown = text === undefined ? this.initialShared ?? {} : JSON.parse(text);
         const snapshot = await this.sharedMarker(raw);
         if (!snapshot.revision) raw = snapshot.value;
@@ -227,6 +253,7 @@ export class ConfigFiles implements ConfigProtectionIO {
         }
         let complete: ConfigSnapshot;
         let state: StoredState | undefined;
+        let provisional = false;
         try { complete = await this.snapshotFrom(raw, files); }
         catch (error) {
             if (!(error instanceof IncompleteConfigBundle)) throw error;
@@ -239,27 +266,31 @@ export class ConfigFiles implements ConfigProtectionIO {
                 // shared values instead of refusing to start forever. Waiting files are still reported on Save.
                 if (allowTrustedFallback && this.cacheRecovered && !this.anchor.head) {
                     complete = await this.snapshotFrom(snapshot.value, files);
-                    // 重建读取后若 data.json 已被同步更新，放弃本次改写并重试，避免覆盖新版本。
-                    // If data.json changed after this read, abandon the rebuild and retry with the newer value.
+                    // Rebuild only a private display/recovery state. A partially delivered
+                    // revision never authorizes stripping its shared marker or publishing it.
                     if (await this.read(`${this.root}/data.json`) !== text) throw error;
-                    // 修订标记引用的文件已无法核对；立即改写为可用的普通配置，否则之后每次保存都会因缺失文件失败。
-                    // Rewrite the unusable revision immediately; otherwise every later Save would fail on the
-                    // missing files. The value itself is preserved unchanged.
-                    await this.writeChanged(`${this.root}/data.json`, JSON.stringify(encodeConfig(complete), null, 2), false);
+                    provisional = true;
                 } else {
                     if (!allowTrustedFallback || !this.anchor.head) throw error;
                     const trusted = (await this.readState(this.anchor.head)).snapshot;
+                    this.incomplete = true;
                     this.observed = trusted;
                     return trusted;
                 }
             }
         }
-        this.incomplete = false;
+        this.incomplete = provisional;
         this.observed = complete;
         this.states.set(complete.id, state ?? { owner: this.owner, config: encodeConfig(complete), files });
         return complete;
     }
-    setInitialShared(value: unknown): void { this.initialShared = value; }
+    setInitialShared(value: unknown): void {
+        this.initialShared = value;
+        if (value !== null && value !== undefined && !this.sharedEstablished) {
+            this.sharedEstablished = true;
+            this.saveAnchor(this.anchor);
+        }
+    }
     async recoverPreparedCommit(): Promise<void> {
         if (!this.anchor.transactionTarget) return;
         const snapshot = await this.readShared(true);
@@ -404,7 +435,14 @@ export class ConfigFiles implements ConfigProtectionIO {
             if (!isManagedConfigFile(path) || value !== null && typeof value !== 'string') throw new Error('Invalid BPM recovery draft file');
             files[path] = value;
         }
-        return { base: raw.base, value: raw.value, userEdited: raw.userEdited, files };
+        let userFiles: string[] | undefined;
+        if (raw.userFiles !== undefined) {
+            if (!Array.isArray(raw.userFiles) || !raw.userFiles.every((path: unknown): path is string => typeof path === 'string'
+                && isManagedConfigFile(path) && Object.prototype.hasOwnProperty.call(files, path))
+                || new Set(raw.userFiles).size !== raw.userFiles.length) throw new Error('Invalid BPM recovery draft file ownership');
+            userFiles = raw.userFiles;
+        }
+        return { base: raw.base, value: raw.value, userEdited: raw.userEdited, files, ...(userFiles ? { userFiles } : {}) };
     }
     async writeDraft(value: ConfigDraft): Promise<void> { await this.privateJson('draft.json', { owner: this.owner, ...value }); }
     async removeDraft(): Promise<void> {
@@ -579,6 +617,10 @@ export class ConfigFiles implements ConfigProtectionIO {
         await guard();
         if (!stillClosed()) throw new ConfigEditorReopened();
         await this.writeChanged(`${this.root}/data.json`, JSON.stringify(encodeConfig(snapshot), null, 2), false, stillClosed, guard);
+        if (!this.sharedEstablished) {
+            this.sharedEstablished = true;
+            this.saveAnchor(this.anchor);
+        }
         const saved = await this.readShared();
         if (saved.id !== snapshot.id) throw new Error('BPM configuration publication verification failed');
     }

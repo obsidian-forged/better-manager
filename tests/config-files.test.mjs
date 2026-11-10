@@ -32,6 +32,7 @@ test('editing commits a primary revision once and leaves unchanged auxiliary fil
     assert.equal(f.publicWrites().length,0);
     await f.store.publish(value,f.store.current.files,()=>true);
     assert.deepEqual(f.publicWrites(),[`${root}/data.json`]);
+    assert.equal(f.anchor().sharedEstablished,true);
     const raw=JSON.parse(f.files.get(`${root}/data.json`));assert.equal(raw._bpmRevision.generation,1);
     const count=f.writes.length,anchors=f.anchorWrites();await f.io.writeHead(f.store.current);
     assert.equal(f.writes.length,count);assert.equal(f.anchorWrites(),anchors);
@@ -445,10 +446,11 @@ test('transaction before-images require the original local anchor, owner, endpoi
     }
 });
 
-test('deleting the private recovery cache does not block startup and rebuilds from shared values', async () => {
+test('deleting the private recovery cache does not rewrite an incomplete shared revision', async () => {
     const f = fixture({ name: 'initial' }, 'icons');
     const value = await f.store.load(); f.store.begin(value); value.name = 'committed';
     await f.store.publish(value, f.store.current.files, () => true);
+    const sharedBefore = f.files.get(`${root}/data.json`);
     // 用户删除 .bpm 与 data 目录；Users delete .bpm and the data folder, leaving only the shared files.
     for (const path of [...f.files.keys()]) {
         if (path.includes('/.bpm/') || path.endsWith('/data/icons.css')) f.files.delete(path);
@@ -462,19 +464,74 @@ test('deleting the private recovery cache does not block startup and rebuilds fr
     assert.equal(recovered.value.name, 'committed');
     assert.equal(recovered.files['data/icons.css'], null);
     const repaired = JSON.parse(f.files.get(`${root}/data.json`));
-    assert.equal(repaired._bpmRevision, undefined, 'the unusable revision marker is removed');
+    assert.deepEqual(repaired._bpmRevision, JSON.parse(sharedBefore)._bpmRevision, 'the original revision marker stays intact');
     assert.equal(repaired.name, 'committed');
+    assert.equal(f.files.get(`${root}/data.json`), sharedBefore, 'cache repair makes no shared writes');
     // 启动流程会写入新的本机状态；Startup persists the rebuilt private state.
     await f.io.writeHead(recovered);
     assert.equal(f.anchor().head, recovered.id);
     assert.ok([...f.files.keys()].some(path => path.includes('/.bpm/device-a/states/')));
-    // 下次启动读取已修复的普通配置；Later starts read the repaired plain configuration.
+    // Later starts keep the partial bundle visible and never interpret it as a writable baseline.
     const next = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-a', hash, f.local);
     assert.equal(await next.repairMissingAnchor(), false);
     const later = await next.readShared(true);
     assert.equal(later.revision, undefined);
     assert.equal(later.value.name, 'committed');
-    assert.equal(later.files['data/icons.css'], undefined);
+    assert.equal(next.hasPendingBundle, true);
+    await assert.rejects(next.readShared(), IncompleteConfigBundle);
+    assert.equal(f.files.get(`${root}/data.json`), sharedBefore);
+});
+
+test('a previously established protected data.json cannot disappear or become empty after restart', async () => {
+    for (const replacement of [undefined, '']) {
+        const f = fixture({ name: 'initial' }, 'icons');
+        await f.store.load();
+        assert.equal(f.anchor().sharedEstablished, true);
+        const path = `${root}/data.json`;
+        if (replacement === undefined) f.files.delete(path); else f.files.set(path, replacement);
+        const next = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-a', hash, f.local);
+        const writes = f.publicWrites().length;
+        const trusted = await next.readShared(true);
+        assert.equal(trusted.value.name, 'initial');
+        assert.equal(f.publicWrites().length, writes);
+        assert.equal(next.hasPendingBundle, true);
+        await assert.rejects(next.readShared(), IncompleteConfigBundle);
+        assert.equal(replacement === undefined ? f.files.has(path) : f.files.get(path), replacement === undefined ? false : '');
+    }
+});
+
+test('a first protected publication persists the established marker before startup can lose the file', async () => {
+    const f = fixture({ name: 'initial' });
+    const value = await f.store.load();
+    f.store.begin(value);
+    value.name = 'saved';
+    await f.store.publish(value, f.store.current.files, () => true);
+    assert.equal(f.anchor().sharedEstablished, true);
+    f.files.delete(`${root}/data.json`);
+    const next = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-a', hash, f.local);
+    const trusted = await next.readShared(true);
+    assert.equal(trusted.value.name, 'saved');
+    assert.equal(next.hasPendingBundle, true);
+    await assert.rejects(next.readShared(), IncompleteConfigBundle);
+    assert.equal(f.files.has(`${root}/data.json`), false);
+});
+
+test('observing an incomplete shared revision durably records that data.json existed', async () => {
+    const f = fixture({ name: 'initial' }, 'icons');
+    await f.store.load();
+    f.local.write({ ...f.anchor(), sharedEstablished: false });
+    const incoming = await createConfigRevision({ name: 'remote' }, 'device-b', [f.store.current],
+        { 'data/icons.css': await hash('incoming icons') }, hash);
+    f.files.set(`${root}/data.json`, JSON.stringify(encodeConfig(incoming)));
+    const partial = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-a', hash, f.local);
+    const trusted = await partial.readShared(true);
+    assert.equal(trusted.value.name, 'initial');
+    assert.equal(partial.hasPendingBundle, true);
+    assert.equal(f.anchor().sharedEstablished, true);
+    f.files.delete(`${root}/data.json`);
+    const restarted = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-a', hash, f.local);
+    assert.equal((await restarted.readShared(true)).value.name, 'initial');
+    assert.equal(restarted.hasPendingBundle, true);
 });
 
 test('a complete bundle still starts normally after the private cache is repaired', async () => {
