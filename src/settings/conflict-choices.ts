@@ -8,13 +8,17 @@ const record = (value: unknown): value is ConfigRecord => value !== null && type
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const same = (a: unknown, b: unknown): boolean => settingsFingerprint(a) === settingsFingerprint(b);
 const pluginFields = ['enabled', 'delay', 'group', 'tags', 'note'];
+const presetTypes = ['computer', 'tablet', 'phone'] as const;
 const pluginList = (value: ConfigRecord): ConfigRecord[] => Array.isArray(value.Plugins) ? value.Plugins.filter(record) : [];
-function findPreset(value: ConfigRecord, id: string): { type: string; value: ConfigRecord } | undefined {
+function presetsFor(value: ConfigRecord, type: string): ConfigRecord[] {
     const data = value.DEVICE_MANAGEMENT;
-    if (!record(data) || !record(data.presets)) return;
-    for (const type of ['computer', 'tablet', 'phone']) {
-        const raw = data.presets[type], list = Array.isArray(raw) ? raw : record(raw) ? [raw] : [];
-        const found = list.find((item: unknown): item is ConfigRecord => record(item) && item.id === id);
+    if (!record(data) || !record(data.presets)) return [];
+    const raw = data.presets[type];
+    return (Array.isArray(raw) ? raw : record(raw) ? [raw] : []).filter(record);
+}
+function findPreset(value: ConfigRecord, id: string): { type: string; value: ConfigRecord } | undefined {
+    for (const type of presetTypes) {
+        const found = presetsFor(value, type).find(item => item.id === id);
         if (found) return { type, value: found };
     }
 }
@@ -22,9 +26,59 @@ function presetPlugin(value: ConfigRecord, presetId: string, id: string): unknow
     const preset = findPreset(value, presetId)?.value;
     return preset && record(preset.plugins) ? preset.plugins[id] : undefined;
 }
-function userPlugin(value: ConfigRecord, id: string): ConfigRecord | undefined {
-    const plugin = pluginList(value).find(item => item.id === id);
+function userPluginFields(plugin: ConfigRecord | undefined): ConfigRecord | undefined {
     return plugin ? Object.fromEntries(pluginFields.filter(key => key in plugin).map(key => [key, plugin[key]])) : undefined;
+}
+function userPlugin(value: ConfigRecord, id: string): ConfigRecord | undefined {
+    return userPluginFields(pluginList(value).find(item => item.id === id));
+}
+function presetContent(value: ConfigRecord | undefined): ConfigRecord | undefined {
+    if (!value) return;
+    const copy = { ...value };
+    delete copy.updatedAt;
+    return copy;
+}
+const presetPluginKey = (presetId: string, pluginId: string): string => `${presetId}\u0000${pluginId}`;
+export interface ConfigItemChangeIndex {
+    fields: Set<string>;
+    plugins: Set<string>;
+    presets: Set<string>;
+    presetPlugins: Set<string>;
+}
+/** 一次性算出相对已保存基线发生变化的条目，供管理器给每个 item 打“未保存”标记。
+ * Index the items whose effective value differs from the saved baseline, for per-item unsaved marks. */
+export function configItemChangeIndex(current: ConfigRecord, base: ConfigRecord): ConfigItemChangeIndex {
+    const fields = new Set<string>(), plugins = new Set<string>(), presets = new Set<string>(), presetPlugins = new Set<string>();
+    const left = configurationContent(current), right = configurationContent(base);
+    if (record(left) && record(right)) for (const key of new Set([...Object.keys(left), ...Object.keys(right)])) {
+        if (!same(left[key], right[key])) fields.add(key);
+    }
+    const pluginMap = (value: ConfigRecord): Map<string, ConfigRecord> => new Map(pluginList(value)
+        .flatMap(item => typeof item.id === 'string' ? [[item.id, item] as const] : []));
+    const currentPlugins = pluginMap(current), basePlugins = pluginMap(base);
+    for (const id of new Set([...currentPlugins.keys(), ...basePlugins.keys()])) {
+        if (!same(userPluginFields(currentPlugins.get(id)), userPluginFields(basePlugins.get(id)))) plugins.add(id);
+    }
+    for (const type of presetTypes) {
+        const a = presetsFor(current, type), b = presetsFor(base, type);
+        const ids = new Set([...a, ...b].map(item => typeof item.id === 'string' ? item.id : '').filter(Boolean));
+        for (const id of ids) {
+            const leftPreset = a.find(item => item.id === id), rightPreset = b.find(item => item.id === id);
+            if (!same(presetContent(leftPreset), presetContent(rightPreset))) presets.add(id);
+            const leftPlugins = record(leftPreset?.plugins) ? leftPreset.plugins : {};
+            const rightPlugins = record(rightPreset?.plugins) ? rightPreset.plugins : {};
+            for (const pluginId of new Set([...Object.keys(leftPlugins), ...Object.keys(rightPlugins)])) {
+                if (!same(leftPlugins[pluginId], rightPlugins[pluginId])) presetPlugins.add(presetPluginKey(id, pluginId));
+            }
+        }
+    }
+    return { fields, plugins, presets, presetPlugins };
+}
+export function configItemChanged(index: ConfigItemChangeIndex, target: ConflictItem): boolean {
+    if (target.kind === 'preset') return index.presets.has(target.id);
+    if (target.kind === 'field') return index.fields.has(target.id);
+    return index.plugins.has(target.id)
+        || Boolean(target.presetId && index.presetPlugins.has(presetPluginKey(target.presetId, target.id)));
 }
 const keyOf = (binding: ItemBinding): string => settingsFingerprint(binding);
 
@@ -106,13 +160,16 @@ export class ConfigConflictChoices {
         const sides = new Set(bindings.map(binding => this.overrides.get(keyOf(binding))?.side ?? this.choices.get(binding.section) ?? 'local'));
         return sides.size > 1 ? 'mixed' : sides.values().next().value;
     }
-    toggleItem(target: ConflictItem): void {
-        const side = this.itemSide(target) === 'incoming' ? 'local' : 'incoming';
+    /** 直接选择某个条目的来源；Directly choose a source for one item (field, plugin or preset). */
+    selectItem(target: ConflictItem, side: ConflictSide): void {
         const bindings = this.itemBindings(target);
         if (!bindings.length) throw new Error('This item has no configuration conflict');
         if (target.kind === 'preset') { this.selectSection(bindings[0].section, side); return; }
         for (const binding of bindings) this.overrides.set(keyOf(binding), { binding, side });
         this.cached = undefined;
+    }
+    toggleItem(target: ConflictItem): void {
+        this.selectItem(target, this.itemSide(target) === 'incoming' ? 'local' : 'incoming');
     }
     listSide(ids: readonly string[], presetId?: string): ConflictSide | 'mixed' | undefined {
         const sides = new Set(ids.map(id => this.itemSide({ kind: 'plugin', id, presetId })).filter(side => side !== undefined));
@@ -128,7 +185,11 @@ export class ConfigConflictChoices {
     private resolved(): { value: ConfigRecord; files: Record<string, string | null> } {
         if (this.cached) return this.cached;
         const result = resolveConfiguration(this.local, this.incoming, this.sections, this.choices, this.localFiles, this.incomingFiles);
-        for (const { binding, side } of this.overrides.values()) {
+        // 先应用整类设置，再应用条目/预设选择，保证更细粒度的选择不被整类覆盖。
+        // Apply whole-category choices first, then item/preset choices, so finer choices win.
+        const overrides = [...this.overrides.values()].sort((left, right) =>
+            Number(Boolean(right.binding.field)) - Number(Boolean(left.binding.field)));
+        for (const { binding, side } of overrides) {
             const source = side === 'incoming' ? this.incoming : this.local;
             if (binding.field) {
                 if (binding.field in source) result.value[binding.field] = clone(source[binding.field]);

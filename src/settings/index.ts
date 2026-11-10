@@ -217,6 +217,9 @@ class ManagerSettingTab extends PluginSettingTab {
         this.isVisible = true;
         this.manager.beginSettingsEditing(this);
         this.renderSettings();
+        // 打开设置也检查共享文件；没有文件事件时同样能看到其他设备的最新配置。
+        // Check the shared file on open; a sync write without a file event still becomes visible.
+        void this.manager.configProtection?.refreshShared().catch(error => this.manager.devices?.report(error));
     }
 
     refreshConfigConflict(): void {

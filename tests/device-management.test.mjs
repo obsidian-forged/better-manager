@@ -555,15 +555,18 @@ test('a user edit while Save is staging cancels that click and keeps the newer d
     assert.equal(manager.hasUnsavedSettings,true);assert.equal(manager.configProtection.protection.current.value.RECENT_INSTALL_DAYS,7);
     assert.equal(manager.settings.RECENT_INSTALL_DAYS,21);
 });
-test('explicit Save retries an incomplete bundle after its missing file arrives',async()=>{
+test('explicit Save follows a complete synced revision after its missing file arrives',async()=>{
     const adapter=memoryAdapter(),{manager}=await fixture({adapter}),path='.obsidian/plugins/self/data.json';
     adapter.files[path]=JSON.stringify(manager.devices.persistedSettings());await manager.loadSettings();manager.beginSettingsEditing({});
     const head=manager.configProtection.protection.current,remote=structuredClone(head.value);remote.LANGUAGE='fr';
     const incoming=await createConfigRevision(remote,'remote-device',[head],{...head.files,'data/icons.css':await hash('remote icons')},hash);
     adapter.files[path]=JSON.stringify(encodeConfig(incoming));assert.equal(await manager.savePendingSettings(),false);assert.equal(manager.configProtection.protection.paused,false);
-    adapter.files['.obsidian/plugins/self/data/icons.css']='remote icons';assert.equal(await manager.savePendingSettings(),false);assert.equal(manager.configProtection.protection.paused,true);
-    await manager.configProtection.prepareConflictChoices();await manager.configProtection.selectConflictSection('file:data/icons.css','incoming');await manager.configProtection.confirmConflictChoices();
-    assert.equal(await manager.savePendingSettings(),true);assert.equal(JSON.parse(adapter.files[path])._bpmRevision.files['data/icons.css'],await hash('remote icons'));
+    adapter.files['.obsidian/plugins/self/data/icons.css']='remote icons';
+    // No local edits: the completed synced revision is followed, not turned into a conflict.
+    assert.equal(await manager.savePendingSettings(),true);assert.equal(manager.configProtection.protection.paused,false);
+    assert.equal(manager.configProtection.protection.current.id,incoming.id);
+    assert.equal(adapter.files['.obsidian/plugins/self/data/icons.css'],'remote icons');
+    assert.equal(JSON.parse(adapter.files[path])._bpmRevision.id,incoming.id);
 });
 
 test('a reviewed remote preset applies only after explicit Save and never on editor close', async () => {
@@ -573,8 +576,8 @@ test('a reviewed remote preset applies only after explicit Save and never on edi
     manager.managerModal={modalEl:{isConnected:true},close(){closes++;},refreshRibbonFeatureAvailability(){rebuilds++;}};
     const first={},second={};manager.beginSettingsEditing(first);manager.beginSettingsEditing(second);const remote=JSON.parse(adapter.files[path]);firstOf(remote,'computer').plugins.a.enabled=false;
     adapter.files[path]=JSON.stringify(await remoteChild(manager,remote));manager.onExternalSettingsChange();manager.endSettingsEditing(first);manager.endSettingsEditing(second);await manager.settingsSaveQueue;
-    assert.equal(applications,0);assert.equal(await manager.savePendingSettings(),false);await manager.configProtection.choose(remote,manager.configProtection.protection.pendingFiles);
-    assert.equal(await manager.savePendingSettings(),true);assert.equal(applications,1);assert.equal(closes,0);assert.equal(rebuilds,0);
+    assert.equal(applications,0);assert.equal(await manager.savePendingSettings(),true);
+    assert.equal(applications,1);assert.equal(closes,0);assert.equal(rebuilds,0);
 });
 
 test('saving a reviewed filter-only change does not reload plugin, appearance or Ribbon runtime state', async () => {
@@ -583,7 +586,7 @@ test('saving a reviewed filter-only change does not reload plugin, appearance or
     let applications=0;manager.devices.apply=async()=>{applications++;};const editor={};manager.beginSettingsEditing(editor);const before=manager.devices.boundRuntimeFingerprint();
     const remote=JSON.parse(adapter.files[path]);firstOf(remote,'computer').filters.search='remote search';adapter.files[path]=JSON.stringify(await remoteChild(manager,remote));manager.onExternalSettingsChange();
     manager.endSettingsEditing(editor);await manager.settingsSaveQueue;assert.notEqual(firstOf(manager.settings,'computer').filters.search,'remote search');
-    assert.equal(await manager.savePendingSettings(),false);await manager.configProtection.choose(remote,manager.configProtection.protection.pendingFiles);assert.equal(await manager.savePendingSettings(),true);
+    assert.equal(await manager.savePendingSettings(),true);
     assert.equal(manager.devices.boundRuntimeFingerprint(),before);assert.equal(firstOf(manager.settings,'computer').filters.search,'remote search');assert.equal(applications,0);
 });
 

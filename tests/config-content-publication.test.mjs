@@ -108,37 +108,41 @@ test('a heartbeat drift outside its revision no longer blocks session Save, and 
     assert.equal(reopened.protection.current.value.RECENT_INSTALL_DAYS, 21);
 });
 
-test('a renamed or deleted device file remains a real conflict with a visible difference', async t => {
+test('renamed or deleted generated device files never become user conflicts', async t => {
     for (const text of ['{"id":"phone","name":"Renamed","lastSeen":2}', null]) {
         const path = 'data/devices/phone.json';
         const f = await fixture(t, { LANGUAGE: 'en' }, { [path]: '{"id":"phone","name":"Phone","lastSeen":1}' });
-        await f.incoming(f.local, { [path]: text });
-        assert.equal((await f.current.publish(f.manager.settings, () => true)).status, 'conflict');
-        const choices = await f.current.prepareConflictChoices();
-        assert.deepEqual(choices.sections.map(section => section.id), [`file:${path}`]);
-        assert.ok(choices.sections[0].differences.length > 0);
-        assert.deepEqual(f.sharedWrites(), []);
+        f.manager.settings.RECENT_INSTALL_DAYS = 14; await f.current.save(f.manager.settings);
+        await f.incoming({ ...f.local, RECENT_INSTALL_DAYS: 14 }, { [path]: text });
+        assert.notEqual((await f.current.publish(f.manager.settings, () => true)).status, 'conflict');
+        assert.equal(f.current.protection.conflict, undefined);
     }
 });
 
-test('real source changes, plugin settings and deletions never become a bookkeeping no-op', async t => {
+test('user source changes and settings remain conflicts while generated receipts are ignored', async t => {
     const local = { LANGUAGE: 'en', Plugins: [{ id: 'tasks', enabled: true, version: '1' }],
         PLUGIN_INSTALLATIONS: { tasks: { version: '1', source: { kind: 'github', repo: 'owner/one' } } },
         custom: { version: '1', updatedAt: 1 }, TAGS: [{ id: 'keep', name: 'Keep' }] };
     for (const edit of [
-        value => { value.PLUGIN_INSTALLATIONS.tasks.version = '2'; },
-        value => { value.PLUGIN_INSTALLATIONS.tasks.source.repo = 'owner/two'; },
         value => { value.Plugins[0].enabled = false; },
         value => { value.custom.updatedAt = 2; },
         value => { delete value.TAGS; },
     ]) {
         const f = await fixture(t, local), remote = structuredClone(local); edit(remote);
+        f.manager.settings.RECENT_INSTALL_DAYS = 14; await f.current.save(f.manager.settings);
         await f.incoming(remote);
         assert.equal((await f.current.publish(f.manager.settings, () => true)).status, 'conflict');
         const choices = await f.current.prepareConflictChoices();
         assert.ok(choices.sections.some(section => section.differences.length > 0));
         assert.deepEqual(f.sharedWrites(), []);
     }
+    const f = await fixture(t, local), remote = structuredClone(local);
+    remote.PLUGIN_INSTALLATIONS.tasks.version = '2';
+    remote.PLUGIN_INSTALLATIONS.tasks.source.repo = 'owner/two';
+    f.manager.settings.RECENT_INSTALL_DAYS = 14; await f.current.save(f.manager.settings);
+    await f.incoming(remote);
+    assert.notEqual((await f.current.publish(f.manager.settings, () => true)).status, 'conflict');
+    assert.equal(f.current.protection.conflict, undefined);
 });
 
 test('an old raw-only conflict is cleared privately on reload without rewriting synced content', async t => {
@@ -174,7 +178,8 @@ test('a reviewed selection survives a bookkeeping-only incoming revision and ret
 
 test('empty preset-type presence differences stay visible instead of producing an empty conflict', async t => {
     const f = await fixture(t, { DEVICE_MANAGEMENT: { presets: { phone: [] } } });
-    await f.incoming({ DEVICE_MANAGEMENT: { presets: {} } });
+    f.manager.settings.RECENT_INSTALL_DAYS = 14; await f.current.save(f.manager.settings);
+    await f.incoming({ DEVICE_MANAGEMENT: { presets: {} }, RECENT_INSTALL_DAYS: 14 });
     assert.equal((await f.current.publish(f.manager.settings, () => true)).status, 'conflict');
     const choices = await f.current.prepareConflictChoices();
     assert.deepEqual(choices.sections.map(section => section.id), ['settings']);
@@ -257,4 +262,34 @@ test('an existing pause does not block a pending lifecycle acknowledgement when 
     assert.equal(saved.RELEASE_HIGHLIGHTS_PENDING, '');
     assert.deepEqual(saved._bpmRevision.parents, [f.initial.id, conflicted.id, latest.id]);
     assert.equal(f.current.protection.conflict, undefined);
+});
+
+test('opening the manager follows a newer synced revision when there are no local edits', async t => {
+    const f = await fixture(t), remote = normalize(f.local); remote.RECENT_INSTALL_DAYS = 14;
+    await f.incoming(remote);
+    let adopted = 0, opened = 0;
+    f.manager.isSavingSettings = false;
+    f.manager.onSharedConfigAdopted = () => { adopted++; };
+    f.manager.openConfigConflict = () => { opened++; };
+    const outcome = await f.current.refreshShared();
+    assert.equal(outcome, 'adopted'); assert.equal(adopted, 1); assert.equal(opened, 0);
+    assert.equal(f.current.protection.current.value.RECENT_INSTALL_DAYS, 14);
+    assert.equal(f.current.protection.paused, false);
+    assert.deepEqual(f.sharedWrites(), []);
+});
+
+test('opening the manager surfaces a synced conflict when a local draft exists', async t => {
+    const f = await fixture(t), remote = normalize(f.local); remote.RECENT_INSTALL_DAYS = 14;
+    f.manager.settings.RECENT_INSTALL_DAYS = 21; await f.current.save(f.manager.settings);
+    await f.incoming(remote);
+    let opened = 0;
+    f.manager.isSavingSettings = false;
+    f.manager.onSharedConfigAdopted = () => { throw new Error('adopted an edited draft'); };
+    f.manager.openConfigConflict = () => { opened++; };
+    const outcome = await f.current.refreshShared();
+    assert.equal(outcome, 'conflict'); assert.equal(opened, 1);
+    assert.equal(f.current.protection.paused, true);
+    assert.equal(f.current.protection.conflict.local.RECENT_INSTALL_DAYS, 21);
+    assert.equal(f.current.protection.conflict.incoming.value.RECENT_INSTALL_DAYS, 14);
+    assert.deepEqual(f.sharedWrites(), []);
 });

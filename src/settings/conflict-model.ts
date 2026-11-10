@@ -19,7 +19,17 @@ const types = ['computer', 'tablet', 'phone'];
 const pluginMetadata = new Set(['version', 'localVersion', 'latestVersion', 'latestManifestVersion', 'latestPublishedAt',
     'latestReleaseTag', 'latestReleasePublishedAt', 'latestReleaseIsGithubLatest', 'installedAt', 'lastChecked', 'error']);
 export const CONFIG_STATE_KEYS = ['MIGRATION_VERSION', 'LANGUAGE_INITIALIZED', 'RELEASE_HIGHLIGHTS_PENDING'] as const;
-const settingsMetadata = new Set<string>(['_bpmRevision', ...CONFIG_STATE_KEYS]);
+// BPM 生成、可重新下载/同步且重复无碍的数据不进入冲突；只比较用户定制内容。
+// BPM-generated data that can be re-downloaded or synced harmlessly never enters conflict resolution.
+const generatedSettings = new Set<string>([
+    'PLUGIN_INSTALLATIONS', 'PLUGIN_SOURCE_UNBOUND', 'REPO_MAP', 'BPM_INSTALLED', 'INSTALL_HISTORY',
+    'COMMAND_LAST_STATE', 'TROUBLESHOOT_STATE', 'SELF_CHECK_IGNORED', 'EXPORT_DIR',
+    'FILTER_SEARCH', 'FILTER_STATUS', 'FILTER_STATUS_VALUES', 'FILTER_STATUS_OPERATOR',
+    'FILTER_GROUP', 'FILTER_GROUP_VALUES', 'FILTER_GROUP_OPERATOR',
+    'FILTER_TAG', 'FILTER_TAG_VALUES', 'FILTER_TAG_OPERATOR',
+    'FILTER_DELAY', 'FILTER_DELAY_VALUES', 'FILTER_DELAY_OPERATOR',
+]);
+const settingsMetadata = new Set<string>(['_bpmRevision', ...CONFIG_STATE_KEYS, ...generatedSettings]);
 
 /** Only known bookkeeping fields are non-editable; similarly named user/source fields remain significant. */
 export function configurationContent(value: unknown, path: string[] = []): unknown {
@@ -105,9 +115,39 @@ export function conflictSections(local: ConfigRecord, incoming: ConfigRecord,
         }
     }
     const a = withoutPresets(local, incoming), b = withoutPresets(incoming, local);
-    const differences = configurationDifferences(withoutPresets(effectiveLocal, effectiveIncoming), withoutPresets(effectiveIncoming, effectiveLocal));
+    const deviceIds = (value: ConfigRecord): string[] => {
+        const management = value.DEVICE_MANAGEMENT;
+        const list = record(management) && Array.isArray(management.devices) ? management.devices : [];
+        return list.map(item => record(item) && typeof item.id === 'string' ? item.id : '');
+    };
+    const localDevices = deviceIds(a), incomingDevices = deviceIds(b);
+    // 新设备/移除设备与心跳是 BPM 生成的数据；只保留用户改过的设备名称/类型。
+    // Added/removed devices and heartbeats are BPM data; keep only user-edited names/types.
+    const deviceLists = (diff: ConfigDifference): [ConfigRecord[], ConfigRecord[]] =>
+        [Array.isArray(diff.local) ? diff.local.filter(record) : [], Array.isArray(diff.incoming) ? diff.incoming.filter(record) : []];
+    const userDeviceDifference = (diff: ConfigDifference): boolean => {
+        if (diff.path[0] !== 'DEVICE_MANAGEMENT' || diff.path[1] !== 'devices') return true;
+        if (diff.path.length === 2) {
+            // 数组差异按设备 id 对齐；只保留共同设备的名称/类型变化。Match by id; keep name/type edits on common devices.
+            const [left, right] = deviceLists(diff);
+            return left.some(item => {
+                if (typeof item.id !== 'string') return false;
+                const other = right.find(candidate => candidate.id === item.id);
+                if (!other) return false;
+                return item.name !== other.name || item.type !== other.type;
+            });
+        }
+        const index = Number(diff.path[2]);
+        if (!Number.isSafeInteger(index) || !localDevices[index] || localDevices[index] !== incomingDevices[index]) return false;
+        return diff.path[3] === 'name' || diff.path[3] === 'type';
+    };
+    const differences = configurationDifferences(withoutPresets(effectiveLocal, effectiveIncoming),
+        withoutPresets(effectiveIncoming, effectiveLocal)).filter(userDeviceDifference);
     if (differences.length) sections.push({ id: 'settings', kind: 'settings', local: a, incoming: b, differences });
     for (const path of new Set([...Object.keys(localFiles), ...Object.keys(incomingFiles)])) {
+        // 设备记录与图标 CSS 由 BPM 生成/合并，冲突弹窗不再询问用户。
+        // Device records and icons.css are generated/merged by BPM; the conflict dialog is not for them.
+        if (isGeneratedSharedFile(path)) continue;
         const left = localFiles[path] ?? null, right = incomingFiles[path] ?? null;
         if (left === right) continue;
         const fileDifferences = configurationFileDifferences(path, left, right);
@@ -116,6 +156,12 @@ export function conflictSections(local: ConfigRecord, incoming: ConfigRecord,
             differences: path.endsWith('.json') ? fileDifferences : [] });
     }
     return sections;
+}
+
+/** 这类文件由 BPM 自己生成或合并，不作为用户冲突项。
+ * These files are generated or merged by BPM and never become user-facing conflict items. */
+export function isGeneratedSharedFile(path: string): boolean {
+    return path === 'data/icons.css' || /^data\/devices\/[^/]+\.json$/.test(path);
 }
 
 export function resolveConfiguration(local: ConfigRecord, incoming: ConfigRecord, sections: ConflictSection[],
@@ -146,8 +192,13 @@ export function resolveConfiguration(local: ConfigRecord, incoming: ConfigRecord
         }
     }
     const files: Record<string, string | null> = {};
+    const settingsIncoming = choices.get('settings') === 'incoming';
     for (const path of new Set([...Object.keys(localFiles), ...Object.keys(incomingFiles)])) {
-        files[path] = (choices.get(`file:${path}`) === 'incoming' ? incomingFiles[path] : localFiles[path]) ?? null;
+        // 图标文件跟随整体设置来源；设备记录保留本机合并结果。
+        // Icons follow the overall settings source; device records keep the local merged result.
+        if (path === 'data/icons.css') files[path] = (settingsIncoming ? incomingFiles[path] : localFiles[path]) ?? null;
+        else if (/^data\/devices\/[^/]+\.json$/.test(path)) files[path] = localFiles[path] ?? null;
+        else files[path] = (choices.get(`file:${path}`) === 'incoming' ? incomingFiles[path] : localFiles[path]) ?? null;
     }
     return { value, files };
 }

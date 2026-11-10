@@ -1,7 +1,7 @@
 import { ButtonComponent, Modal, Notice, setIcon } from 'obsidian';
 import type Manager from '../main';
-import { ConflictSection, ConflictSide } from './conflict-model';
-import { protectionField, protectionText, ProtectionMessage } from './protection-text';
+import { ConfigDifference, ConflictSection, ConflictSide } from './conflict-model';
+import { protectionCategoryDescription, protectionCategoryTitle, protectionField, protectionSettingCategory, protectionText, ProtectionMessage } from './protection-text';
 import { errorMessage } from '../network/http-error';
 
 /** One native dialog owns the conflict editor; background refreshes never open a window. */
@@ -48,6 +48,7 @@ class ConfigConflictView {
     private controls: ButtonComponent[] = [];
     private status?: HTMLElement;
     private showDifferences = false;
+    private differencesAvailable = false;
     private diffToggle?: ButtonComponent;
     private diffToggleIcon?: HTMLElement;
     private diffToggleLabel?: HTMLElement;
@@ -79,6 +80,7 @@ class ConfigConflictView {
         this.host.empty();
         this.host.setAttribute('aria-label', this.t('title'));
         const content = this.host.createDiv('bpm-config-conflict__content');
+        this.differencesAvailable = false;
         if (conflict.reason === 'stale-replayed') content.createEl('p', { text: this.t('stale'), cls: 'mod-warning' });
         const footer = this.host.createDiv('bpm-config-conflict__footer');
         this.status = footer.createDiv({ attr: { role: 'status', 'aria-live': 'polite' } });
@@ -96,7 +98,20 @@ class ConfigConflictView {
         this.diffToggleLabel = diffLabel;
         footer.createDiv('bpm-config-conflict__private-actions');
         const actions = footer.createDiv('bpm-config-conflict__actions');
-        for (const section of sections) this.renderSection(content, section);
+        for (const section of sections) {
+            if (section.kind === 'settings') this.renderSettingsSection(content, section);
+            else this.renderSection(content, section);
+        }
+        // 顶层类别行已经列出了差异；没有更深层的路径时，隐藏重复的差异按钮。
+        // Category rows already show top-level differences; hide the detail toggle when nothing deeper remains.
+        if (!this.differencesAvailable) {
+            this.diffToggle?.buttonEl.remove();
+            this.diffToggle = undefined;
+            this.diffToggleIcon = undefined;
+            this.diffToggleLabel = undefined;
+            this.showDifferences = false;
+            this.host.removeClass('show-differences');
+        }
         for (const side of ['local', 'incoming'] as const) {
             const label = this.t(side === 'local' ? 'applyAllLocal' : 'applyAllRemote');
             const button = this.renderSourceButton(actions, side,
@@ -165,33 +180,92 @@ class ConfigConflictView {
             .setTooltip(this.t('privateCacheChanged')).onClick(() => this.manager.showPrivateCacheWarning());
         warning.buttonEl.addClass('bpm-config-conflict__choice', 'bpm-private-cache-warning', 'mod-warning');
     }
-    private renderSection(content: HTMLElement, section: ConflictSection): void {
+    /** 设置类差异按实际设置项/自然分组逐项成行；没有差异的项不出现，选择本身就说明哪里不同。
+     * Split setting differences into item rows; a row exists only when that item differs, so the
+     * choices themselves show where the conflict is. */
+    private renderSettingsSection(content: HTMLElement, section: ConflictSection): void {
+        interface SettingGroup { fields: Set<string>; differences: ConfigDifference[]; }
+        const groups = new Map<string, SettingGroup>();
+        const residual: ConfigDifference[] = [];
+        for (const diff of section.differences) {
+            const field = diff.path[0];
+            if (!field) { residual.push(diff); continue; }
+            const category = protectionSettingCategory(field);
+            const group = groups.get(category) ?? { fields: new Set<string>(), differences: [] };
+            group.fields.add(field);
+            group.differences.push(diff);
+            groups.set(category, group);
+        }
+        for (const [category, group] of groups) this.renderFieldRow(content, category, [...group.fields], group.differences);
+        if (residual.length) this.renderSection(content, section, residual,
+            protectionCategoryTitle(this.manager, 'OTHER'), protectionCategoryDescription(this.manager, 'OTHER'));
+    }
+
+    private renderFieldRow(content: HTMLElement, category: string,
+        fields: readonly string[], differences: ConfigDifference[]): void {
+        const row = content.createDiv('bpm-config-conflict__section');
+        this.renderHeading(row, protectionCategoryTitle(this.manager, category),
+            protectionCategoryDescription(this.manager, category));
+        const versions = row.createDiv('bpm-config-conflict__choices');
+        const selected = (): ConflictSide | 'mixed' | undefined => {
+            const choices = this.manager.configProtection?.conflictChoices;
+            if (!choices) return undefined;
+            const sides = fields.map(field => choices.itemSide({ kind: 'field', id: field }));
+            if (sides.every(side => side === 'local')) return 'local';
+            if (sides.every(side => side === 'incoming')) return 'incoming';
+            return sides.some(Boolean) ? 'mixed' : undefined;
+        };
+        for (const side of ['local', 'incoming'] as const) this.renderSourceButton(versions, side, selected,
+            () => {
+                void this.manager.configProtection?.selectConflictFields(fields, side).catch(error => this.report(error));
+            });
+        // 顶层差异已由行标题表达；只有嵌套路径才需要展开明细。
+        // The row title already states a top-level difference; only nested paths need details.
+        if (differences.some(diff => diff.path.length > 1)) this.renderDifferences(row, differences);
+    }
+
+    private renderHeading(row: HTMLElement, title: string, description?: string): void {
+        const label = row.createDiv('bpm-config-conflict__section-label');
+        label.createDiv({ cls: 'bpm-config-conflict__section-title', text: title });
+        if (description) label.createDiv({ cls: 'bpm-config-conflict__section-desc', text: description });
+    }
+
+    private renderSection(content: HTMLElement, section: ConflictSection,
+        differences: ConfigDifference[] = section.differences, titleOverride?: string, descriptionOverride?: string): void {
         const row = content.createDiv('bpm-config-conflict__section');
         const named = (value: unknown): value is { name: string } => value !== null && typeof value === 'object'
             && typeof Reflect.get(value, 'name') === 'string';
         const nameOf = (value: unknown): string => named(value) ? value.name : '';
-        const title = section.kind === 'preset'
+        const title = titleOverride ?? (section.kind === 'preset'
             ? `${this.t(section.type === 'computer' || section.type === 'tablet' ? section.type : 'phone')} · ${nameOf(section.local) || nameOf(section.incoming) || section.presetId || ''}`
-            : section.kind === 'settings' ? this.t('others') : section.id.endsWith('icons.css') ? this.t('icons') : this.t('device');
-        row.createDiv({ cls: 'bpm-config-conflict__section-title', text: title });
+            : section.kind === 'settings' ? this.t('others') : section.id.endsWith('icons.css') ? this.t('icons') : this.t('device'));
+        const description = descriptionOverride ?? (section.kind === 'preset' ? this.t('presetDescription')
+            : section.id.endsWith('icons.css') ? this.t('iconsDescription')
+                : section.id.endsWith('.json') ? this.t('deviceDescription') : this.t('fileDescription'));
+        this.renderHeading(row, title, description);
         const versions = row.createDiv('bpm-config-conflict__choices');
         for (const side of ['local', 'incoming'] as const) this.renderSourceButton(versions, side,
             () => this.manager.configProtection?.conflictChoices?.sectionSide(section.id), () => {
                 void this.manager.configProtection?.selectConflictSection(section.id, side).catch(error => this.report(error));
             }, section[side] === undefined || section[side] === null ? this.t('absent') : undefined);
-        // 逐项差异只在用户展开时显示，且只列设置路径，不展示可能含凭据的原值。
-        // Details stay collapsed until requested and list paths only, never credential-bearing values.
+        this.renderDifferences(row, differences);
+    }
+
+    /** 逐项差异只在用户展开时显示，且只列设置路径，不展示可能含凭据的原值。
+     * Details stay collapsed until requested and list paths only, never credential-bearing values. */
+    private renderDifferences(row: HTMLElement, differences: ConfigDifference[]): void {
+        this.differencesAvailable = true;
         const details = row.createDiv('bpm-config-conflict__differences');
         const head = details.createDiv('bpm-config-conflict__difference-head');
         head.createSpan({ cls: 'bpm-config-conflict__difference-path', text: this.t('differencePath') });
-        if (section.differences.length === 0) {
+        if (differences.length === 0) {
             details.createDiv({ cls: 'bpm-config-conflict__difference-empty', text: this.t('featureDifferences') });
         } else {
-            for (const diff of section.differences.slice(0, 50)) {
+            for (const diff of differences.slice(0, 50)) {
                 details.createDiv({ cls: 'bpm-config-conflict__difference-path',
                     text: diff.path.length ? protectionField(this.manager, diff.path) : this.t('file') });
             }
-            if (section.differences.length > 50) {
+            if (differences.length > 50) {
                 details.createDiv({ cls: 'bpm-config-conflict__difference-empty', text: this.t('more') });
             }
         }

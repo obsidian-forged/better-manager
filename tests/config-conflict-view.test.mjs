@@ -29,6 +29,10 @@ class Element {
     setAttribute(name, value) { this.attributes[name] = value; }
     setText(value) { this.textContent = value; }
     empty() { this.children.forEach(child => { child.isConnected = false; }); this.children = []; this.text = ''; }
+    remove() {
+        if (this.parentElement) this.parentElement.children = this.parentElement.children.filter(child => child !== this);
+        this.isConnected = false;
+    }
     focus() { this.ownerDocument.activeElement = this; }
     querySelector(selector) { return descendants(this).find(child => child.classes.has(selector.slice(1))) ?? null; }
 }
@@ -55,8 +59,9 @@ new Function('require', 'module', 'exports', result.outputFiles[0].text)(() => (
 const { ConfigConflictModal, ConfigConflictChoices } = module.exports;
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
-function fixture() {
-    const choices = new ConfigConflictChoices('conflict-one', { LANGUAGE: 'en', githubToken: 'secret-local' }, { LANGUAGE: 'zh', githubToken: 'secret-remote' });
+function fixture(local = { LANGUAGE: 'en', githubToken: 'secret-local' },
+    incoming = { LANGUAGE: 'zh', githubToken: 'secret-remote' }) {
+    const choices = new ConfigConflictChoices('conflict-one', local, incoming);
     choices.setFiles({}, {});
     const calls = [], editing = new Set();
     const manager = { app: {}, settings: { LANGUAGE: 'en' }, isSavingSettings: false,
@@ -66,6 +71,11 @@ function fixture() {
         configProtection: { protection: { conflict: { id: choices.id } }, conflictChoices: choices,
             async prepareConflictChoices() { return choices; },
             async selectConflictSection(id, side) { choices.selectSection(id, side); modal.refresh(); },
+            async selectConflictField(key, side) { choices.selectItem({ kind: 'field', id: key }, side); modal.refresh(); },
+            async selectConflictFields(fields, side) {
+                for (const field of fields) choices.selectItem({ kind: 'field', id: field }, side);
+                modal.refresh();
+            },
             async confirmAllConflictChoices(side, id) { calls.push(['all', side, id]); choices.selectAll(side); },
             async confirmConflictChoices(id) { calls.push(['confirm', id]); },
         },
@@ -83,7 +93,12 @@ test('conflict dialog uses source-labelled all-settings actions and preserves mo
     const f = fixture(); await settle();
     assert.equal(f.modal.titleEl.textContent, 'Configuration conflict');
     const buttons = sectionSourceButtons(f.modal), allButtons = allSourceButtons(f.modal);
-    assert.deepEqual(buttons.map(button => button.textContent), ['Local version', 'Remote version']);
+    assert.deepEqual(buttons.map(button => button.textContent),
+        ['Local version', 'Remote version', 'Local version', 'Remote version']);
+    assert.deepEqual(descendants(f.modal.contentEl).filter(el => el.classes.has('bpm-config-conflict__section-title'))
+        .map(el => el.textContent), ['Interface language', 'Github token']);
+    assert.deepEqual(descendants(f.modal.contentEl).filter(el => el.classes.has('bpm-config-conflict__section-desc'))
+        .map(el => el.textContent), ['Current interface language.', 'This setting differs.']);
     assert.deepEqual(allButtons.map(button => button.textContent), ['Local versionAll settings', 'Remote versionAll settings']);
     assert.equal(allButtons[1].tooltip, 'Resolve all conflicts with remote settings and save');
     assert.equal(allButtons[1].attributes['aria-label'], 'Resolve all conflicts with remote settings and save');
@@ -157,23 +172,55 @@ test('closing during preparation never adds controls back to the dismissed dialo
     assert.equal(f.closed(), 1); assert.deepEqual(f.calls, []);
 });
 
-test('conflict differences stay collapsed until the toggle is used', async () => {
+test('top-level category rows replace the redundant difference text', async () => {
     const f = fixture(); await settle();
     const host = f.modal.contentEl;
     assert.ok(host.classes.has('bpm-config-conflict'));
+    assert.equal(descendants(host).some(el => el.classes.has('bpm-config-conflict__diff-toggle')), false);
+    assert.equal(descendants(host).some(el => el.classes.has('bpm-config-conflict__differences')), false);
+    assert.deepEqual(descendants(host).filter(el => el.classes.has('bpm-config-conflict__section-title'))
+        .map(el => el.textContent), ['Interface language', 'Github token']);
+    f.modal.close();
+});
+
+test('groups and tags share one category row with a description', async () => {
+    const f = fixture({ GROUPS: [{ id: 'g', name: 'G' }], TAGS: [{ id: 't', name: 'T' }] },
+        { GROUPS: [{ id: 'g', name: 'H' }], TAGS: [{ id: 't', name: 'U' }] });
+    await settle();
+    const host = f.modal.contentEl;
+    assert.deepEqual(descendants(host).filter(el => el.classes.has('bpm-config-conflict__section-title'))
+        .map(el => el.textContent), ['Groups & tags']);
+    assert.deepEqual(descendants(host).filter(el => el.classes.has('bpm-config-conflict__section-desc'))
+        .map(el => el.textContent), ['Plugin group and tag definitions.']);
+    f.modal.close();
+});
+
+test('ribbon settings share one category row and select together', async () => {
+    const f = fixture({ RIBBON_SETTINGS: [{ id: 'a', order: 1 }], RIBBON_GROUPS: [{ id: 'g', name: 'G' }] },
+        { RIBBON_SETTINGS: [{ id: 'a', order: 2 }], RIBBON_GROUPS: [{ id: 'g', name: 'H' }] });
+    await settle();
+    const titles = descendants(f.modal.contentEl).filter(el => el.classes.has('bpm-config-conflict__section-title'))
+        .map(el => el.textContent);
+    assert.deepEqual(titles, ['Ribbon settings']);
+    const buttons = sectionSourceButtons(f.modal);
+    assert.equal(buttons.length, 2);
+    buttons[1].click(); await settle();
+    assert.equal(f.choices.itemSide({ kind: 'field', id: 'RIBBON_SETTINGS' }), 'incoming');
+    assert.equal(f.choices.itemSide({ kind: 'field', id: 'RIBBON_GROUPS' }), 'incoming');
+    f.modal.close();
+});
+
+test('nested differences keep the expandable detail list', async () => {
+    const f = fixture({ FEATURES: { appearance: true } }, { FEATURES: { appearance: false } });
+    await settle();
+    const host = f.modal.contentEl;
     const toggle = descendants(host).find(el => el.classes.has('bpm-config-conflict__diff-toggle'));
-    assert.ok(toggle, 'the dialog exposes a difference toggle');
+    assert.ok(toggle, 'nested differences expose the detail toggle');
     const details = descendants(host).filter(el => el.classes.has('bpm-config-conflict__differences'));
     assert.ok(details.length > 0);
-    assert.ok(descendants(details[0]).some(el => el.textContent.includes('Language')));
     assert.equal(host.classes.has('show-differences'), false);
-    assert.equal(toggle.attributes['aria-expanded'], 'false');
     toggle.click();
     assert.equal(host.classes.has('show-differences'), true);
-    assert.equal(toggle.attributes['aria-expanded'], 'true');
     assert.ok(toggle.textContent.includes('Hide differences'));
-    toggle.click();
-    assert.equal(host.classes.has('show-differences'), false);
-    assert.equal(toggle.attributes['aria-expanded'], 'false');
     f.modal.close();
 });

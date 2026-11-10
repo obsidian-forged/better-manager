@@ -15451,6 +15451,9 @@ body.is-tablet :is(.manager-container--mobile, .ribbon-manager-modal) .ribbon-ma
     padding-block: var(--size-4-1);
 }
 .bpm-config-conflict__section-title { flex: 1 1 8rem; min-width: 0; overflow-wrap: anywhere; font-size: var(--font-ui-small); }
+.bpm-config-conflict__section-label { flex: 1 1 8rem; min-width: 0; display: flex; flex-direction: column; gap: var(--size-2-1); }
+.bpm-config-conflict__section-label .bpm-config-conflict__section-title { flex: none; }
+.bpm-config-conflict__section-desc { color: var(--text-muted); font-size: var(--font-ui-smaller); overflow-wrap: anywhere; }
 .bpm-config-conflict__choices { display: inline-flex; flex: 0 0 auto; max-width: 100%; flex-wrap: wrap; gap: var(--size-4-1); }
 .bpm-config-conflict__tools { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--size-4-2); }
 .bpm-config-conflict__tools:empty { display: none; }
@@ -15541,6 +15544,18 @@ body.is-mobile .bpm-config-conflict-modal { --bpm-conflict-control-size: var(--b
 .manager-sync-notice__text { flex: 0 0 auto; white-space: nowrap; }
 .manager-container .bpm-item-conflict[data-source=local] { color: var(--color-blue); border-color: var(--color-blue); }
 .manager-container .bpm-item-conflict[data-source=incoming] { color: var(--color-purple); border-color: var(--color-purple); }
+.manager-container .bpm-has-item-pending { border-color: var(--interactive-accent); }
+.manager-container .bpm-item-pending { color: var(--interactive-accent); border-color: var(--interactive-accent); cursor: default; }
+.manager-container .bpm-item-source,
+.manager-container .bpm-item-pending {
+    width: var(--size-4-6);
+    height: var(--size-4-6);
+    min-width: var(--size-4-6);
+    padding: 0;
+    gap: 0;
+    border-radius: 50%;
+    justify-content: center;
+}
 .manager-container .manager-overview-heading > .bpm-list-source {
     display: inline-flex;
     flex: 0 0 auto;
@@ -15560,8 +15575,30 @@ body.is-mobile .bpm-config-conflict-modal { --bpm-conflict-control-size: var(--b
     padding-inline: var(--size-4-2);
     border-radius: 999px;
 }
+.manager-container.manager-container--main .manager-plugin-card__actions.setting-item-control > .bpm-item-conflict.bpm-item-source,
+.manager-container.manager-container--main .manager-plugin-card__actions.setting-item-control > .bpm-item-conflict.bpm-item-pending {
+    width: var(--size-4-6);
+    height: var(--size-4-6);
+    min-width: var(--size-4-6);
+    min-height: var(--size-4-6);
+    padding: 0;
+    border-radius: 50%;
+    justify-content: center;
+}
 .bpm-config-conflict__choice svg { width: var(--icon-size); height: var(--icon-size); }
 .bpm-item-conflict svg { width: var(--icon-size); height: var(--icon-size); }
+.manager-container .bpm-item-source .bpm-item-conflict__icon,
+.manager-container .bpm-item-pending .bpm-item-conflict__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 0;
+}
+.manager-container .bpm-item-source svg,
+.manager-container .bpm-item-pending svg {
+    width: calc(var(--icon-size) - var(--size-2-2));
+    height: calc(var(--icon-size) - var(--size-2-2));
+}
 .manager-container .bpm-has-item-conflict .checkbox-container { outline: var(--border-width) solid var(--text-warning); outline-offset: 2px; }
 .has-config-conflict .manager-overview-controls__device {
     color: var(--text-warning);

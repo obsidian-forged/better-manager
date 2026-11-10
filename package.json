@@ -1,6 +1,6 @@
 {
   "name": "better-plugins-manager",
-  "version": "1.2.32",
+  "version": "1.2.33",
   "description": "A more capable plugin manager for Obsidian.",
   "main": "main.js",
   "scripts": {

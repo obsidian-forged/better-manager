@@ -59,11 +59,10 @@ async function fixture(t) {
         sharedWrites: () => writes.filter(path => !path.includes('/.bpm/')) };
 }
 
-for (const side of ['local', 'incoming']) test(`one ${side} action stages every configuration and file choice; publication requires a separate Save`, async t => {
+for (const side of ['local', 'incoming']) test(`one ${side} action stages the configuration choice; generated files follow policy`, async t => {
     const f = await fixture(t), { session } = f;
     const choices = await session.prepareConflictChoices();
     choices.toggleItem({ kind: 'plugin', id: 'tasks', presetId: 'phone' });
-    choices.selectSection('file:data/icons.css', 'incoming');
     assert.equal(choices.allSide(), 'mixed');
     const expectedId = session.protection.conflict.id, epoch = session.mutationEpoch;
     const before = f.files[`${root}/data.json`], sharedWrites = f.sharedWrites().length, baseline = structuredClone(f.manager.settings);
@@ -79,7 +78,11 @@ for (const side of ['local', 'incoming']) test(`one ${side} action stages every 
     assert.equal(session.protection.paused, false);
     const selected = session.protection.confirmedSelection;
     assert.deepEqual(selected.value, side === 'incoming' ? f.incoming : baseline);
-    assert.deepEqual(selected.files, side === 'incoming' ? f.incomingFiles : { ...f.localFiles, 'data/devices/added.json': null });
+    assert.deepEqual(selected.files, {
+        'data/icons.css': side === 'incoming' ? 'remote icons' : 'local icons',
+        'data/devices/removed.json': f.localFiles['data/devices/removed.json'],
+        'data/devices/added.json': null,
+    });
     assert.equal(f.files[`${root}/data.json`], before);
     assert.equal(f.sharedWrites().length, sharedWrites);
     const published = await session.publish(f.manager.settings, () => true);
@@ -87,8 +90,8 @@ for (const side of ['local', 'incoming']) test(`one ${side} action stages every 
     assert.deepEqual(published.value, selected.value);
     assert.equal(session.resolvedBaseline, undefined);
     assert.equal(f.files[`${root}/data/icons.css`], side === 'incoming' ? 'remote icons' : 'local icons');
-    assert.equal(`${root}/data/devices/removed.json` in f.files, side === 'local');
-    assert.equal(`${root}/data/devices/added.json` in f.files, side === 'incoming');
+    assert.equal(`${root}/data/devices/removed.json` in f.files, true);
+    assert.equal(`${root}/data/devices/added.json` in f.files, false);
 });
 
 for (const mode of ['all-source', 'individual']) test(`a conflict replaced while file copies are loading rejects the old ${mode} action without choosing the new conflict`, async t => {

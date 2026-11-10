@@ -238,7 +238,8 @@ test('a private transaction keeps enough information to finish after a primary w
 test('a sync JSON merge with an unchanged marker preserves the input and creates a selectable conflict',async()=>{
     const f=fixture();const value=await f.store.load();f.store.begin(value);value.name='accepted';await f.store.publish(value,{},()=>true);
     const raw=JSON.parse(f.files.get(`${root}/data.json`));raw.name='foreign merged edit';f.files.set(`${root}/data.json`,JSON.stringify(raw));
-    const before=f.publicWrites().length;const incoming=await f.io.readShared();await f.store.observe(incoming,value);
+    const before=f.publicWrites().length;const incoming=await f.io.readShared();
+    assert.equal(await f.store.observeShared(incoming,value),'conflict');
     assert.equal(f.store.paused,true);assert.equal(f.store.conflict.incoming.value.name,'foreign merged edit');
     assert.equal(f.publicWrites().length,before);assert.ok([...f.files.keys()].some(path=>path.includes('/unverified/')));
     f.store.choose(value,{});await f.store.publish(value,{},()=>true);assert.equal(f.store.current.value.name,'accepted');

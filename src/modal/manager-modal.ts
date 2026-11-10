@@ -7,7 +7,7 @@ import { protectionText } from '../settings/protection-text';
 import { SyncNoticeView } from '../ui/sync-notice-view';
 import { SettingsSaveButton } from '../ui/settings-save-button';
 import { SettingsCloseController } from '../ui/settings-close-controller';
-import { ConfigConflictMarkers } from '../settings/conflict-markers';
+import { ConfigItemMarkers } from '../settings/item-markers';
 import { conflictFeaturePages, ConflictFeaturePage } from '../settings/conflict-features';
 import { isToolInPage, ToolScope } from '../ui/tool-visibility';
 import { featureEnabled, toolEnabled, FeatureId, ToolId } from '../features';
@@ -417,7 +417,7 @@ export class ManagerModal extends Modal {
     private syncNoticeView?: SyncNoticeView;
     private settingsSaveButton?: SettingsSaveButton;
     private globalToolsHost?: HTMLElement;
-    private conflictMarkers?: ConfigConflictMarkers;
+    private itemMarkers?: ConfigItemMarkers;
     private conflictObserver?: MutationObserver;
     private conflictMarkerFrame?: { view: Window; id: number };
     private readonly renderFrames = new Set<{ view: Window; id: number; finish: () => void }>();
@@ -8735,7 +8735,7 @@ export class ManagerModal extends Modal {
         this.ensureAllowedActivePage();
 
         this.clearScheduledSearchRender();
-        if (this.getAvailableDesktopPages().length === 0) { this.renderContent(); return; }
+        if (this.getAvailableDesktopPages().length === 0) { this.renderContent(); this.refreshConfigConflict(); return; }
         const renderGeneration = this.nextRenderGeneration();
         const modalElement: HTMLElement = this.pageEl;
         const scrollTop = modalElement.scrollTop;
@@ -8771,7 +8771,8 @@ export class ManagerModal extends Modal {
             if (!this.isRenderCurrent(renderGeneration, "plugins")) return;
             modalElement.scrollTo(0, scrollTop);
         }
-
+        // 重绘会替换条目 DOM；重新挂上未保存/冲突标记。Re-rendering replaces item DOM; reattach markers.
+        this.refreshConfigConflict();
     }
 
     private async refreshFilterOptions(preserveScroll = false) {
@@ -8877,7 +8878,7 @@ export class ManagerModal extends Modal {
         const paused = Boolean(this.manager.configProtection?.protection.paused);
         this.modalEl?.toggleClass('has-config-conflict', paused);
         this.syncNoticeView?.refresh();
-        this.conflictMarkers?.apply();
+        this.itemMarkers?.apply();
         this.syncConflictNavigation();
     }
 
@@ -8904,14 +8905,14 @@ export class ManagerModal extends Modal {
         this.richTooltips = new RichTooltips(this.modalEl);
         this.allowAutomaticSaveOnClose = true;
         this.manager.beginSettingsEditing(this);
-        this.conflictMarkers = new ConfigConflictMarkers(this.manager, this.modalEl, (row, value) => this.previewConflictPlugin(row, value));
+        this.itemMarkers = new ConfigItemMarkers(this.manager, this.modalEl, (row, value) => this.previewConflictPlugin(row, value));
         this.conflictObserver = new MutationObserver(() => {
             if (!this.manager.configProtection?.protection.conflict || this.conflictMarkerFrame !== undefined) return;
             const view = this.modalEl.ownerDocument.defaultView;
             if (!view) return;
             const id = view.requestAnimationFrame(() => {
                 this.conflictMarkerFrame = undefined;
-                this.conflictMarkers?.apply();
+                this.itemMarkers?.apply();
             });
             this.conflictMarkerFrame = { view, id };
         });
@@ -8967,8 +8968,8 @@ export class ManagerModal extends Modal {
         this.conflictObserver = undefined;
         if (this.conflictMarkerFrame) this.conflictMarkerFrame.view.cancelAnimationFrame(this.conflictMarkerFrame.id);
         this.conflictMarkerFrame = undefined;
-        this.conflictMarkers?.destroy();
-        this.conflictMarkers = undefined;
+        this.itemMarkers?.destroy();
+        this.itemMarkers = undefined;
         this.syncNoticeView?.destroy();
         this.syncNoticeView = undefined;
         this.settingsSaveButton?.destroy();

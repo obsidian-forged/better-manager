@@ -31,6 +31,35 @@ test('explicit Save publishes while the editor remains open and an identical ret
     assert.equal(f.store.hasPendingChanges,false);assert.equal(f.state.draft,undefined);assert.equal(f.state.head.revision.generation,1);
     assert.equal((await publish(f)).status,'noop');assert.equal(f.state.writes,1);
 });
+test('an automatic save outside an editor never marks the device as user-edited',async()=>{
+    const f=await fixture();
+    f.value.discovered='startup migration';
+    await f.store.stage(f.value,true);
+    assert.equal(f.state.draft.userEdited,false);
+    assert.equal(f.store.hasPendingChanges,false);
+    // A newer synced revision still takes over instead of asking about a conflict the user never made.
+    f.state.shared=await createConfigRevision({name:'desktop latest',layout:'cards'},'device-b',[f.initial],{},hash);
+    assert.equal(await f.store.observeShared(f.state.shared,f.value),'adopted');
+    assert.equal(f.store.current.value.name,'desktop latest');assert.equal(f.store.paused,false);
+    assert.equal(f.state.draft,undefined);
+});
+test('a clean Save still publishes an automatic change when the shared file did not move',async()=>{
+    const f=await fixture();
+    f.value.discovered='startup migration';
+    await f.store.stage(f.value,true);
+    assert.equal((await publish(f)).status,'saved');
+    assert.equal(f.state.shared.value.discovered,'startup migration');
+    assert.equal(f.store.current.value.discovered,'startup migration');
+});
+test('re-staging the same automatic draft does not turn it into a user edit',async()=>{
+    const f=await fixture();
+    f.value.discovered='startup migration';
+    await f.store.stage(f.value,true);
+    assert.equal(f.state.draft.userEdited,false);
+    await f.store.stage(f.value);
+    assert.equal(f.state.draft.userEdited,false);
+    assert.equal(f.store.hasPendingChanges,false);
+});
 test('explicit Save publishes a background draft regardless of its historical userEdited flag',async()=>{
     const f=await fixture();f.store.begin(f.value);f.value.discovered='catalog refresh';await f.store.stage(f.value,true);
     assert.equal(f.state.draft.userEdited,false);assert.equal((await publish(f)).status,'saved');assert.equal(f.state.shared.value.discovered,'catalog refresh');
@@ -54,9 +83,14 @@ test('Save discovers concurrent changes and unresolved retries preserve both ver
     f.store.choose(f.store.conflict.local,{});assert.equal((await publish(f)).status,'saved');assert.equal(f.store.paused,false);
     assert.equal(f.state.shared.revision.parents.length,2);assert.equal(f.state.shared.value.name,'local edit');
 });
-test('a clean Save checks a newer remote version without silently replacing the current settings',async()=>{
-    const f=await fixture();f.store.begin(f.value);f.state.shared=await createConfigRevision({name:'remote edit',layout:'cards'},'device-b',[f.initial],{},hash);
-    assert.equal((await publish(f)).status,'conflict');assert.equal(f.value.name,'initial');assert.equal(f.state.writes,0);
+test('a clean Save follows a newer synced revision instead of manufacturing a conflict',async()=>{
+    const f=await fixture();f.store.begin(f.value);
+    const remote=await createConfigRevision({name:'remote edit',layout:'cards'},'device-b',[f.initial],{},hash);
+    f.state.shared=remote;
+    const result=await publish(f);
+    assert.equal(result.status,'noop');assert.equal(result.value.name,'remote edit');
+    assert.equal(f.store.current.id,remote.id);assert.equal(f.store.paused,false);
+    assert.equal(f.store.hasPendingChanges,false);assert.equal(f.state.writes,0);assert.equal(f.state.head.id,remote.id);
 });
 test('a failed publication retains the selected remote value and file choices across restart',async()=>{
     const f=await fixture();f.store.begin(f.value);f.value.name='local';await f.store.stage(f.value);
@@ -116,7 +150,67 @@ test('a user draft from an unknown earlier head pauses instead of publishing sta
 test('identical shared observations preserve a recovered local edit',async()=>{
     const initial=await decodeConfig({name:'initial',layout:'cards'},hash);
     const f=await fixture({head:initial,draft:{base:initial.id,value:{name:'recovered',layout:'cards'},files:{},userEdited:true}});
-    assert.equal((await f.store.observe(f.state.shared,f.value)).name,'recovered');assert.equal(f.state.draft.value.name,'recovered');
+    assert.equal(await f.store.observeShared(f.state.shared,f.value),'same');
+    assert.equal(f.store.current.value.name,'initial');assert.equal(f.state.draft.value.name,'recovered');
+});
+test('startup follows a newer synced revision when the phone has no edits',async()=>{
+    const initial=await decodeConfig({name:'initial',layout:'cards'},hash);
+    const phone=await createConfigRevision({name:'phone old',layout:'cards'},'device-a',[initial],{},hash);
+    const desktop=await createConfigRevision({name:'desktop latest',layout:'cards'},'device-b',[phone],{},hash);
+    const f=await fixture({shared:desktop,head:phone});
+    assert.equal(f.value.name,'desktop latest');assert.equal(f.store.current.id,desktop.id);
+    assert.equal(f.store.paused,false);assert.equal(f.state.head.id,desktop.id);
+    assert.equal(f.state.shared.id,desktop.id);assert.equal(f.state.conflict,undefined);assert.equal(f.state.draft,undefined);
+});
+test('startup follows the newest shared sibling when the phone has no edits',async()=>{
+    const initial=await decodeConfig({name:'initial',layout:'cards'},hash);
+    const phone=await createConfigRevision({name:'phone old',layout:'cards'},'device-a',[initial],{},hash);
+    const desktop=await createConfigRevision({name:'desktop latest',layout:'cards'},'device-b',[initial],{},hash);
+    const f=await fixture({shared:desktop,head:phone});
+    assert.equal(f.value.name,'desktop latest');assert.equal(f.store.current.id,desktop.id);
+    assert.equal(f.store.paused,false);assert.equal(f.state.writes,0);
+});
+test('startup keeps a newer local head when the shared file is a stale replay',async()=>{
+    const initial=await decodeConfig({name:'initial',layout:'cards'},hash);
+    const stale=await createConfigRevision({name:'stale shared',layout:'cards'},'device-b',[initial],{},hash);
+    const phone=await createConfigRevision({name:'phone latest',layout:'cards'},'device-a',[stale],{},hash);
+    const f=await fixture({shared:stale,head:phone});
+    assert.equal(f.value.name,'phone latest');assert.equal(f.store.current.id,phone.id);
+    assert.equal(f.store.paused,false);assert.equal(f.state.writes,0);
+});
+test('startup follows the newest remote when an old conflict had no local edit',async()=>{
+    const initial=await decodeConfig({name:'initial',layout:'cards'},hash);
+    const remote=await createConfigRevision({name:'desktop latest',layout:'cards'},'device-b',[initial],{},hash);
+    const conflict={id:'old-conflict',reason:'concurrent',base:initial,local:structuredClone(initial.value),incoming:remote,localFiles:{}};
+    const f=await fixture({shared:remote,head:initial,conflict});
+    assert.equal(f.value.name,'desktop latest');assert.equal(f.store.current.id,remote.id);
+    assert.equal(f.store.paused,false);assert.equal(f.store.conflict,undefined);
+    assert.equal(f.state.conflict,undefined);assert.equal(f.state.writes,0);
+});
+test('startup surfaces a conflict when a user draft meets a newer synced revision',async()=>{
+    const initial=await decodeConfig({name:'initial',layout:'cards'},hash);
+    const head=await createConfigRevision({name:'accepted',layout:'cards'},'device-b',[initial],{},hash);
+    const remote=await createConfigRevision({name:'desktop latest',layout:'cards'},'device-b',[head],{},hash);
+    const f=await fixture({shared:remote,head,draft:{base:head.id,value:{name:'local draft',layout:'cards'},files:{},userEdited:true}});
+    assert.equal(f.value.name,'local draft');assert.equal(f.store.paused,true);
+    assert.equal(f.store.conflict.local.name,'local draft');assert.equal(f.store.conflict.incoming.value.name,'desktop latest');
+    assert.equal(f.state.writes,0);
+});
+test('background observation adopts a newer revision when no user edits exist',async()=>{
+    const f=await fixture();f.store.begin(f.value);
+    const remote=await createConfigRevision({name:'remote edit',layout:'cards'},'device-b',[f.initial],{},hash);
+    f.state.shared=remote;
+    assert.equal(await f.store.observeShared(f.state.shared,f.value),'adopted');
+    assert.equal(f.store.current.id,remote.id);assert.equal(f.store.paused,false);
+    assert.equal(f.state.head.id,remote.id);assert.equal(f.state.writes,0);
+});
+test('background observation pauses when a local user draft exists',async()=>{
+    const f=await fixture();f.store.begin(f.value);f.value.name='local edit';await f.store.stage(f.value);
+    const remote=await createConfigRevision({name:'remote edit',layout:'cards'},'device-b',[f.initial],{},hash);
+    f.state.shared=remote;
+    assert.equal(await f.store.observeShared(f.state.shared,f.value),'conflict');
+    assert.equal(f.store.paused,true);assert.equal(f.store.conflict.local.name,'local edit');
+    assert.equal(f.state.writes,0);
 });
 test('repeated manual stages outside an editor retain dirty state until an actual revert or Save',async()=>{
     const f=await fixture();f.value.name='command change';await f.store.stage(f.value);await f.store.stage(f.value);
@@ -142,7 +236,9 @@ test('discard clears confirmed choices and cannot republish them on the next Sav
     assert.equal(f.store.conflict, undefined); assert.equal(f.store.confirmedSelection, undefined);
     assert.deepEqual(f.store.pendingFiles, {}); assert.equal(f.store.hasPendingChanges, false);
     const result = await f.store.publish(f.initial.value, {}, () => true);
-    assert.equal(result.status, 'conflict'); assert.equal(f.store.conflict.local.name, 'initial');
+    // Discarding leaves no local edit, so the newer shared revision simply takes effect.
+    assert.equal(result.status, 'noop'); assert.equal(f.store.current.value.name, 'remote');
+    assert.equal(f.store.conflict, undefined); assert.equal(f.state.writes, 0);
 });
 test('a failed file draft cannot leak into a later Save or overwrite the previous draft', async () => {
     const f = await fixture(); f.value.name = 'valid edit'; await f.store.stage(f.value);

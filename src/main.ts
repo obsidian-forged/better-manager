@@ -331,7 +331,10 @@ export default class Manager extends Plugin {
         this.app.workspace.onLayoutReady(() => {
             this.scheduleStartupTask("configuration protection", async () => {
                 this.refreshConfigConflict();
-                await this.showSyncWarning();
+                // 已保留两个版本时直接打开解决窗口；同步提醒不应盖在冲突之上。
+                // Open the existing conflict directly; the sync warning must not cover it.
+                if (this.configProtection?.protection.paused) this.openConfigConflict();
+                else await this.showSyncWarning();
             }, 200);
             this.scheduleStartupTask("release highlights", () => this.showReleaseHighlights(), 500);
             this.scheduleStartupTask("plugin updates", () => this.startupCheckForUpdates(), 3000);
@@ -1077,6 +1080,24 @@ export default class Manager extends Plugin {
         this.refreshSettingsSaveState();
     }
 
+    /** 共享配置在后台被自动采用后，同步内存与已打开的界面。
+     * Apply a shared revision adopted without prompting and refresh open surfaces. */
+    public onSharedConfigAdopted(): void {
+        if (this.isUnloaded) return;
+        const value = this.configProtection?.protection.current.value;
+        if (value) {
+            this.adoptSettings(value);
+            this.devices?.reconcileAfterExplicitSave();
+            this.persistedSettingsJson = JSON.stringify(this.devices?.persistedSettings() ?? this.settings);
+            this.lastPublishedFingerprint = settingsFingerprint(this.settings);
+            this.lastPublishedSettings = copySettingsRecord(this.settings);
+        }
+        void this.managerModal?.reloadShowData();
+        if (this.settingsTab?.isVisible) this.settingsTab.renderSettings();
+        this.refreshConfigConflict();
+        this.refreshSettingsSaveState();
+    }
+
     /** 筛选下拉跳转到对应设置分类；Open the matching settings category from a filter dropdown. */
     public openSettingsCategory(page: 'group' | 'tag' | 'delay'): void {
         this.settingsTab?.openFilterPage(page);
@@ -1170,8 +1191,8 @@ export default class Manager extends Plugin {
         });
     }
 
-    /** 保护模式只警告，保存时再判定；单机模式在没有未保存编辑时直接采纳外部内容。
-     * Protected mode only warns and compares on Save; local mode adopts external content when idle. */
+    /** 保护模式由文件事件与打开界面统一跟随共享版本；单机模式在没有未保存编辑时直接采纳外部内容。
+     * Protected mode follows shared revisions through its own checks; local mode adopts external content when idle. */
     public onExternalSettingsChange(): void {
         this.configProtection?.observeSharedChange();
         if (!this.configProtection) void this.adoptExternalLocalSettings().catch(error => this.reportError('Adopting external settings failed', error));
@@ -1211,8 +1232,9 @@ export default class Manager extends Plugin {
      * Manual refresh: adopt external settings, resync plugin records and redraw the current view. */
     public async refreshFromDisk(): Promise<void> {
         if (this.isUnloaded) return;
-        if (this.configProtection) this.configProtection.observeSharedChange();
-        else await this.adoptExternalLocalSettings(true).catch(error => this.reportError('Adopting external settings failed', error));
+        if (this.configProtection) {
+            await this.configProtection.refreshShared().catch(error => this.reportError('Following the synced configuration failed', error));
+        } else await this.adoptExternalLocalSettings(true).catch(error => this.reportError('Adopting external settings failed', error));
         this.synchronizePlugins(Object.values(this.appPlugins.manifests).filter(manifest => manifest.id !== this.manifest.id), { save: false });
         await this.managerModal?.reloadShowData();
         this.refreshConfigConflict();
@@ -1657,6 +1679,11 @@ export default class Manager extends Plugin {
         this.managerModal?.close();
         this.managerModal = new ManagerModal(this.app, this);
         this.managerModal.open();
+        // 打开管理器时也检查一次共享文件，避免漏掉没有文件事件的同步写入。
+        // Also check the shared file on open so a sync write without a file event is still picked up.
+        void this.configProtection?.refreshShared().catch(error => {
+            if (!this.isUnloaded) this.reportError('Following the synced configuration failed', error);
+        });
     }
 
     /** 设备切换仍使用原生启停与既有延迟队列；Reuse native lifecycle and delay scheduling. */

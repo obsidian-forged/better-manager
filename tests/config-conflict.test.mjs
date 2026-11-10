@@ -9,7 +9,7 @@ test('every changed preset is exposed regardless of the current device or filter
     const a=config([{id:'p1',name:'Phone',plugins:{tasks:{enabled:true,delay:'1'}}}]);
     const b=config([{id:'p1',name:'Phone',plugins:{tasks:{enabled:false,delay:'2'}}},{id:'p2',name:'New phone'}],'remote');
     const sections=conflictSections(a,b,{'data/icons.css':'one'},{'data/icons.css':'two'});
-    assert.deepEqual(sections.map(item=>item.id),['preset:phone:p1','preset:phone:p2','settings','file:data/icons.css']);
+    assert.deepEqual(sections.map(item=>item.id),['preset:phone:p1','preset:phone:p2','settings']);
     assert.ok(sections[0].differences.some(item=>item.path.join('.')==='plugins.tasks.enabled'));
     assert.throws(()=>resolveConfiguration(a,b,sections,new Map(),{},{}),/every/);
     const choices=new Map(sections.map(item=>[item.id,'incoming']));choices.set('preset:phone:p1','local');
@@ -48,6 +48,27 @@ test('item source chips preview and select the matching plugin without changing 
     choices.toggleItem(item);assert.equal(choices.itemSide(item),'local');assert.equal(choices.itemValue(item).enabled,true);
     assert.deepEqual(choices.result().value,local);
 });
+test('a whole plugin-list choice stays below a finer per-plugin choice',()=>{
+    const local={Plugins:[{id:'tasks',enabled:true,note:''},{id:'calendar',enabled:true,note:''}]};
+    const remote={Plugins:[{id:'tasks',enabled:false,note:''},{id:'calendar',enabled:false,note:''}]};
+    const choices=new ConfigConflictChoices('conflict',local,remote);choices.setFiles({},{});
+    choices.selectItem({kind:'field',id:'Plugins'},'incoming');
+    choices.selectItem({kind:'plugin',id:'tasks'},'local');
+    const value=choices.result().value;
+    assert.equal(value.Plugins.find(item=>item.id==='tasks').enabled,true);
+    assert.equal(value.Plugins.find(item=>item.id==='calendar').enabled,false);
+});
+test('a setting-category row selects only that category and leaves the other categories on the base side',()=>{
+    const local={LANGUAGE:'en',RECENT_INSTALL_DAYS:7,TAGS:[{id:'tools',name:'工具'}]};
+    const remote={LANGUAGE:'zh',RECENT_INSTALL_DAYS:30,TAGS:[{id:'startup',name:'启动'}]};
+    const choices=new ConfigConflictChoices('conflict',local,remote);choices.setFiles({},{});
+    choices.selectItem({kind:'field',id:'LANGUAGE'},'incoming');
+    assert.equal(choices.itemSide({kind:'field',id:'LANGUAGE'}),'incoming');
+    assert.equal(choices.itemSide({kind:'field',id:'RECENT_INSTALL_DAYS'}),'local');
+    const value=choices.result().value;
+    assert.equal(value.LANGUAGE,'zh');assert.equal(value.RECENT_INSTALL_DAYS,7);
+    assert.deepEqual(value.TAGS,[{id:'tools',name:'工具'}]);
+});
 test('preset choices and item chips share state while the same plugin in another preset remains independent',()=>{
     const local=config([{id:'p1',name:'Phone',plugins:{tasks:{enabled:true}}}]);
     local.DEVICE_MANAGEMENT.presets.computer[0].plugins.tasks={enabled:true};
@@ -68,14 +89,15 @@ test('installed metadata alone never produces a source chip or overwrites anothe
     const metadata=new ConfigConflictChoices('metadata',{Plugins:[{id:'tasks',enabled:true,version:'1'}]},{Plugins:[{id:'tasks',enabled:true,version:'2'}]});
     assert.equal(metadata.itemSide({kind:'plugin',id:'tasks'}),undefined);
 });
-test('file copies arriving after an item choice preserve that choice and remain required before confirmation',()=>{
+test('generated file copies are not user sections and follow the overall settings source',()=>{
     const local=config([{id:'p1',name:'Phone',plugins:{tasks:{enabled:true}}}]),remote=structuredClone(local);
     remote.DEVICE_MANAGEMENT.presets.phone[0].plugins.tasks.enabled=false;
     const choices=new ConfigConflictChoices('conflict',local,remote),item={kind:'plugin',id:'tasks',presetId:'p1'};
     choices.toggleItem(item);assert.throws(()=>choices.result(),/not ready/);
     choices.setFiles({'data/icons.css':'local'},{'data/icons.css':'remote'});
+    assert.equal(choices.sections.some(section=>section.id==='file:data/icons.css'),false);
     assert.equal(choices.itemSide(item),'incoming');assert.equal(choices.result().files['data/icons.css'],'local');
-    choices.selectSection('file:data/icons.css','incoming');assert.equal(choices.result().files['data/icons.css'],'remote');
+    choices.selectAll('incoming');assert.equal(choices.result().files['data/icons.css'],'remote');
 });
 test('the list source chip switches all listed plugin choices and reports individual exceptions as mixed',()=>{
     const local=config([{id:'p1',name:'Phone',plugins:{tasks:{enabled:true},other:{enabled:true}}}]),remote=structuredClone(local);
@@ -100,7 +122,7 @@ test('feature markers locate off-screen preset filters, Ribbon, appearance and g
     assert.deepEqual([...conflictFeaturePages(new ConfigConflictChoices('added',local,added))],['devices']);
 });
 
-test('feature markers ignore version and heartbeat metadata but retain device file and icon changes',()=>{
+test('feature markers ignore generated records but keep user-edited device names',()=>{
     const local=config([{id:'p1',name:'Phone',updatedAt:1,plugins:{tasks:{enabled:true}}}]);
     local.Plugins=[{id:'tasks',version:'1',latestVersion:'2',enabled:true}];
     const incoming=structuredClone(local);incoming.Plugins[0].version='2';incoming.DEVICE_MANAGEMENT.presets.phone[0].updatedAt=2;
@@ -110,7 +132,12 @@ test('feature markers ignore version and heartbeat metadata but retain device fi
     assert.deepEqual([...conflictFeaturePages(choices)],[]);
     choices.setFiles({'data/devices/device.json':'{"id":"device","name":"Phone"}','data/icons.css':'old'},
         {'data/devices/device.json':'{"id":"device","name":"Renamed"}','data/icons.css':'new'});
-    assert.deepEqual([...conflictFeaturePages(choices)].sort(),['devices','plugins']);
+    assert.deepEqual([...conflictFeaturePages(choices)],[]);
+    const deviceLocal=config([]),deviceRemote=structuredClone(deviceLocal);
+    deviceLocal.DEVICE_MANAGEMENT.devices=[{id:'device',name:'Phone',type:'phone'}];
+    deviceRemote.DEVICE_MANAGEMENT.devices=[{id:'device',name:'Renamed',type:'phone'}];
+    const deviceChoices=new ConfigConflictChoices('device-name',deviceLocal,deviceRemote);deviceChoices.setFiles({},{});
+    assert.deepEqual([...conflictFeaturePages(deviceChoices)],['devices']);
 });
 
 test('feature markers distinguish install and transfer changes from general settings',()=>{
@@ -132,11 +159,10 @@ test('all-source selection replaces mixed item, preset, settings and file choice
     choices.setFiles({'data/icons.css':'local icons','data/devices/removed.json':'local device'},
         {'data/icons.css':'remote icons','data/devices/added.json':'remote device'});
     choices.toggleItem({kind:'plugin',id:'tasks',presetId:'p1'});
-    choices.selectSection('file:data/icons.css','incoming');
     assert.equal(choices.allSide(),'mixed');choices.result(); // Populate the preview cache before replacing it.
     choices.selectAll('incoming');
     assert.equal(choices.allSide(),'incoming');assert.ok(choices.sections.every(section=>choices.sectionSide(section.id)==='incoming'));
-    assert.deepEqual(choices.result(),{value:incoming,files:{'data/icons.css':'remote icons','data/devices/removed.json':null,'data/devices/added.json':'remote device'}});
+    assert.deepEqual(choices.result(),{value:incoming,files:{'data/icons.css':'remote icons','data/devices/removed.json':'local device','data/devices/added.json':null}});
     choices.toggleItem({kind:'plugin',id:'tasks',presetId:'p1'});assert.equal(choices.allSide(),'mixed');
     choices.selectAll('local');
     assert.equal(choices.allSide(),'local');assert.equal(choices.itemSide({kind:'plugin',id:'tasks',presetId:'p1'}),'local');
@@ -169,18 +195,17 @@ test('known bookkeeping differences do not manufacture duplicate presets, settin
     assert.equal(choices.itemSide({kind:'preset',id:'p1'}),undefined);
 });
 
-test('JSON formatting and device heartbeats are equivalent while deletion, invalid JSON and CSS remain real differences',()=>{
+test('generated device and icon files never create conflict sections',()=>{
     const path='data/devices/phone.json',local='{"id":"phone","name":"Phone","lastSeen":1,"updatedAt":1}',
         reordered='{\n  "updatedAt": 2, "name": "Phone", "id": "phone", "lastSeen": 2, "_bpmRevision": {"id":"other"}\n}';
     assert.deepEqual(conflictSections({}, {}, {[path]:local}, {[path]:reordered}),[]);
     for(const [left,right] of [[local,null],['null',null],['invalid','"invalid"'],[local,local.replace('Phone','Renamed')]]) {
-        const sections=conflictSections({}, {}, {[path]:left}, {[path]:right});
-        assert.equal(sections.length,1);assert.ok(sections[0].differences.length>0);
+        assert.deepEqual(conflictSections({}, {}, {[path]:left}, {[path]:right}),[]);
     }
-    assert.equal(conflictSections({}, {}, {'data/icons.css':'svg {}'}, {'data/icons.css':'svg { }'}).length,1);
+    assert.deepEqual(conflictSections({}, {}, {'data/icons.css':'svg {}'}, {'data/icons.css':'svg { }'}),[]);
 });
 
-test('same-named metadata inside source receipts or user settings is never ignored',()=>{
+test('generated source receipts stay out of conflicts while unknown user fields remain',()=>{
     const local={PLUGIN_INSTALLATIONS:{tasks:{version:'1',source:{kind:'github',repo:'owner/old'}}},
         custom:{version:'1',updatedAt:1,lastSeen:1},DEVICE_MANAGEMENT:{presets:{phone:[{id:'p1',name:'Phone',plugins:{tasks:{enabled:true,version:'custom'}}}]}}};
     const remote=structuredClone(local);remote.PLUGIN_INSTALLATIONS.tasks.version='2';
@@ -188,8 +213,9 @@ test('same-named metadata inside source receipts or user settings is never ignor
     remote.DEVICE_MANAGEMENT.presets.phone[0].plugins.tasks.version='changed custom';
     const choices=new ConfigConflictChoices('real-fields',local,remote);choices.setFiles({},{});
     assert.deepEqual(choices.sections.map(section=>section.id),['preset:phone:p1','settings']);
-    assert.ok(choices.sections[1].differences.some(diff=>diff.path.join('.')==='PLUGIN_INSTALLATIONS.tasks.version'));
-    assert.deepEqual([...conflictFeaturePages(choices)].sort(),['install','plugins','settings']);
+    assert.equal(choices.sections[1].differences.some(diff=>diff.path[0]==='PLUGIN_INSTALLATIONS'),false);
+    assert.ok(choices.sections[1].differences.some(diff=>diff.path.join('.')==='custom.updatedAt'));
+    assert.deepEqual([...conflictFeaturePages(choices)].sort(),['plugins','settings']);
 });
 
 test('unfamiliar preset shapes and preset ordering remain visible and selectable',()=>{

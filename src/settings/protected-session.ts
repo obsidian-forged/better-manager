@@ -2,10 +2,10 @@ import type Manager from '../main';
 import { Notice } from 'obsidian';
 import { ConfigBundleIssue, ConfigDiskChanged, ConfigFiles, IncompleteConfigBundle, isManagedConfigFile } from './config-files';
 import { ConfigEditorReopened, ConfigProtection, ConfigPublication } from './config-protection';
-import { ConfigRecord } from './config-revision';
+import { ConfigRecord, ConfigSnapshot } from './config-revision';
 import { settingsFingerprint } from './session-store';
 import { ConfigConflictChoices, ConflictItem } from './conflict-choices';
-import { CONFIG_STATE_KEYS, configurationContent, configurationFileDifferences, ConflictSide } from './conflict-model';
+import { CONFIG_STATE_KEYS, configurationContent, configurationFileDifferences, ConflictSide, isGeneratedSharedFile } from './conflict-model';
 import { PrivateCacheWatch } from './private-cache-watch';
 import { SharedConfigWatch } from './shared-config-watch';
 import { FileChangeAdapter, subscribeFileChanges } from '../storage/file-change-listener';
@@ -34,6 +34,7 @@ export class ProtectedConfigSession {
     private readonly privateCache: PrivateCacheWatch;
     private readonly sharedChanges: SharedConfigWatch;
     private stopPrivateWatch?: () => void;
+    private sharedTimer?: number;
     private privateWarningShown = false;
     private privateErrorShown = false;
     private sharedErrorShown = false;
@@ -88,6 +89,9 @@ export class ProtectedConfigSession {
                 const [baseFiles, incomingFiles] = await Promise.all([this.files.filesFor(base), this.files.filesFor(incoming)]);
                 const localFiles = { ...baseFiles, ...files };
                 return [...new Set([...Object.keys(localFiles), ...Object.keys(incomingFiles)])]
+                    // 生成文件不参与冲突比较，但用户改设备名称/图标后的显式保存仍要能识别。
+                    // Generated files are ignored for conflicts, not for explicit publication.
+                    .filter(path => purpose !== 'conflict' || !isGeneratedSharedFile(path))
                     .every(path => configurationFileDifferences(path, localFiles[path] ?? null, incomingFiles[path] ?? null).length === 0);
             },
             writeShared: (value, files, closed) => this.files.writeShared(value, files, closed),
@@ -103,6 +107,8 @@ export class ProtectedConfigSession {
     }
     private current(): ConfigRecord { return configRecord(this.manager.devices?.persistedSettings() ?? this.manager.settings); }
     normalized(value: ConfigRecord): ConfigRecord { return configRecord(this.normalize(value)); }
+    /** 当前内存中的有效配置；The effective in-memory configuration for pending item marks. */
+    currentValue(): ConfigRecord { return this.normalized(this.current()); }
     private fingerprint(value: unknown): string {
         const payload = record(value) ? { ...value } : value;
         if (record(payload)) delete payload._bpmRevision;
@@ -132,8 +138,10 @@ export class ProtectedConfigSession {
         try { await this.privateCache.prime(); }
         catch (error) { this.privateCacheFailed(error); }
         this.loaded = true;
-        this.stopPrivateWatch = subscribeFileChanges(this.manager.app.vault.adapter as FileChangeAdapter,
-            path => { this.privateCache.observe(path); this.sharedChanges.observe(path); }, error => this.privateCacheFailed(error));
+        this.stopPrivateWatch = subscribeFileChanges(this.manager.app.vault.adapter as FileChangeAdapter, path => {
+            this.privateCache.observe(path); this.sharedChanges.observe(path);
+            if (this.sharedChanges.includes(path)) this.scheduleSharedCheck();
+        }, error => this.privateCacheFailed(error));
         if (this.privateCacheModified) this.privateCacheChanged();
         this.pendingBundle = this.files.hasPendingBundle;
         return value;
@@ -159,6 +167,43 @@ export class ProtectedConfigSession {
         new Notice(protectionText(this.manager, 'sharedChangesError'), 10_000);
     }
     observeSharedChange(): void { if (this.loaded && !this.closed) this.sharedChanges.observe(`${this.files.root}/data.json`); }
+
+    private scheduleSharedCheck(): void {
+        if (this.closed || !this.loaded) return;
+        if (this.sharedTimer !== undefined) window.clearTimeout(this.sharedTimer);
+        // 同步工具按文件逐个落盘；等这一批写完再读取整份配置。
+        // Sync tools write a revision file by file; let the batch settle before comparing.
+        this.sharedTimer = window.setTimeout(() => {
+            this.sharedTimer = undefined;
+            void this.refreshShared().catch(error => {
+                if (this.manager.settings?.DEBUG) console.error('[BPM] Following the shared configuration failed', error);
+            });
+        }, 300);
+    }
+
+    /**
+     * 读取共享配置并统一处理：本机无编辑时自动采用最新版本，有编辑时转为可直接解决的冲突。
+     * One entry for file events, opening the manager/settings and manual refresh.
+     */
+    async refreshShared(): Promise<'same' | 'adopted' | 'conflict'> {
+        if (this.closed || !this.loaded || this.manager.isSavingSettings) return 'same';
+        let disk: ConfigSnapshot;
+        try { disk = await this.files.readShared(); }
+        catch (error) {
+            // 分文件同步尚未到齐时保持现状，后续文件事件会再次检查。
+            // Keep the current state until a partially delivered revision is complete.
+            if (error instanceof IncompleteConfigBundle) return 'same';
+            throw error;
+        }
+        const outcome = await this.queue(() => this.protection.observeShared(disk, this.current()));
+        if (this.closed) return 'same';
+        if (outcome === 'conflict') this.manager.openConfigConflict();
+        else if (outcome === 'adopted') {
+            this.observed = this.fingerprint(this.protection.current.value);
+            this.manager.onSharedConfigAdopted();
+        }
+        return outcome;
+    }
     begin(): void { this.protection.begin(this.current()); }
     end(): void { this.protection.end(); }
     noteUserMutation(): void { this.editEpoch++; }
@@ -287,6 +332,16 @@ export class ProtectedConfigSession {
         await this.editConflictSelection(selections => selections.toggleList(ids, presetId));
     }
     async selectConflictSection(id: string, side: ConflictSide): Promise<void> { await this.editConflictSelection(selections => selections.selectSection(id, side)); }
+    /** 按设置类别选择来源；Choose a source for one top-level setting category. */
+    async selectConflictField(field: string, side: ConflictSide): Promise<void> {
+        await this.selectConflictFields([field], side);
+    }
+    /** 一个类别可能包含多个顶层设置键（例如边栏）；Choose a category spanning several keys. */
+    async selectConflictFields(fields: readonly string[], side: ConflictSide): Promise<void> {
+        await this.editConflictSelection(selections => {
+            for (const field of fields) selections.selectItem({ kind: 'field', id: field }, side);
+        });
+    }
     async confirmConflictChoices(expectedId?: string): Promise<void> {
         this.noteUserMutation();
         const selections = await this.prepareConflictChoices();
@@ -311,6 +366,7 @@ export class ProtectedConfigSession {
     }
     destroy(): void {
         this.closed = true;
+        if (this.sharedTimer !== undefined) { window.clearTimeout(this.sharedTimer); this.sharedTimer = undefined; }
         this.stopPrivateWatch?.(); this.stopPrivateWatch = undefined;
         this.privateCache.destroy();
         this.sharedChanges.destroy();

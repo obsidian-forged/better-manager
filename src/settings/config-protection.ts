@@ -90,6 +90,10 @@ export class ConfigProtection {
     get hasPendingChanges(): boolean {
         return Boolean(this.resolution || this.conflictValue || this.draft?.userEdited || this.fileEdits);
     }
+    /** 是否有需要保护的本机用户编辑；Whether this device holds user edits worth protecting. */
+    private get hasLocalEdits(): boolean {
+        return Boolean(this.resolution || this.conflictValue || this.draft?.userEdited || this.fileEdits || this.recoveredEdits);
+    }
 
     constructor(private readonly io: ConfigProtectionIO, private readonly device: string, private readonly hash: DigestText,
         private readonly changed: () => void = () => {}) {}
@@ -116,6 +120,38 @@ export class ConfigProtection {
             await this.io.clearConflict?.();
             this.conflictValue = undefined;
         }
+        // 旧版本可能在“本机只是基线、没有用户编辑”时也留下冲突；这种冲突在启动时直接跟随最新远端。
+        // Older builds could pause even when the local side was merely the base; follow the newest remote.
+        if (this.conflictValue && disk.revision && disk.id !== this.head.id) {
+            const conflict = this.conflictValue;
+            if (await this.sameContent(conflict.local, conflict.localFiles, conflict.base, conflict.base)
+                && ['descendant', 'conflict'].includes(compareConfig(this.head, disk))) {
+                await this.adoptShared(disk);
+                return clone(this.head.value);
+            }
+        }
+        // 同步系统带来更新版本时，本机若没有需要保护的编辑就直接采用；普通用户期望最新配置生效。
+        // When a sync service delivered a newer revision and this device has no user edits, follow it.
+        // A legacy (unverifiable) incoming file keeps the explicit conflict path.
+        if (!this.conflictValue && !this.draft?.userEdited && disk.revision && disk.id !== this.head.id) {
+            const relation = compareConfig(this.head, disk);
+            if (relation === 'descendant' || relation === 'conflict') {
+                await this.adoptShared(disk);
+                return clone(this.head.value);
+            }
+        }
+        // 本机已有用户草稿而共享文件更新时，启动即进入可解决的冲突，而不是只在点击保存后才出现。
+        // A user draft plus a newer shared revision becomes a visible conflict at startup, not only on Save.
+        // 基于已消失 head 的草稿仍走下方的 stale-replayed 分支，保留其专门提示与清理。
+        const draftBase = this.draft?.base;
+        const draftBaseAccepted = Boolean(draftBase && (draftBase === this.head.id
+            || this.head.revision?.ancestors.includes(draftBase)));
+        if (this.draft?.userEdited && draftBaseAccepted && disk.revision && disk.id !== this.head.id
+            && ['descendant', 'conflict'].includes(compareConfig(this.head, disk))) {
+            const local = clone(this.draft.value);
+            await this.pause(disk, local, 'concurrent', this.draft.files);
+            return local;
+        }
         if (this.draft && !this.draft.userEdited && this.draft.base !== this.head.id) {
             await this.io.removeDraft(); this.draft = undefined;
         }
@@ -126,7 +162,11 @@ export class ConfigProtection {
         if (this.draft?.userEdited && this.draft.base !== this.head.id
             && !this.head.revision?.ancestors.includes(this.draft.base)) {
             const stale = clone(this.draft.value);
-            await this.pause(this.head, stale, 'stale-replayed', this.draft.files);
+            // 若共享文件本身也有更新版本，冲突应以最新远端为对照，而不是旧的本机 head。
+            // Compare the stale draft with the newest shared revision when the file also moved on.
+            const incoming = disk.revision && ['descendant', 'conflict'].includes(compareConfig(this.head, disk))
+                ? disk : this.head;
+            await this.pause(incoming, stale, 'stale-replayed', this.draft.files);
             await this.io.removeDraft();
             this.draft = undefined;
             this.lastDraft = '';
@@ -185,7 +225,15 @@ export class ConfigProtection {
         }
         this.fileEdits = fileEdits;
         if (this.recoveredEdits && equal(value, this.head.value) && !fileEdits && !this.resolution) this.recoveredEdits = false;
-        const userEdited = Boolean(this.recoveredEdits || !equal(value, baseline) || fileEdits);
+        // 自动保存（视图状态、启动迁移、心跳）不能自行把本机变成“有用户编辑”，否则保存键会无端闪烁，
+        // 同步来的新版本也会被误判为冲突。显式保存若只是重申同一份草稿，也沿用原标记，避免把自动草稿升级成用户编辑。
+        // Automatic saves (view state, startup migrations, heartbeats) must not manufacture a user edit;
+        // that is what made the Save control flash and a synced revision look like a conflict. Re-staging
+        // the same draft keeps its existing flag for the same reason.
+        const sameDraft = Boolean(this.draft && !this.resolution && equal(value, this.draft.value)
+            && equal(this.stagedFiles, this.draft.files));
+        const userEdited = Boolean(this.recoveredEdits || fileEdits
+            || (automatic || sameDraft ? this.draft?.userEdited : !equal(value, baseline)));
         const draft = { base: this.openingHead?.id ?? this.head.id, value: clone(value), files: clone(this.resolution?.files ?? this.stagedFiles), userEdited };
         if (equal(value, this.head.value) && !Object.keys(this.stagedFiles).length && !this.draft) return;
         const fingerprint = settingsFingerprint(draft);
@@ -235,32 +283,61 @@ export class ConfigProtection {
         return Object.prototype.hasOwnProperty.call(this.stagedFiles, path) ? { value: this.stagedFiles[path] } : undefined;
     }
 
-    async observe(disk: ConfigSnapshot, local: ConfigRecord): Promise<ConfigRecord> {
-        if (this.conflictValue) {
-            if (compareConfig(this.conflictValue.incoming, disk) !== 'same' && compareConfig(this.head, disk) !== 'same') {
-                await this.pause(disk, local, 'concurrent');
-            }
-            return clone(local);
-        }
+    /** 采用共享文件中的最新版本，并清掉基于旧版本的自动草稿。
+     * Adopt a newer shared snapshot and drop automatic state derived from the old head. */
+    private async adoptShared(disk: ConfigSnapshot): Promise<void> {
+        this.head = disk;
+        this.openingHead = disk;
+        this.baseline = clone(disk.value);
+        await this.io.writeHead(disk);
+        if (this.conflictValue) await this.io.clearConflict?.();
+        if (this.draft && !this.draft.userEdited) await this.io.removeDraft();
+        this.draft = undefined;
+        this.lastDraft = '';
+        this.fileEdits = false;
+        this.editedFiles.clear();
+        this.recoveredEdits = false;
+        this.conflictValue = undefined;
+        this.resolution = undefined;
+        this.incoming = undefined;
+        for (const key of Object.keys(this.stagedFiles)) delete this.stagedFiles[key];
+        this.changed();
+    }
+
+    /**
+     * 后台读到共享文件变化后的统一决策：本机没有用户编辑就跟随最新版本（与同步系统一致），
+     * 有编辑时才暂停并等待用户选择，而不是把任何外部修改都当成冲突。
+     * One decision for a shared change: follow the newest shared revision when this device has no
+     * user edits, and pause for an explicit choice only when it does.
+     */
+    async observeShared(disk: ConfigSnapshot, local: ConfigRecord): Promise<'same' | 'adopted' | 'conflict'> {
+        if (disk.id === this.head.id) return 'same';
         const relation = compareConfig(this.head, disk);
-        if (relation === 'same' || await this.sameContent(this.head.value, {}, this.head, disk)) return clone(local);
-        if (relation === 'ancestor') { this.incoming = disk; return clone(local); }
-        if (relation === 'descendant') {
-            if (this.editing && this.baseline && !equal(local, this.baseline) || this.draft?.userEdited) {
-                await this.pause(disk, local, 'concurrent');
-                return clone(local);
-            }
-            if (this.editing || this.draft?.userEdited) { this.incoming = disk; return clone(local); }
-            if (this.draft && !this.draft.userEdited) {
-                await this.io.removeDraft(); this.draft = undefined; this.lastDraft = '';
-                for (const key of Object.keys(this.stagedFiles)) delete this.stagedFiles[key];
-            }
-            this.head = disk;
-            await this.io.writeHead(disk);
-            return clone(disk.value);
+        // 旧版本回放不追回；下一次显式保存会修复。A stale replay never rolls the head back.
+        if (relation === 'same' || relation === 'ancestor') return 'same';
+        if (this.conflictValue) {
+            // 冲突已展示且内容未变时不重复弹窗；用户关闭后仍可从提示条重新打开。
+            // Do not reopen an unchanged conflict the user already dismissed.
+            if (compareConfig(this.conflictValue.incoming, disk) === 'same') return 'same';
+            await this.pause(disk, this.conflictValue.local, this.conflictValue.reason, this.conflictValue.localFiles);
+            return 'conflict';
         }
-        await this.pause(disk, local, 'concurrent');
-        return clone(local);
+        // 无法验证的旧格式共享内容（丢失版本标记）仍交给冲突界面，而不是静默覆盖本机。
+        // Unverifiable legacy content keeps the explicit conflict path instead of silently replacing local settings.
+        if (!disk.revision) {
+            await this.pause(disk, local, 'concurrent');
+            return 'conflict';
+        }
+        if (this.editing && this.baseline && !equal(local, this.baseline)) {
+            await this.pause(disk, local, 'concurrent');
+            return 'conflict';
+        }
+        if (this.draft?.userEdited || this.fileEdits || this.recoveredEdits) {
+            await this.pause(disk, local, 'concurrent');
+            return 'conflict';
+        }
+        await this.adoptShared(disk);
+        return 'adopted';
     }
 
     private async pause(incoming: ConfigSnapshot, local: ConfigRecord, reason: ConfigConflict['reason'],
@@ -316,6 +393,13 @@ export class ConfigProtection {
         const relation = compareConfig(this.head, disk);
         const sameBase = relation === 'same' || await this.sameContent(this.head.value, {}, this.head, disk);
         if (!current()) return { status: 'cancelled' };
+        // 本机没有用户编辑时，让共享文件的最新版本直接生效；保存不应把纯粹的同步变化变成冲突。
+        // With nothing local to protect, the synced revision takes effect instead of asking the user
+        // to resolve a conflict that only the sync service created.
+        if (!sameEffective && relation !== 'ancestor' && disk.id !== this.head.id && disk.revision && !this.hasLocalEdits) {
+            await this.adoptShared(disk);
+            return { status: 'noop', value: clone(disk.value) };
+        }
         if (this.conflictValue && !sameEffective) {
             const reviewed = compareConfig(this.conflictValue.incoming, disk) === 'same' || relation === 'same'
                 || await this.sameContent(this.conflictValue.incoming.value, {}, this.conflictValue.incoming, disk);
