@@ -24,6 +24,7 @@ class Element {
     createSpan(options) { return this.createDiv(options); }
     createEl(_tag, options) { return this.createDiv(options); }
     addClass(...names) { names.forEach(name => this.classes.add(name)); }
+    removeClass(...names) { names.forEach(name => this.classes.delete(name)); }
     toggleClass(name, enabled) { if (enabled) this.classes.add(name); else this.classes.delete(name); }
     setAttribute(name, value) { this.attributes[name] = value; }
     setText(value) { this.textContent = value; }
@@ -59,6 +60,7 @@ function fixture() {
     choices.setFiles({}, {});
     const calls = [], editing = new Set();
     const manager = { app: {}, settings: { LANGUAGE: 'en' }, isSavingSettings: false,
+        appPlugins: { manifests: {} },
         beginSettingsEditing(owner) { editing.add(owner); }, endSettingsEditing(owner) { editing.delete(owner); },
         async savePendingSettings() { calls.push(['save']); return true; },
         configProtection: { protection: { conflict: { id: choices.id } }, conflictChoices: choices,
@@ -153,4 +155,25 @@ test('closing during preparation never adds controls back to the dismissed dialo
     finish(f.choices); await settle();
     assert.equal(f.modal.contentEl.children.length, 0);
     assert.equal(f.closed(), 1); assert.deepEqual(f.calls, []);
+});
+
+test('conflict differences stay collapsed until the toggle is used', async () => {
+    const f = fixture(); await settle();
+    const host = f.modal.contentEl;
+    assert.ok(host.classes.has('bpm-config-conflict'));
+    const toggle = descendants(host).find(el => el.classes.has('bpm-config-conflict__diff-toggle'));
+    assert.ok(toggle, 'the dialog exposes a difference toggle');
+    const details = descendants(host).filter(el => el.classes.has('bpm-config-conflict__differences'));
+    assert.ok(details.length > 0);
+    assert.ok(descendants(details[0]).some(el => el.textContent.includes('Language')));
+    assert.equal(host.classes.has('show-differences'), false);
+    assert.equal(toggle.attributes['aria-expanded'], 'false');
+    toggle.click();
+    assert.equal(host.classes.has('show-differences'), true);
+    assert.equal(toggle.attributes['aria-expanded'], 'true');
+    assert.ok(toggle.textContent.includes('Hide differences'));
+    toggle.click();
+    assert.equal(host.classes.has('show-differences'), false);
+    assert.equal(toggle.attributes['aria-expanded'], 'false');
+    f.modal.close();
 });

@@ -3,6 +3,9 @@ import type Manager from '../main';
 const messages = {
     conflict: ['冲突', 'Conflict'],
     differences: ['有差异', 'Differences'],
+    showDifferences: ['显示差异', 'Show differences'],
+    hideDifferences: ['隐藏差异', 'Hide differences'],
+    differencePath: ['设置项', 'Setting'],
     featureDifferences: ['此功能的配置不同', 'This feature has different settings'],
     saveSettings: ['保存更改', 'Save changes'],
     saving: ['正在保存', 'Saving changes'],

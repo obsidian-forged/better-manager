@@ -322,7 +322,9 @@ test('conflict choices keep all-source actions in a fixed footer with labels ins
         assert.equal(style(nodes.get('conflictLocal'), 'background'), 'var(--background-modifier-hover)');
         assert.equal(style(nodes.get('conflictIncoming'), 'background'), 'transparent');
     }
-    assert.doesNotMatch(css, /\.bpm-config-conflict-anchor|\.bpm-config-conflict__(?:versions|version|field|difference)\b/);
+    assert.doesNotMatch(css, /\.bpm-config-conflict-anchor|\.bpm-config-conflict__(?:versions|version|field)\b/);
+    assert.match(css, /\.bpm-config-conflict__differences\b/);
+    assert.match(css, /\.bpm-config-conflict__diff-toggle\b/);
 });
 
 test('sync notices share their component outside the manager and follow each toolbar size', () => {

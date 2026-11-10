@@ -156,7 +156,7 @@ export default {
     "生效方式_标题": "Apply changes",
     "生效方式_会话": "This session only",
     "生效方式_持久": "Save permanently",
-    "生效方式_说明": "Applies to subsequent plugin, delay and appearance changes. Session changes reset after restarting Obsidian. Switching mode does not save earlier session changes.",
+    "生效方式_说明": "Applies to subsequent plugin, delay and appearance changes. Session changes take effect immediately, are never written to configuration, and do not need saving; they reset after restarting Obsidian. Only persistent changes follow Save settings manually. Switching mode does not save earlier session changes.",
     "设备_默认预设": "Default preset",
     "设备_设为默认": "Set as default",
     "工具栏_当前页操作": "Page actions",

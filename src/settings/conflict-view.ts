@@ -1,7 +1,7 @@
-import { ButtonComponent, Modal, Notice } from 'obsidian';
+import { ButtonComponent, Modal, Notice, setIcon } from 'obsidian';
 import type Manager from '../main';
 import { ConflictSection, ConflictSide } from './conflict-model';
-import { protectionText, ProtectionMessage } from './protection-text';
+import { protectionField, protectionText, ProtectionMessage } from './protection-text';
 import { errorMessage } from '../network/http-error';
 
 /** One native dialog owns the conflict editor; background refreshes never open a window. */
@@ -47,6 +47,10 @@ class ConfigConflictView {
     private busy = false;
     private controls: ButtonComponent[] = [];
     private status?: HTMLElement;
+    private showDifferences = false;
+    private diffToggle?: ButtonComponent;
+    private diffToggleIcon?: HTMLElement;
+    private diffToggleLabel?: HTMLElement;
     constructor(private readonly manager: Manager, readonly host: HTMLElement, private readonly applied: () => void) {
         host.addClass('bpm-config-conflict');
     }
@@ -70,12 +74,26 @@ class ConfigConflictView {
         this.id = conflict.id;
         this.syncChoices = [];
         this.controls = [];
+        this.showDifferences = false;
+        this.host.removeClass('show-differences');
         this.host.empty();
         this.host.setAttribute('aria-label', this.t('title'));
         const content = this.host.createDiv('bpm-config-conflict__content');
         if (conflict.reason === 'stale-replayed') content.createEl('p', { text: this.t('stale'), cls: 'mod-warning' });
         const footer = this.host.createDiv('bpm-config-conflict__footer');
         this.status = footer.createDiv({ attr: { role: 'status', 'aria-live': 'polite' } });
+        const tools = footer.createDiv('bpm-config-conflict__tools');
+        const diffToggle = new ButtonComponent(tools);
+        diffToggle.buttonEl.addClass('bpm-config-conflict__diff-toggle');
+        diffToggle.buttonEl.setAttribute('type', 'button');
+        diffToggle.buttonEl.setAttribute('aria-expanded', 'false');
+        const diffIcon = diffToggle.buttonEl.createSpan('bpm-config-conflict__diff-icon');
+        setIcon(diffIcon, 'list-tree');
+        const diffLabel = diffToggle.buttonEl.createSpan({ cls: 'bpm-config-conflict__diff-label', text: this.t('showDifferences') });
+        diffToggle.setTooltip(this.t('showDifferences')).onClick(() => this.toggleDifferences());
+        this.diffToggle = diffToggle;
+        this.diffToggleIcon = diffIcon;
+        this.diffToggleLabel = diffLabel;
         footer.createDiv('bpm-config-conflict__private-actions');
         const actions = footer.createDiv('bpm-config-conflict__actions');
         for (const section of sections) this.renderSection(content, section);
@@ -101,6 +119,18 @@ class ConfigConflictView {
         this.controls.forEach(button => { button.setDisabled(disabled); });
         this.confirm?.setDisabled(disabled);
         this.host.setAttribute('aria-busy', `${busy}`);
+    }
+
+    /** 切换逐项差异显示；Toggling keeps choices and scroll position untouched. */
+    private toggleDifferences(): void {
+        this.showDifferences = !this.showDifferences;
+        this.host.toggleClass('show-differences', this.showDifferences);
+        if (!this.diffToggle) return;
+        const key: ProtectionMessage = this.showDifferences ? 'hideDifferences' : 'showDifferences';
+        if (this.diffToggleIcon) setIcon(this.diffToggleIcon, this.showDifferences ? 'eye-off' : 'list-tree');
+        this.diffToggle.setTooltip(this.t(key));
+        this.diffToggleLabel?.setText(this.t(key));
+        this.diffToggle.buttonEl.setAttribute('aria-expanded', `${this.showDifferences}`);
     }
 
     private async apply(side?: ConflictSide): Promise<void> {
@@ -149,6 +179,22 @@ class ConfigConflictView {
             () => this.manager.configProtection?.conflictChoices?.sectionSide(section.id), () => {
                 void this.manager.configProtection?.selectConflictSection(section.id, side).catch(error => this.report(error));
             }, section[side] === undefined || section[side] === null ? this.t('absent') : undefined);
+        // 逐项差异只在用户展开时显示，且只列设置路径，不展示可能含凭据的原值。
+        // Details stay collapsed until requested and list paths only, never credential-bearing values.
+        const details = row.createDiv('bpm-config-conflict__differences');
+        const head = details.createDiv('bpm-config-conflict__difference-head');
+        head.createSpan({ cls: 'bpm-config-conflict__difference-path', text: this.t('differencePath') });
+        if (section.differences.length === 0) {
+            details.createDiv({ cls: 'bpm-config-conflict__difference-empty', text: this.t('featureDifferences') });
+        } else {
+            for (const diff of section.differences.slice(0, 50)) {
+                details.createDiv({ cls: 'bpm-config-conflict__difference-path',
+                    text: diff.path.length ? protectionField(this.manager, diff.path) : this.t('file') });
+            }
+            if (section.differences.length > 50) {
+                details.createDiv({ cls: 'bpm-config-conflict__difference-empty', text: this.t('more') });
+            }
+        }
     }
 
     private renderSourceButton(parent: HTMLElement, side: ConflictSide,

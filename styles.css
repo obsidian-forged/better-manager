@@ -15452,6 +15452,22 @@ body.is-tablet :is(.manager-container--mobile, .ribbon-manager-modal) .ribbon-ma
 }
 .bpm-config-conflict__section-title { flex: 1 1 8rem; min-width: 0; overflow-wrap: anywhere; font-size: var(--font-ui-small); }
 .bpm-config-conflict__choices { display: inline-flex; flex: 0 0 auto; max-width: 100%; flex-wrap: wrap; gap: var(--size-4-1); }
+.bpm-config-conflict__tools { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--size-4-2); }
+.bpm-config-conflict__tools:empty { display: none; }
+.bpm-config-conflict-modal .bpm-config-conflict button.bpm-config-conflict__diff-toggle {
+    display: inline-flex; align-items: center; justify-content: center; gap: var(--size-4-1);
+    min-height: var(--bpm-conflict-control-size); margin: 0; padding: var(--size-4-1) var(--size-4-2);
+    border: var(--border-width) solid var(--background-modifier-border); border-radius: 999px;
+    background: transparent; color: var(--text-muted); box-shadow: none; font-size: var(--font-ui-small);
+}
+.bpm-config-conflict-modal .bpm-config-conflict button.bpm-config-conflict__diff-toggle:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+.bpm-config-conflict__diff-icon, .bpm-config-conflict__diff-label { display: inline-flex; align-items: center; }
+.bpm-config-conflict__diff-icon svg { width: var(--icon-size); height: var(--icon-size); }
+.bpm-config-conflict__differences { display: none; flex: 1 1 100%; flex-direction: column; gap: var(--size-2-1); width: 100%; min-width: 0; margin-top: var(--size-2-1); padding: var(--size-4-1) var(--size-4-2); border-radius: var(--radius-s); background: var(--background-secondary); }
+.bpm-config-conflict.show-differences .bpm-config-conflict__differences { display: flex; }
+.bpm-config-conflict__difference-head { color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.bpm-config-conflict__difference-path { min-width: 0; overflow-wrap: anywhere; font-size: var(--font-ui-smaller); color: var(--text-muted); padding-block: 1px; }
+.bpm-config-conflict__difference-empty { font-size: var(--font-ui-smaller); color: var(--text-muted); }
 .bpm-config-conflict__choice--local { --bpm-conflict-color: var(--color-blue); }
 .bpm-config-conflict__choice--incoming { --bpm-conflict-color: var(--color-purple); }
 .bpm-config-conflict__choice--save { --bpm-conflict-color: var(--interactive-accent); }
