@@ -56,12 +56,25 @@ async function fixture(options = {}) {
     platform.isMobileApp = false;
     platform.isTablet = false;
     const settings = structuredClone(DEFAULT_SETTINGS);
-    settings.CONFIG_SYNC_PROTECTION = options.localOnly ? false : true;
     settings.Plugins = [record('self', true), record('a', true), record('b', false), record('ignored', true, ['bpm-ignore'])];
     settings.RIBBON_SETTINGS = [structuredClone(ribbon)];
     const calls = [];
     const locals = new Map();
+    // 保护模式是设备本地选择；Force it for tests that exercise the protected path.
+    if (!options.localOnly) locals.set('bpm-config-sync-protection', 'on');
     const manager = new Manager();
+    // 保护模式以运行中的会话为准；Protected-mode behavior is keyed off the live session.
+    let staged;
+    if (!options.localOnly) manager.configProtection = {
+        readFile: async () => undefined,
+        stageFile: async () => false,
+        beginUserAction: () => () => undefined,
+        get hasPendingChanges() { return Boolean(staged); },
+        get mutationEpoch() { return 0; },
+        save: async value => { staged = value; },
+        publish: async value => { await manager.saveData(value); staged = undefined; return { status: "saved", value }; },
+        discardDraft: async () => undefined,
+    };
     let conflictDialogOpens = 0;
     manager.openConfigConflict = () => { conflictDialogOpens++; };
     manager.settings = settings;
@@ -1672,4 +1685,7 @@ test('single-machine mode keeps device records in data.json and never writes dev
     assert.equal(saved.devices.find(device => device.id === 'other').name, 'Renamed');
     assert.equal(adapter.files[otherPath], original);
     assert.equal(Object.keys(adapter.files).filter(path => path.includes('/data/devices/')).length, 1);
+    await manager.devices.remove('other');
+    assert.equal(adapter.files[otherPath], undefined, 'deleting a device also removes its stale record file');
+    assert.equal(settings.DEVICE_MANAGEMENT.devices.some(device => device.id === 'other'), false);
 });

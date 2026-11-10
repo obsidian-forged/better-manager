@@ -119,11 +119,14 @@ export default class ManagerBasis extends BaseSetting {
                 this.settings.MANUAL_CONFIG_SAVE = value;
                 await this.manager.saveSettings({ captureDevice: false });
             })));
-        addSettingTags(new Setting(this.containerEl)
-            .setName(syncText('syncProtectionName')).setDesc(syncText('syncProtectionDescription')),
-            [syncText('realtimeSyncTag'), syncText('syncProtectionDefaultOff')])
+        const protectionSetting = new Setting(this.containerEl)
+            .setName(syncText('syncProtectionName')).setDesc(syncText('syncProtectionDescription'));
+        if (this.manager.configSyncProtectionPendingRestart) {
+            protectionSetting.descEl.createDiv({ cls: 'mod-warning', text: syncText('syncProtectionRestartPending') });
+        }
+        addSettingTags(protectionSetting, [syncText('realtimeSyncTag'), syncText('syncProtectionDefaultOff')])
             .addToggle(toggle => {
-                const current = this.settings.CONFIG_SYNC_PROTECTION === true;
+                const current = this.manager.configSyncProtectionSetting;
                 toggle.setValue(current).onChange(this.action(async value => {
                     if (value === current) return;
                     if (this.manager.hasUnsavedSettings || this.manager.configProtection?.conflictChoices) {

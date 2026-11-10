@@ -119,6 +119,21 @@ export class ConfigProtection {
         if (this.draft && !this.draft.userEdited && this.draft.base !== this.head.id) {
             await this.io.removeDraft(); this.draft = undefined;
         }
+        // 单机模式期间留下的旧草稿可能基于已不存在的 head；直接发布会覆盖当前配置，
+        // 因此转成冲突等待用户选择，而不是静默采用。
+        // A draft from a previous mode may be based on a head that no longer exists; pause instead of
+        // publishing stale values over the current configuration.
+        if (this.draft?.userEdited && this.draft.base !== this.head.id
+            && !this.head.revision?.ancestors.includes(this.draft.base)) {
+            const stale = clone(this.draft.value);
+            await this.pause(this.head, stale, 'stale-replayed', this.draft.files);
+            await this.io.removeDraft();
+            this.draft = undefined;
+            this.lastDraft = '';
+            this.recoveredEdits = false;
+            this.changed();
+            return stale;
+        }
         if (this.draft && equal(this.draft.value, this.head.value)) {
             let committed = true;
             for (const [path, text] of Object.entries(this.draft.files)) {
@@ -332,19 +347,24 @@ export class ConfigProtection {
     }
 
     /** 用户明确选择“不保存”时丢弃本机草稿，避免下次打开继续提示；Discard an explicit unsaved draft. */
-    async discardDraft(retainFiles: Record<string, string | null> = {}): Promise<void> {
-        let hasFileEdits = false;
+    async discardDraft(retainFiles: Record<string, string | null> = {}, userEditedFiles?: readonly string[]): Promise<void> {
+        const changed = new Set<string>();
         for (const [path, text] of Object.entries(retainFiles)) {
-            if ((text === null ? null : await this.hash(text)) !== (this.head.files[path] ?? null)) { hasFileEdits = true; break; }
+            if ((text === null ? null : await this.hash(text)) !== (this.head.files[path] ?? null)) changed.add(path);
         }
-        const retained = hasFileEdits ? { base: this.head.id, value: clone(this.head.value), files: clone(retainFiles), userEdited: true } : undefined;
+        const hasFileEdits = changed.size > 0;
+        // 未提供编辑列表时（旧调用方），保留下来的文件按用户编辑处理；显式列表只标记真正的用户编辑。
+        // Legacy callers treat retained files as user edits; an explicit list marks only real user edits.
+        const userEdited = userEditedFiles === undefined ? hasFileEdits : userEditedFiles.some(path => changed.has(path));
+        const retained = hasFileEdits
+            ? { base: this.head.id, value: clone(this.head.value), files: clone(retainFiles), userEdited } : undefined;
         // Replace an existing draft in one write when a later action must survive. Deleting
         // it first would lose the new action if storage ran out during the following write.
         if (retained) await this.io.writeDraft(retained); else await this.io.removeDraft();
         await this.io.clearConflict?.();
         this.draft = retained;
         this.lastDraft = retained ? settingsFingerprint(retained) : '';
-        this.fileEdits = hasFileEdits;
+        this.fileEdits = userEdited;
         this.recoveredEdits = false;
         this.editedFiles.clear();
         this.resolution = undefined;
@@ -355,7 +375,9 @@ export class ConfigProtection {
         for (const key of Object.keys(this.stagedFiles)) delete this.stagedFiles[key];
         if (retained) {
             Object.assign(this.stagedFiles, retained.files);
-            for (const path of Object.keys(retained.files)) this.editedFiles.add(path);
+            if (retained.userEdited) for (const path of changed) {
+                if (userEditedFiles === undefined || userEditedFiles.includes(path)) this.editedFiles.add(path);
+            }
         }
         this.changed();
     }

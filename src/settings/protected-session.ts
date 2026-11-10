@@ -245,9 +245,15 @@ export class ProtectedConfigSession {
         return this.queue(async () => {
             // Main settings and auxiliary files have separate queues. A later successful
             // file edit belongs to a new action, even if this discard waited in the main queue.
-            const retained = Object.entries(this.protection.pendingFiles)
-                .filter(([path]) => (this.fileEditEpochs.get(path) ?? -1) > cutoff);
-            await this.protection.discardDraft(Object.fromEntries(retained));
+            // 保留“丢弃开始之后”的用户文件编辑，也保留启动时暂存的维护文件（设备记录等）。
+            // Keep newer user file edits and maintenance files staged without a user epoch.
+            const entries = Object.entries(this.protection.pendingFiles);
+            const retained = entries.filter(([path]) => {
+                const epoch = this.fileEditEpochs.get(path);
+                return epoch === undefined || epoch > cutoff;
+            });
+            const userEdited = entries.filter(([path]) => (this.fileEditEpochs.get(path) ?? -1) > cutoff).map(([path]) => path);
+            await this.protection.discardDraft(Object.fromEntries(retained), userEdited);
             for (const [path, epoch] of this.fileEditEpochs) if (epoch <= cutoff) this.fileEditEpochs.delete(path);
             this.resolvedBaseline = undefined;
             this.selections = undefined;

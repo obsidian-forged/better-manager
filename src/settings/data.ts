@@ -115,9 +115,6 @@ export interface ManagerSettings {
     PERSISTENCE: boolean;
     /** Keep shared configuration publication explicit; opt out to save when the last editor closes. */
     MANUAL_CONFIG_SAVE: boolean;
-    /** 仅在多设备实时同步本库时开启；关闭时只读写 data.json，不创建 .bpm。
-     * Opt-in protection for vauults synced in real time; off keeps a single data.json. */
-    CONFIG_SYNC_PROTECTION: boolean;
     /** Warn after three effective external changes to one configuration file within three seconds. */
     SYNC_CHANGE_WARNINGS: boolean;
     /** 最近安装标签显示窗口（天）；0 表示关闭标签。 */
@@ -313,7 +310,6 @@ export const DEFAULT_SETTINGS: ManagerSettings = {
     // 基础设置页
     PERSISTENCE: false,
     MANUAL_CONFIG_SAVE: true,
-    CONFIG_SYNC_PROTECTION: false,
     SYNC_CHANGE_WARNINGS: true,
     RECENT_INSTALL_DAYS: 7,
     CENTER: false,

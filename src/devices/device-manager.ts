@@ -1146,7 +1146,8 @@ export class DeviceManager {
     }
 
     private async removeDeviceFile(id: string): Promise<void> {
-        if (!this.sharedDeviceFiles) return;
+        // 删除是用户意图，单机模式也要落盘，否则下次启动会从旧文件把设备复活。
+        // Deletion is explicit intent; remove the shared record even in single-machine mode.
         const path = this.deviceFilePath(id);
         const adapter = this.manager.app?.vault?.adapter;
         if (!path || !adapter) return;
@@ -1157,7 +1158,13 @@ export class DeviceManager {
 
     /** 用户操作必须可观察失败，并恢复之前的文件草稿；User edits either retain both records or reject. */
     private async persistDeviceEdit(id: string, device: ManagedDevice | null): Promise<void> {
-        if (!this.manager.app?.vault?.adapter || !this.sharedDeviceFiles) {
+        if (!this.manager.app?.vault?.adapter) {
+            await this.manager.saveSettings({ captureDevice: false });
+            return;
+        }
+        if (!this.sharedDeviceFiles) {
+            // 单机模式不写设备文件，但删除必须清掉旧记录文件，避免下次启动复活。
+            if (!device) await this.removeDeviceFile(id);
             await this.manager.saveSettings({ captureDevice: false });
             return;
         }

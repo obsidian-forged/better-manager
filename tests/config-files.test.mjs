@@ -490,3 +490,40 @@ test('a complete bundle still starts normally after the private cache is repaire
     const loaded = await f.store.load();
     assert.equal(loaded.name, 'committed');
 });
+
+test('a cache rebuild aborts when data.json changed after its read', async () => {
+    const f = fixture({ name: 'initial' }, 'icons');
+    const value = await f.store.load(); f.store.begin(value); value.name = 'committed';
+    await f.store.publish(value, f.store.current.files, () => true);
+    for (const path of [...f.files.keys()]) if (path.includes('/.bpm/') || path.endsWith('/data/icons.css')) f.files.delete(path);
+    assert.equal(await f.io.repairMissingAnchor(), true);
+    const dataPath = `${root}/data.json`;
+    const read = f.adapter.read;
+    let dataReads = 0;
+    f.adapter.read = async path => {
+        if (path === dataPath && ++dataReads === 2) {
+            const newer = JSON.parse(f.files.get(dataPath));
+            newer.RECENT_INSTALL_DAYS = 77;
+            f.files.set(dataPath, JSON.stringify(newer));
+        }
+        return read(path);
+    };
+    await assert.rejects(f.io.readShared(true), /missing or do not match/);
+    f.adapter.read = read;
+    const after = JSON.parse(f.files.get(dataPath));
+    assert.equal(after.RECENT_INSTALL_DAYS, 77, 'the newer external value is not overwritten');
+    assert.ok(after._bpmRevision, 'the newer revision marker is kept');
+});
+
+test('a conflict whose referenced state is missing is dropped during anchor repair', async () => {
+    const f = fixture({ name: 'initial' }, 'icons');
+    const conflictId = 'a'.repeat(64), baseId = 'b'.repeat(64), incomingId = 'c'.repeat(64);
+    f.local.write({ conflict: conflictId });
+    f.files.set(`${root}/.bpm/device-a/conflicts/${conflictId}.json`, JSON.stringify({
+        owner: 'device-a', id: conflictId, base: { id: baseId }, incoming: { id: incomingId }, local: {}, localFiles: {}, reason: 'concurrent',
+    }));
+    f.files.set(`${root}/.bpm/device-a/states/${baseId}.json`, JSON.stringify({ owner: 'device-a', config: {}, files: {} }));
+    const io = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-a', hash, f.local);
+    assert.equal(await io.repairMissingAnchor(), true);
+    assert.equal(f.anchor().conflict, undefined);
+});

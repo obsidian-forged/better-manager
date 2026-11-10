@@ -643,6 +643,8 @@ export default {
     更新检测配置_配置数据源: 'Configure sources',
     更新检测配置_开始按钮: 'Start check',
     管理器_更多操作_描述: 'More actions',
+    管理器_刷新_标题: 'Refresh',
+    管理器_刷新_完成: 'Settings and the plugin list were refreshed.',
     管理器_一键禁用_描述: 'Disable all plugins at once',
     管理器_一键启用_描述: 'Enable all plugins at once',
     管理器_全选取消_描述: 'Select all / clear current list',

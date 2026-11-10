@@ -26,6 +26,8 @@ const file = id => `${ROOT}data/devices/${id}.json`;
 const other = { id: 'other', name: 'Original tablet', type: 'tablet', lastSeen: 9, updatedAt: 100 };
 async function fixture() {
     const files = { [file('other')]: JSON.stringify(other) }, writes = [], locals = new Map();
+    // 保护模式是设备本地选择；Force the protected session for these device-file tests.
+    locals.set('bpm-config-sync-protection', 'on');
     const adapter = {
         async exists(path) { return Object.hasOwn(files, path) || Object.keys(files).some(name => name.startsWith(path + '/')); },
         async stat(path) { return Object.hasOwn(files, path) ? { type: 'file' }
@@ -38,7 +40,17 @@ async function fixture() {
     };
     const manager = new Manager();
     manager.settings = structuredClone(DEFAULT_SETTINGS);
-    manager.settings.CONFIG_SYNC_PROTECTION = true;
+    let staged;
+    manager.configProtection = {
+        readFile: async () => undefined,
+        stageFile: async () => false,
+        beginUserAction: () => () => undefined,
+        get hasPendingChanges() { return Boolean(staged); },
+        get mutationEpoch() { return 0; },
+        save: async value => { staged = value; },
+        publish: async value => { await manager.saveData(value); staged = undefined; return { status: "saved", value }; },
+        discardDraft: async () => undefined,
+    };
     manager.settings.Plugins = [{ id: 'self', name: 'Self', enabled: true, delay: '', tags: [], group: '', desc: '', note: '' }];
     manager.manifest = { id: 'self' };
     manager.translator = { t: key => key };
@@ -172,10 +184,13 @@ test('discard restores renamed and removed devices without publishing them', asy
 });
 
 async function localSettingsFixture() {
-    const manager = new Manager(), writes = [], notices = [];
+    const manager = new Manager(), writes = [], notices = [], locals = new Map();
     let disk = { ...structuredClone(DEFAULT_SETTINGS), CONFIG_SYNC_PROTECTION: false };
     manager.settings = structuredClone(disk);
     manager.translator = { t: key => key };
+    manager.manifest = { id: 'self' };
+    manager.app = { vault: { getName: () => 'test', configDir: '.obsidian' },
+        loadLocalStorage: key => locals.get(key), saveLocalStorage: (key, value) => { locals.set(key, value); } };
     manager.loadData = async () => structuredClone(disk);
     manager.saveData = async value => { writes.push(structuredClone(value)); disk = structuredClone(value); };
     manager.reportError = (context, error) => notices.push({ context, error });

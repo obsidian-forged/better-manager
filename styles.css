@@ -14191,7 +14191,7 @@ body .manager-personalize .manager-personalize__feature.is-active,
     position: relative;
     --bpm-setting-search-size: 30px;
 }
-.manager-setting__container .manager-setting__topbar > :is(button.manager-setting-search__trigger, button.bpm-settings-save) {
+.manager-setting__container .manager-setting__topbar > :is(button.manager-setting-search__trigger, button.manager-setting-refresh__trigger, button.bpm-settings-save) {
     box-sizing: border-box;
     display: inline-flex;
     flex: 0 0 var(--bpm-setting-search-size);
@@ -14211,11 +14211,12 @@ body .manager-personalize .manager-personalize__feature.is-active,
     color: var(--text-muted);
     box-shadow: none;
 }
-.manager-setting__container .manager-setting__topbar > :is(button.manager-setting-search__trigger, button.bpm-settings-save):is(:hover, :focus-visible):not(:disabled) {
+.manager-setting__container .manager-setting__topbar > :is(button.manager-setting-search__trigger, button.manager-setting-refresh__trigger, button.bpm-settings-save):is(:hover, :focus-visible):not(:disabled) {
     background: var(--background-modifier-hover);
     color: var(--text-normal);
 }
-.manager-setting-search__trigger svg { width: 18px; height: 18px; }
+.manager-setting-search__trigger svg,
+.manager-setting-refresh__trigger svg { width: 18px; height: 18px; }
 
 .manager-setting__topbar--search > :not(.manager-setting-search__layer):not(.bpm-settings-save) {
     opacity: 0;
@@ -15264,7 +15265,7 @@ body.is-mobile .manager-setting__topbar {
     --bpm-setting-search-size: var(--bpm-ui-icon-button-size);
     --bpm-setting-input-height: var(--bpm-ui-touch-size);
 }
-body.is-mobile .manager-setting__topbar :is(.manager-setting-search__trigger, .manager-setting-search__close, .bpm-settings-save) svg {
+body.is-mobile .manager-setting__topbar :is(.manager-setting-search__trigger, .manager-setting-search__close, .manager-setting-refresh__trigger, .bpm-settings-save) svg {
     width: var(--bpm-ui-icon-size);
     height: var(--bpm-ui-icon-size);
 }

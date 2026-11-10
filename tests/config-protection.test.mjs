@@ -102,6 +102,17 @@ test('an identical shared candidate clears an obsolete pause without another wri
     f.state.shared=await createConfigRevision(f.value,'device-b',[f.state.shared],{},hash);
     assert.equal((await publish(f)).status,'noop');assert.equal(f.store.paused,false);assert.equal(f.state.writes,0);assert.equal(f.state.draft,undefined);
 });
+test('a user draft from an unknown earlier head pauses instead of publishing stale values', async () => {
+    const initial = await decodeConfig({ name: 'initial', layout: 'cards' }, hash);
+    const head = await createConfigRevision({ name: 'current', layout: 'cards' }, 'device-b', [initial], {}, hash);
+    const f = await fixture({ shared: head, head, draft: { base: 'a'.repeat(64), value: { name: 'stale local', layout: 'cards' }, files: {}, userEdited: true } });
+    assert.equal(f.store.paused, true);
+    assert.equal(f.value.name, 'stale local');
+    assert.equal(f.state.draft, undefined);
+    assert.equal((await publish(f)).status, 'conflict');
+    assert.equal(f.state.shared.value.name, 'current');
+});
+
 test('identical shared observations preserve a recovered local edit',async()=>{
     const initial=await decodeConfig({name:'initial',layout:'cards'},hash);
     const f=await fixture({head:initial,draft:{base:initial.id,value:{name:'recovered',layout:'cards'},files:{},userEdited:true}});

@@ -2950,6 +2950,11 @@ export class ManagerModal extends Modal {
                     .setDisabled(this.manager.isSavingSettings)
                     .onClick(this.action(async () => { await this.manager.savePendingSettings(); })));
             }
+            menu.addItem(item => item.setTitle(t('管理器_刷新_标题')).setIcon('refresh-ccw')
+                .onClick(this.action(async () => {
+                    await this.manager.refreshFromDisk();
+                    new Notice(t('管理器_刷新_完成'), 3000);
+                })));
             menu.addSeparator();
             menu.addItem(item => item.setTitle(t('任务_标题')).setIcon('cloud-download')
                 .onClick(() => { this.taskCenterView?.show(); }));

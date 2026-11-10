@@ -239,6 +239,9 @@ export class ConfigFiles implements ConfigProtectionIO {
                 // shared values instead of refusing to start forever. Waiting files are still reported on Save.
                 if (allowTrustedFallback && this.cacheRecovered && !this.anchor.head) {
                     complete = await this.snapshotFrom(snapshot.value, files);
+                    // 重建读取后若 data.json 已被同步更新，放弃本次改写并重试，避免覆盖新版本。
+                    // If data.json changed after this read, abandon the rebuild and retry with the newer value.
+                    if (await this.read(`${this.root}/data.json`) !== text) throw error;
                     // 修订标记引用的文件已无法核对；立即改写为可用的普通配置，否则之后每次保存都会因缺失文件失败。
                     // Rewrite the unusable revision immediately; otherwise every later Save would fail on the
                     // missing files. The value itself is preserved unchanged.
@@ -275,8 +278,25 @@ export class ConfigFiles implements ConfigProtectionIO {
         if (anchor.head && await missing(`${this.privateRoot}/states/${anchor.head}.json`)) {
             anchor.head = undefined; repaired = true;
         }
-        if (anchor.conflict && await missing(`${this.privateRoot}/conflicts/${anchor.conflict}.json`)) {
-            anchor.conflict = undefined; repaired = true;
+        if (anchor.conflict) {
+            const conflictPath = `${this.privateRoot}/conflicts/${anchor.conflict}.json`;
+            if (await missing(conflictPath)) {
+                anchor.conflict = undefined; repaired = true;
+            } else {
+                // 冲突条目本身还在，但它引用的 base/incoming 状态可能已被部分删除；
+                // 这类悬空冲突会让每次启动都失败，必须同样丢弃。
+                // The conflict JSON can survive while its referenced states are gone; drop the dangling anchor too.
+                let dangling = false;
+                try {
+                    const raw: unknown = JSON.parse((await this.read(conflictPath)) ?? 'null');
+                    const base = record(raw) && record(raw.base) ? raw.base.id : undefined;
+                    const incoming = record(raw) && record(raw.incoming) ? raw.incoming.id : undefined;
+                    dangling = !safeId(base) || !safeId(incoming)
+                        || await missing(`${this.privateRoot}/states/${base}.json`)
+                        || await missing(`${this.privateRoot}/states/${incoming}.json`);
+                } catch { dangling = true; }
+                if (dangling) { anchor.conflict = undefined; repaired = true; }
+            }
         }
         if (anchor.transaction && (await missing(`${this.privateRoot}/transactions/${anchor.transaction}.json`)
             || anchor.transactionBase !== undefined && await missing(`${this.privateRoot}/states/${anchor.transactionBase}.json`)

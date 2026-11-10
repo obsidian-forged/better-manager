@@ -5,7 +5,8 @@ import type { ReleaseHighlightsModal } from './modal/release-highlights-modal';
 import { settingsFingerprint } from './settings/session-store';
 import { ProtectedConfigSession } from './settings/protected-session';
 import { applySettingsEdit, copySettingsRecord, queueSettingsSave, reconcileSettingsRecord, settingsSaveMessage } from './settings/save-request';
-import { resolveConfigSyncProtection } from './settings/config-mode';
+import { CONFIG_CLEANUP_STORAGE_KEY, CONFIG_MODE_STORAGE_KEY, resolveConfigSyncProtection } from './settings/config-mode';
+import { mergeLocalSettings } from './settings/local-settings-merge';
 import { detectSyncPlugins } from './settings/sync-detector';
 import { protectionText } from './settings/protection-text';
 import { SyncWarningModal } from './settings/sync-warning';
@@ -127,8 +128,13 @@ export default class Manager extends Plugin {
     /** Serialize settings writes and remember the last successful payload. */
     private settingsSaveQueue: Promise<void> = Promise.resolve();
     private persistedSettingsJson = '';
-    /** 无保护模式下 data.json 的最近内容指纹；Fingerprint of the last data.json written or read. */
+    /** 无保护模式下 data.json 的最近内容指纹与值；用于安全合并外部修改。 */
     private lastPublishedFingerprint = '';
+    private lastPublishedSettings?: Record<string, unknown>;
+    /** 设备本地的同步保护选择，与运行中的会话分开保存。 */
+    private protectionPreference = false;
+    /** 从保护文件进入单机模式时，需要把 data.json 改写成普通格式。 */
+    private localFormatConversion = false;
     private settingsSaveRunning = false;
     private settingsEditEpoch = 0;
     private pendingSettingsRequests = 0;
@@ -280,6 +286,18 @@ export default class Manager extends Plugin {
         this.devices = new DeviceManager(this);
         await this.devices.initialize();
         if (this.isUnloaded) { this.devices.dispose(); return; }
+        if (this.localFormatConversion && !this.configProtection) {
+            // 从保护文件进入单机模式：把修订标记和设备记录改写成普通 data.json。
+            // Entering single-machine mode converts a protected file to the plain format.
+            this.localFormatConversion = false;
+            const value = copySettingsRecord(this.devices.persistedSettings());
+            try {
+                const written = await this.writeLocalSettings(value);
+                // 转换时可能合并了外部修改；内存与基线必须跟上，否则随后的启动保存会把它写回去。
+                // A conversion can merge external edits; adopt them before the startup save runs.
+                if (written && settingsFingerprint(written) !== settingsFingerprint(value)) this.adoptMergedLocalSettings(written);
+            } catch (error) { this.reportError('Converting local settings failed', error); }
+        }
         markSettingsDirty();
 
         // 一次性清理旧版本留下的 inline 覆盖（旧机制在元素上写 display/order，
@@ -952,20 +970,41 @@ export default class Manager extends Plugin {
     }
 
     public async loadSettings() {
+        const storage = new LocalStateStore(this);
         const raw: unknown = await this.loadData();
-        // 旧版本没有这个键：升级用户沿用保护，避免同步用户升级后静默失去保护；全新安装默认关闭。
-        // Legacy files keep protection; fresh installs stay on the simple single-file path.
-        const protectedMode = resolveConfigSyncProtection(raw);
+        // 同步保护是设备本地选择；旧版本写在 data.json 里的值只用于一次性迁移。
+        // Sync protection is a device-local choice; a legacy data.json value only seeds the migration.
+        let hasCache = false;
+        try {
+            const adapter = this.app?.vault?.adapter;
+            hasCache = Boolean(adapter && await adapter.exists(normalizePath(`${this.app.vault.configDir}/plugins/${this.manifest.id}/.bpm`)));
+        } catch (error) { this.reportError('Checking the recovery cache failed', error); }
+        // Obsidian 的本地存储不保留布尔 false（读回 null），因此用 on/off 字符串保存开关。
+        // Obsidian local storage loses boolean false (reads back null); persist on/off strings instead.
+        const storedMode = storage.loadLocalStorage(CONFIG_MODE_STORAGE_KEY);
+        const localChoice = typeof storedMode === 'boolean' ? storedMode
+            : storedMode === 'on' ? true : storedMode === 'off' ? false : undefined;
+        const protectedMode = resolveConfigSyncProtection(raw, localChoice, hasCache);
+        this.protectionPreference = protectedMode;
+        storage.saveLocalStorage(CONFIG_MODE_STORAGE_KEY, protectedMode ? 'on' : 'off');
+        const rawRecord = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : undefined;
+        this.localFormatConversion = !protectedMode && rawRecord !== undefined
+            && Object.prototype.hasOwnProperty.call(rawRecord, '_bpmRevision');
         if (!protectedMode) {
             this.configProtection = undefined;
             this.settings = this.normalizeSettings(raw) as unknown as ManagerSettings;
-            this.settings.CONFIG_SYNC_PROTECTION = false;
             this.pendingSettingsSnapshot = undefined;
             this.persistedSettingsJson = JSON.stringify(this.settings);
             this.lastPublishedFingerprint = settingsFingerprint(this.settings);
+            this.lastPublishedSettings = copySettingsRecord(this.settings);
+            // 单机模式不再使用保护锚点；删除缓存的请求也是设备本地的。
+            this.clearConfigProtectionAnchors();
+            if (storage.loadLocalStorage(CONFIG_CLEANUP_STORAGE_KEY) === true) {
+                // 删除失败时保留请求，下次启动重试；Keep the request when deletion fails so it retries.
+                if (await this.removeConfigRecoveryCache()) storage.saveLocalStorage(CONFIG_CLEANUP_STORAGE_KEY, false);
+            }
             return;
         }
-        const storage = new LocalStateStore(this);
         const savedOwner = storage.loadLocalStorage('bpm-settings-cache-owner');
         const owner = typeof savedOwner === 'string' && /^[a-z0-9-]{8,80}$/.test(savedOwner) ? savedOwner
             : window.crypto?.randomUUID?.() ?? `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -973,19 +1012,30 @@ export default class Manager extends Plugin {
         this.configProtection = new ProtectedConfigSession(this, owner, value => this.normalizeSettings(value),
             () => { if (this.translator && !this.isUnloaded) this.refreshConfigConflict(); });
         this.settings = this.normalizeSettings(await this.configProtection.load()) as unknown as ManagerSettings;
-        this.settings.CONFIG_SYNC_PROTECTION = true;
         this.pendingSettingsSnapshot = undefined;
         this.persistedSettingsJson = JSON.stringify(this.settings);
         this.lastPublishedFingerprint = settingsFingerprint(this.settings);
     }
 
-    /** 未开启同步保护时只读写 data.json；Off means the simple single-file path. */
-    public get configSyncProtectionEnabled(): boolean { return this.settings?.CONFIG_SYNC_PROTECTION !== false; }
+    /** 有效模式以运行中的会话为准；设置只决定下次启动。The live session decides the effective mode. */
+    public get configSyncProtectionEnabled(): boolean { return this.configProtection !== undefined; }
+
+    /** 本机保存的开关选择；The device-local preference used for the next start. */
+    public get configSyncProtectionSetting(): boolean { return this.protectionPreference; }
+
+    /** 设置与运行模式不一致时，需要重启；A switch that needs a restart to take effect. */
+    public get configSyncProtectionPendingRestart(): boolean {
+        return this.protectionPreference !== this.configSyncProtectionEnabled;
+    }
 
     private normalizeSettings(value: unknown): Record<string, unknown> {
         if (value !== null && value !== undefined && (typeof value !== 'object' || Array.isArray(value))) throw new Error('Invalid BPM settings file');
         const settings: Record<string, unknown> = { ...DEFAULT_SETTINGS, ...value };
         delete settings._bpmRevision;
+        // 模式开关改为设备本地存储，写入 data.json 时清掉旧字段。
+        // Mode switches live in device-local storage now; strip legacy fields from data.json.
+        delete settings.CONFIG_SYNC_PROTECTION;
+        delete settings.CONFIG_SYNC_CLEANUP_PENDING;
         return settings;
     }
 
@@ -1097,9 +1147,46 @@ export default class Manager extends Plugin {
         });
     }
 
-    /** Shared events may feed a read-only warning; only a save action compares/adopts configuration. */
+    /** 保护模式只警告，保存时再判定；单机模式在没有未保存编辑时直接采纳外部内容。
+     * Protected mode only warns and compares on Save; local mode adopts external content when idle. */
     public onExternalSettingsChange(): void {
         this.configProtection?.observeSharedChange();
+        if (!this.configProtection) void this.adoptExternalLocalSettings().catch(error => this.reportError('Adopting external settings failed', error));
+    }
+
+    private async adoptExternalLocalSettings(force = false): Promise<void> {
+        if (this.isUnloaded || this.isSavingSettings || this.hasUnsavedSettings) return;
+        if (!force && this.settingsEditors.size > 0) return;
+        const raw: unknown = await this.loadData();
+        if (raw === null || raw === undefined || typeof raw !== 'object' || Array.isArray(raw) || !Object.keys(raw).length) return;
+        const remote = this.normalizeSettings(raw);
+        if (settingsFingerprint(remote) === this.lastPublishedFingerprint) return;
+        const management = remote.DEVICE_MANAGEMENT;
+        const devices = management !== null && typeof management === 'object' && !Array.isArray(management)
+            ? (management as Record<string, unknown>).devices : undefined;
+        this.adoptSettings(remote);
+        // 采纳外部值时也采纳其设备记录；adoptSettings 默认保留旧列表。
+        // Adopt external device records too; adoptSettings keeps the previous list by default.
+        if (this.settings.DEVICE_MANAGEMENT && Array.isArray(devices)) {
+            this.settings.DEVICE_MANAGEMENT.devices = (devices as unknown[])
+                .map(device => device !== null && typeof device === 'object' && !Array.isArray(device) ? { ...device } : device) as NonNullable<ManagerSettings['DEVICE_MANAGEMENT']>['devices'];
+        }
+        this.devices?.reconcileAfterExplicitSave();
+        this.rememberLocalBaseline(remote);
+        this.persistedSettingsJson = JSON.stringify(this.devices?.persistedSettings() ?? this.settings);
+        this.refreshSettingsSaveState();
+    }
+
+    /** 手动刷新：采纳外部设置、同步插件记录并重绘当前界面。
+     * Manual refresh: adopt external settings, resync plugin records and redraw the current view. */
+    public async refreshFromDisk(): Promise<void> {
+        if (this.isUnloaded) return;
+        if (this.configProtection) this.configProtection.observeSharedChange();
+        else await this.adoptExternalLocalSettings(true).catch(error => this.reportError('Adopting external settings failed', error));
+        this.synchronizePlugins(Object.values(this.appPlugins.manifests).filter(manifest => manifest.id !== this.manifest.id), { save: false });
+        await this.managerModal?.reloadShowData();
+        this.refreshConfigConflict();
+        this.refreshSettingsSaveState();
     }
 
     public async saveSettings(options: { captureDevice?: boolean; automatic?: boolean } = {}) {
@@ -1125,9 +1212,16 @@ export default class Manager extends Plugin {
                 // 编辑期间的视图状态不提前写盘；启动迁移等无编辑场景直接落盘。
                 // View-state saves never publish early; startup migrations write directly.
                 if (this.settingsEditors.size === 0 && !this.pendingSettingsSnapshot) {
-                    await this.writeLocalSettings(value);
-                    this.pendingSettingsSnapshot = undefined;
-                    this.persistedSettingsJson = serialized;
+                    // 冻结的请求可能早于另一个已合并的自动保存；自动保存以当前内存为准，避免旧快照覆盖新值。
+                    // A frozen request can predate an earlier merged save; automatic writes use current memory.
+                    const currentValue = copySettingsRecord(this.devices?.persistedSettings() ?? this.settings);
+                    const written = await this.writeLocalSettings(currentValue);
+                    if (written) {
+                        this.pendingSettingsSnapshot = undefined;
+                        this.persistedSettingsJson = JSON.stringify(written);
+                        // 合并了外部修改后必须同步到内存，否则下一次保存会把它们当成“本机未改”覆盖回去。
+                        if (settingsFingerprint(written) !== settingsFingerprint(currentValue)) this.adoptMergedLocalSettings(written);
+                    }
                 }
             } else {
                 this.pendingSettingsSnapshot = value;
@@ -1139,41 +1233,109 @@ export default class Manager extends Plugin {
         }
     }
 
-    /** 无保护模式只写 data.json，并读回校验；The simple path writes and verifies data.json. */
-    private async writeLocalSettings(value: Record<string, unknown>, current: () => boolean = () => true, expectedDisk?: string): Promise<boolean> {
+    /** 无保护模式写入前先合并外部修改，并读回校验。
+     * The simple path merges external changes before writing, then verifies data.json.
+     * 返回实际写入的值；本机与外部同时改动时返回值会包含外部改动。 */
+    private async writeLocalSettings(value: Record<string, unknown>, current: () => boolean = () => true): Promise<Record<string, unknown> | undefined> {
         const previous: unknown = await this.loadData();
-        // Failed or malformed reads must never authorize replacing an unknown configuration.
-        const actual = settingsFingerprint(this.normalizeSettings(previous));
-        if (!current()) return false;
-        // Key order and formatting do not justify another write or a new sync event. Keep
-        // revision metadata in this comparison so disabling protection still removes it.
-        if (settingsFingerprint(previous) === settingsFingerprint(value)) {
-            this.lastPublishedFingerprint = settingsFingerprint(value);
-            return true;
+        if (!current()) return;
+        const remote = this.normalizeSettings(previous);
+        const remoteFingerprint = settingsFingerprint(remote);
+        const target = this.localMergeTarget(previous, value);
+        // 格式与键序不同不算修改；但带修订标记的外部文件需要被覆盖以回到单机格式。
+        if (settingsFingerprint(previous) === settingsFingerprint(target)) {
+            this.rememberLocalBaseline(target);
+            return target;
         }
-        if (expectedDisk !== undefined && actual !== expectedDisk) throw new Error('BPM configuration changed on disk before publication');
-        await this.saveData(value);
+        // 能用原子读写时把“合并 + 写入”压进一次操作，收窄写入窗口。
+        // Use the atomic read-modify-write when the runtime provides it; new files use saveData.
+        const adapter = this.app?.vault?.adapter as {
+            process?: (path: string, fn: (text: string) => string) => Promise<string>;
+            exists?: (path: string) => Promise<boolean>;
+        } | undefined;
+        const path = this.localDataPath();
+        const processFile = adapter && typeof adapter.process === 'function' ? adapter.process.bind(adapter) : undefined;
+        const existsFile = adapter && typeof adapter.exists === 'function' ? adapter.exists.bind(adapter) : undefined;
+        let atomic = Boolean(processFile && existsFile);
+        if (atomic && existsFile) {
+            try { atomic = await existsFile(path); } catch { atomic = false; }
+        }
+        if (atomic && processFile && existsFile) {
+            try {
+                let written: Record<string, unknown> | undefined;
+                await processFile(path, text => {
+                    let raw: unknown;
+                    try { raw = text.trim() ? JSON.parse(text) : undefined; }
+                    catch { throw new Error('BPM configuration on disk is not valid JSON'); }
+                    written = this.localMergeTarget(raw, value);
+                    return JSON.stringify(written);
+                });
+                if (written) {
+                    const check: unknown = await this.loadData();
+                    if (settingsFingerprint(this.normalizeSettings(check)) !== settingsFingerprint(written)) {
+                        throw new Error('BPM settings write verification failed');
+                    }
+                    this.rememberLocalBaseline(written);
+                    return written;
+                }
+            } catch (error) {
+                // 文件在检查后消失时退回普通写入；其余错误必须抛出，不能覆盖未知内容。
+                // Fall back only when the file vanished; other failures (invalid JSON, verification) surface.
+                let missing = false;
+                try { missing = !await existsFile(path); } catch { missing = false; }
+                if (!missing) throw error;
+            }
+        }
+        // 合并读取与写入之间如果再收到外部修改，宁可取消保存也不能把它覆盖掉。
+        // If the disk moved after the merge read, cancel instead of overwriting the newer value.
+        const confirmed: unknown = await this.loadData();
+        if (settingsFingerprint(this.normalizeSettings(confirmed)) !== remoteFingerprint) {
+            throw new Error('BPM configuration changed on disk before publication');
+        }
+        await this.saveData(target);
         const check: unknown = await this.loadData();
-        if (settingsFingerprint(this.normalizeSettings(check)) !== settingsFingerprint(value)) {
+        if (settingsFingerprint(this.normalizeSettings(check)) !== settingsFingerprint(target)) {
             throw new Error('BPM settings write verification failed');
         }
-        this.lastPublishedFingerprint = settingsFingerprint(value);
-        return true;
+        this.rememberLocalBaseline(target);
+        return target;
     }
 
-    /** 外部修改 data.json 时，手动保存先确认再覆盖；Manual saves ask before overwriting an external edit. */
-    private async confirmLocalExternalChange(current: () => boolean): Promise<string | undefined> {
-        const disk: unknown = await this.loadData();
-        const fingerprint = settingsFingerprint(this.normalizeSettings(disk));
-        if (fingerprint === this.lastPublishedFingerprint) return fingerprint;
-        const message = protectionText(this, 'syncProtectionExternalChanged');
-        if (this.settings.MANUAL_CONFIG_SAVE === false) { new Notice(message, 10_000); return fingerprint; }
-        if (!current()) return;
-        const { confirmWithModal } = await import('./utils.js');
-        const confirmed = await confirmWithModal(this.app, this, {
-            message, confirmText: protectionText(this, 'syncProtectionOverwrite'), tone: 'warning',
-        });
-        return confirmed && current() ? fingerprint : undefined;
+    /** 只在外部值上叠加本机改动；文件缺失或为空时不以默认值参与合并。 */
+    private localMergeTarget(previous: unknown, value: Record<string, unknown>): Record<string, unknown> {
+        const hasRemote = previous !== null && previous !== undefined
+            && typeof previous === 'object' && !Array.isArray(previous) && Object.keys(previous).length > 0;
+        const remote = this.normalizeSettings(previous);
+        const remoteFingerprint = settingsFingerprint(remote);
+        return hasRemote && this.lastPublishedSettings && this.lastPublishedFingerprint
+            && remoteFingerprint !== this.lastPublishedFingerprint
+            ? mergeLocalSettings(this.lastPublishedSettings, value, remote)
+            : value;
+    }
+
+    private localDataPath(): string {
+        return normalizePath(`${this.app.vault.configDir}/plugins/${this.manifest.id}/data.json`);
+    }
+
+    private rememberLocalBaseline(value: Record<string, unknown>): void {
+        this.lastPublishedSettings = copySettingsRecord(value);
+        this.lastPublishedFingerprint = settingsFingerprint(value);
+    }
+
+    /** 合并后同步内存；Adopt merged values so the next save keeps external changes. */
+    private adoptMergedLocalSettings(value: Record<string, unknown>): void {
+        const management = value.DEVICE_MANAGEMENT;
+        const devices = management !== null && typeof management === 'object' && !Array.isArray(management)
+            ? (management as Record<string, unknown>).devices : undefined;
+        this.adoptSettings(value);
+        // adoptSettings 会保留旧的内存设备列表；合并后的设备列表（含远端新增/改名）必须采用。
+        // adoptSettings keeps the old device list; use the merged one so remote records survive.
+        if (this.settings.DEVICE_MANAGEMENT && Array.isArray(devices)) {
+            const copies: unknown[] = (devices as unknown[]).map(device => device !== null && typeof device === 'object' && !Array.isArray(device) ? { ...device } : device);
+            this.settings.DEVICE_MANAGEMENT.devices = copies as NonNullable<ManagerSettings['DEVICE_MANAGEMENT']>['devices'];
+        }
+        this.devices?.reconcileAfterExplicitSave();
+        this.refreshSettingsSaveState();
     }
 
     public get automaticSavesSuppressed(): boolean { return false; }
@@ -1226,90 +1388,75 @@ export default class Manager extends Plugin {
         }
     }
 
-    /** 无保护模式没有磁盘草稿：直接回到最后一次读写 data.json 的内容。 */
+    /** 无保护模式没有磁盘草稿：回到最后一次成功读写 data.json 的基线。
+     * Discard returns to the last successful baseline; a failed or missing read never resets defaults. */
     private async discardLocalSettings(): Promise<void> {
         this.settingsEditEpoch++;
         this.pendingSettingsSnapshot = undefined;
-        let raw: unknown;
-        try { raw = await this.loadData() as unknown; }
-        catch (error) { this.reportError('Reading local settings failed', error); raw = {}; }
-        const published = this.normalizeSettings(raw) as unknown as ManagerSettings;
-        const publishedDevices = published.DEVICE_MANAGEMENT?.devices;
+        const baseline = this.lastPublishedSettings ? copySettingsRecord(this.lastPublishedSettings) : undefined;
+        if (!baseline) { this.refreshSettingsSaveState(); return; }
+        const published = this.normalizeSettings(baseline) as unknown as ManagerSettings;
         this.adoptSettings(published);
-        // adoptSettings 保留内存中的设备记录，本机模式需要显式回到已保存版本。
-        if (publishedDevices && this.settings.DEVICE_MANAGEMENT) {
-            this.settings.DEVICE_MANAGEMENT.devices = publishedDevices.map(device => ({ ...device }));
+        // adoptSettings 会保留较新的本地预设；丢弃必须把设备管理（含预设与设备记录）整体还原。
+        // adoptSettings keeps newer presets; discard must restore the whole device management block.
+        const management = baseline.DEVICE_MANAGEMENT;
+        if (management && typeof management === 'object' && !Array.isArray(management)) {
+            this.settings.DEVICE_MANAGEMENT = structuredClone(management as NonNullable<ManagerSettings['DEVICE_MANAGEMENT']>);
         }
         this.devices?.reconcileAfterExplicitSave();
-        this.lastPublishedFingerprint = settingsFingerprint(this.normalizeSettings(raw));
+        this.rememberLocalBaseline(baseline);
         this.persistedSettingsJson = JSON.stringify(this.devices?.persistedSettings() ?? this.settings);
-        if (this.devices?.data.enabled) await this.devices.apply({ refreshViews: false, persist: false });
+        if (this.settings.DEVICE_MANAGEMENT?.enabled && this.devices) {
+            await this.devices.apply({ refreshViews: false, persist: false });
+        }
         this.refreshSettingsSaveState();
     }
 
-    /** 切换同步保护；重启后生效，关闭时可选删除 .bpm。Applied on the next start.
-     * 切换本身必须先落盘，否则删除 .bpm 会连草稿里的开关一起丢掉。
-     * Persist the switch before deleting the cache, or the draft carrying it is removed too. */
+    /** 同步保护是设备本地的选择，只写本机存储；重启后生效。
+     * The switch is device-local and applies on the next start; it never writes data.json. */
     public async setConfigSyncProtection(enabled: boolean, deleteCache: boolean): Promise<boolean> {
-        if ((this.settings.CONFIG_SYNC_PROTECTION === true) === enabled) return true;
-        if (enabled) {
-            // 本机模式还没有保护会话，直接写一份带设备记录的普通 data.json。
-            // Local mode has no session yet: write a plain data.json that keeps device records.
-            this.settings.CONFIG_SYNC_PROTECTION = true;
-            const snapshot = this.localSnapshot(true);
-            await this.writeLocalSettings(snapshot);
-            this.pendingSettingsSnapshot = undefined;
-            this.persistedSettingsJson = JSON.stringify(snapshot);
-            new Notice(protectionText(this, 'syncProtectionRestart'), 10_000);
-            return true;
-        }
-        this.settings.CONFIG_SYNC_PROTECTION = false;
-        await this.saveSettings({ captureDevice: false });
-        if (!await this.savePendingSettings()) {
-            this.settings.CONFIG_SYNC_PROTECTION = true;
-            new Notice(protectionText(this, 'syncProtectionSaveFirst'), 10_000);
-            return false;
-        }
-        this.clearConfigProtectionAnchors();
-        if (deleteCache) await this.removeConfigRecoveryCache();
-        // 删除 .bpm 后立刻写普通配置，去掉修订标记并保留设备记录。
-        // After dropping the cache, write plain settings without a revision and keep devices.
-        const snapshot = this.localSnapshot(false);
-        await this.writeLocalSettings(snapshot);
-        this.persistedSettingsJson = JSON.stringify(snapshot);
+        if (this.protectionPreference === enabled) return true;
+        const storage = new LocalStateStore(this);
+        this.protectionPreference = enabled;
+        storage.saveLocalStorage(CONFIG_MODE_STORAGE_KEY, enabled ? 'on' : 'off');
+        // 删除缓存的请求也只作用于本机，不能随 data.json 传播到其他设备。
+        storage.saveLocalStorage(CONFIG_CLEANUP_STORAGE_KEY, !enabled && deleteCache);
         new Notice(protectionText(this, 'syncProtectionRestart'), 10_000);
         return true;
     }
 
-    /** 本机快照：持久值 + 内存设备记录，绝不写修订标记。 */
-    private localSnapshot(protection: boolean): Record<string, unknown> {
-        const snapshot = copySettingsRecord(this.devices?.persistedSettings() ?? this.settings);
-        snapshot.CONFIG_SYNC_PROTECTION = protection;
-        delete snapshot._bpmRevision;
-        const devices = this.settings.DEVICE_MANAGEMENT?.devices;
-        const management = snapshot.DEVICE_MANAGEMENT;
-        if (devices && management && typeof management === 'object' && !Array.isArray(management)) {
-            snapshot.DEVICE_MANAGEMENT = { ...(management as Record<string, unknown>), devices: devices.map(device => ({ ...device })) };
-        }
-        return snapshot;
-    }
-
     private clearConfigProtectionAnchors(): void {
         try {
-            for (const key of Object.keys(window.localStorage)) {
-                if (key.startsWith('bpm-config-anchor-')) window.localStorage.removeItem(key);
+            // 锚点由 LocalStateStore 保存（新版是库级本地存储，旧版带命名空间前缀）。
+            // Anchors live in LocalStateStore: vault-scoped on new builds, prefixed on old ones.
+            const storage = new LocalStateStore(this);
+            const owner = storage.loadLocalStorage('bpm-settings-cache-owner');
+            if (typeof owner === 'string' && /^[a-z0-9-]{8,80}$/.test(owner)) {
+                storage.saveLocalStorage(`bpm-config-anchor-${owner}`, null);
+            }
+            const browser = window.localStorage;
+            if (browser) {
+                for (const key of Object.keys(browser)) {
+                    if (key.includes('bpm-config-anchor-')) browser.removeItem(key);
+                }
             }
         } catch (error) { this.reportError('Clearing configuration anchors failed', error); }
     }
 
-    private async removeConfigRecoveryCache(): Promise<void> {
+    private async removeConfigRecoveryCache(): Promise<boolean> {
+        // 只删除本机 owner 的目录；整个 .bpm 根可能还包含其他设备的缓存。
+        // Delete only this device's owner directory; the root can contain other devices' caches.
+        const owner = new LocalStateStore(this).loadLocalStorage('bpm-settings-cache-owner');
+        if (typeof owner !== 'string' || !/^[a-z0-9-]{8,80}$/.test(owner)) return true;
         const adapter = this.app.vault.adapter;
-        const path = normalizePath(`${this.app.vault.configDir}/plugins/${this.manifest.id}/.bpm`);
+        const path = normalizePath(`${this.app.vault.configDir}/plugins/${this.manifest.id}/.bpm/${owner}`);
         try {
             if (await adapter.exists(path)) await adapter.rmdir(path, true);
+            return true;
         } catch (error) {
             this.reportError('Removing the recovery cache failed', error);
             new Notice(errorMessage(error), 10_000);
+            return false;
         }
     }
 
@@ -1332,10 +1479,13 @@ export default class Manager extends Plugin {
             const result = await this.queueSettingsOperation(async () => {
                 if (!current()) return { status: 'cancelled' as const };
                 if (protection) return protection.publish(value, current);
-                const expectedDisk = await this.confirmLocalExternalChange(current);
-                if (expectedDisk === undefined || !await this.writeLocalSettings(value, current, expectedDisk)) return { status: 'cancelled' as const };
+                const written = await this.writeLocalSettings(value, current);
+                if (!written) return { status: 'cancelled' as const };
+                if (settingsFingerprint(written) !== settingsFingerprint(value)) {
+                    new Notice(protectionText(this, 'syncProtectionMerged'), 7_000);
+                }
                 if (current()) this.pendingSettingsSnapshot = undefined;
-                return { status: current() ? 'saved' as const : 'saved-pending' as const, value };
+                return { status: current() ? 'saved' as const : 'saved-pending' as const, value: written };
             });
             if (result.status === 'saved-pending' || (result.status === 'saved' || result.status === 'noop') && !current()) {
                 // A committed choice and a newer edit can both be valid. Apply only the newer

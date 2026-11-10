@@ -1,7 +1,7 @@
 import { FloatingScrollbars } from '../ui/floating-scrollbars';
 import { SettingsSaveButton } from '../ui/settings-save-button';
 import { ScopeSelect } from '../ui/scope-select';
-import { App, ButtonComponent, ExtraButtonComponent, PluginSettingTab, requireApiVersion, setIcon, Setting, ToggleComponent } from 'obsidian';
+import { App, ButtonComponent, ExtraButtonComponent, Notice, PluginSettingTab, requireApiVersion, setIcon, Setting, ToggleComponent } from 'obsidian';
 import type { SettingDefinitionItem, SettingDefinitionPage } from 'obsidian';
 import { protectionText } from './protection-text';
 import { SettingsSearch, SettingsSearchPage } from './search-view';
@@ -127,6 +127,12 @@ class ManagerSettingTab extends PluginSettingTab {
                     search.setIcon('search').setTooltip(this.manager.translator.t('设置_搜索_标题'));
                     search.onClick(() => this.openSearchFromNavigation());
                 }
+                if (!control.querySelector('.manager-setting-refresh__native-trigger')) {
+                    const refresh = new ExtraButtonComponent(control);
+                    refresh.extraSettingsEl.addClass('manager-setting-refresh__native-trigger');
+                    refresh.setIcon('refresh-ccw').setTooltip(this.manager.translator.t('管理器_刷新_标题'));
+                    refresh.onClick(() => { void this.refreshFromNativeList(); });
+                }
                 const existing = control.querySelector<HTMLElement>('.bpm-settings-save');
                 if (this.manager.settings?.MANUAL_CONFIG_SAVE === false) {
                     if (existing) {
@@ -157,6 +163,14 @@ class ManagerSettingTab extends PluginSettingTab {
         row.click();
         const view = this.containerEl.ownerDocument.defaultView ?? window;
         view.setTimeout(() => this.renderRoot.querySelector<HTMLButtonElement>('.manager-setting-search__trigger')?.click(), 0);
+    }
+
+    /** 原生分类列表的刷新：重新读取配置并让原生页面重新渲染。 */
+    private async refreshFromNativeList(): Promise<void> {
+        await this.manager.refreshFromDisk();
+        // 原生声明式设置页在 1.13 才提供 update；旧版本只更新内存并提示。
+        if (requireApiVersion('1.13.0')) this.update();
+        new Notice(this.manager.translator.t('管理器_刷新_完成'), 3000);
     }
 
     hide(): void {
@@ -211,6 +225,13 @@ class ManagerSettingTab extends PluginSettingTab {
     }
 
     refreshSettingsSaveState(): void { this.settingsSaveButton?.refresh(); this.refreshNavigationSave(); }
+
+    /** 手动刷新设置：采纳外部配置并重绘当前分类；Manual refresh adopts external settings and redraws. */
+    private async refreshFromDisk(): Promise<void> {
+        await this.manager.refreshFromDisk();
+        if (this.isVisible || this.nativeContainer) this.renderSettings();
+        new Notice(this.manager.translator.t('管理器_刷新_完成'), 3000);
+    }
 
     /** 原生分页列表的保存按钮与顶栏共用状态；Keep the native-list save button in sync with the topbar. */
     private refreshNavigationSave(): void {
@@ -290,6 +311,9 @@ class ManagerSettingTab extends PluginSettingTab {
             if (this.manager.configProtection?.protection.paused) this.manager.openConfigConflict();
             else this.manager.showPrivateCacheWarning();
         });
+        const refreshButton = new ButtonComponent(topbar).setIcon('refresh-ccw').setTooltip(this.manager.translator.t('管理器_刷新_标题'));
+        refreshButton.buttonEl.addClass('manager-setting-refresh__trigger');
+        refreshButton.onClick(() => { void this.refreshFromDisk(); });
         const searchButton = new ButtonComponent(topbar).setIcon('search').setTooltip(this.manager.translator.t('设置_搜索_标题'));
         searchButton.buttonEl.addClass('manager-setting-search__trigger');
         searchButton.onClick(() => {
