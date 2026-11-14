@@ -30,9 +30,10 @@ test('readable values redact secrets recursively instead of dumping credentials'
     const text=conflictValueText({apiKey:'secret-value',enabled:true},[],word);
     assert.equal(text.includes('secret-value'),false);assert.ok(text.includes('on'));
 });
-test('sync detection uses registered IDs and treats official sync as a separate enabled core service',()=>{
+test('realtime sync detection keeps supported registered IDs and excludes batch sync plugins',()=>{
     const ids=new Set(['sync-engine','easy-sync','remotely-save','nutstore-sync','fast-note-sync','obsidian-livesync']);
-    assert.equal(detectSyncPlugins(ids,true).length,7);assert.equal(detectSyncPlugins(new Set(['remotelysave','selfhostlivsync']),false).length,0);
+    assert.deepEqual(detectSyncPlugins(ids,true).map(item=>item.id),['sync-engine','nutstore-sync','fast-note-sync','obsidian-livesync','sync']);
+    assert.deepEqual(detectSyncPlugins(new Set(['easy-sync','remotely-save','remotelysave','selfhostlivsync']),false),[]);
     assert.deepEqual(detectSyncPlugins(new Set(),true).map(item=>item.id),['sync']);
 });
 test('item source chips preview and select the matching plugin without changing either preserved version',()=>{

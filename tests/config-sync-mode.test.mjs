@@ -8,8 +8,12 @@ globalThis.window = { addEventListener() {}, removeEventListener() {}, crypto: w
 const nativeRequire = createRequire(import.meta.url);
 class NativeBase {}
 const notices = [];
+const openedModals = [];
+class NativeModal extends NativeBase {
+    open() { openedModals.push(this); }
+}
 const obsidian = { normalizePath: path => path, Platform: { isMobileApp: false, isTablet: false },
-    Plugin: NativeBase, Modal: NativeBase, SuggestModal: NativeBase, PluginSettingTab: NativeBase,
+    Plugin: NativeBase, Modal: NativeModal, SuggestModal: NativeBase, PluginSettingTab: NativeBase,
     Notice: class { constructor(message) { notices.push(message); } } };
 async function load(entry) {
     const result = await build({ entryPoints: [entry], bundle: true, platform: 'node', format: 'cjs', write: false,
@@ -198,6 +202,76 @@ test('the FNS plugin is detected before the warning dialog runs', async () => {
     } } };
     manager.appPlugins = { enabledPlugins: new Set(['fast-note-sync']) };
     assert.equal(await manager.hasEnabledSyncService(), true);
+});
+
+test('startup with protection off recommends protection without recovery-folder instructions', async () => {
+    for (const language of ['zh-cn', 'en']) {
+        const { manager } = await localFixture(disk({ LANGUAGE: language }));
+        manager.appPlugins.enabledPlugins.add('fast-note-sync');
+        const noticeCount = notices.length, modalCount = openedModals.length;
+        await manager.showSyncWarning();
+        assert.equal(manager.syncServiceDetected, true);
+        assert.equal(notices.length, noticeCount + 1);
+        assert.match(notices[noticeCount], /配置实时同步保护|configuration realtime sync protection/);
+        assert.doesNotMatch(notices[noticeCount], /\.bpm/i);
+        assert.equal(openedModals.length, modalCount);
+    }
+});
+
+test('batch sync plugins do not trigger realtime warnings or block automatic local writes', async () => {
+    for (const pluginId of ['easy-sync', 'remotely-save']) {
+        const f = await localFixture(), { manager } = f;
+        manager.appPlugins.enabledPlugins.add(pluginId);
+        const noticeCount = notices.length, modalCount = openedModals.length;
+        await manager.showSyncWarning();
+        assert.equal(manager.syncServiceDetected, false);
+        assert.equal(notices.length, noticeCount);
+        assert.equal(openedModals.length, modalCount);
+        manager.settings.CENTER = !f.disk().CENTER;
+        await manager.saveSettings({ captureDevice: false, automatic: true });
+        assert.equal(f.disk().CENTER, manager.settings.CENTER);
+        assert.equal(f.writes.length, 1);
+    }
+});
+
+test('startup without a sync service shows no sync warning in either protection mode', async () => {
+    for (const protectedMode of [false, true]) {
+        const { manager } = await localFixture();
+        if (protectedMode) manager.configProtection = {};
+        const noticeCount = notices.length, modalCount = openedModals.length;
+        await manager.showSyncWarning();
+        assert.equal(manager.syncServiceDetected, false);
+        assert.equal(notices.length, noticeCount);
+        assert.equal(openedModals.length, modalCount);
+    }
+});
+
+test('enabling protection pending restart keeps the startup warning in the live local mode', async () => {
+    const { manager } = await localFixture();
+    manager.appPlugins.enabledPlugins.add('fast-note-sync');
+    await manager.setConfigSyncProtection(true, false);
+    assert.equal(manager.configSyncProtectionPendingRestart, true);
+    const noticeCount = notices.length, modalCount = openedModals.length;
+    await manager.showSyncWarning();
+    assert.equal(notices.length, noticeCount + 1);
+    assert.doesNotMatch(notices[noticeCount], /\.bpm/i);
+    assert.equal(openedModals.length, modalCount);
+});
+
+test('disabling protection pending restart retains the active recovery-folder warning', async () => {
+    const { manager } = await localFixture();
+    manager.configProtection = {};
+    manager.protectionPreference = true;
+    manager.appPlugins.enabledPlugins.add('fast-note-sync');
+    await manager.setConfigSyncProtection(false, false);
+    assert.equal(manager.configSyncProtectionPendingRestart, true);
+    const noticeCount = notices.length, modalCount = openedModals.length;
+    await manager.showSyncWarning();
+    assert.equal(notices.length, noticeCount);
+    assert.equal(openedModals.length, modalCount + 1);
+    assert.equal(openedModals[modalCount], manager.syncWarningModal);
+    assert.equal(manager.syncWarningModal.reason, 'services');
+    assert.deepEqual(manager.syncWarningModal.services.map(service => service.id), ['fast-note-sync']);
 });
 
 test('an FNS plugin enabled after startup is detected before a background write', async () => {
