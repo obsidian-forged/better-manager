@@ -61,9 +61,22 @@ export type AppSettingsLike = {
     openTabById: (id: string) => Promise<void>;
 };
 
+/** 核心插件实例的最小视图：Sync 未登录时 userId 为 -1 且 key/host 为空。 */
+export type CorePluginInstanceLike = {
+    userId?: unknown;
+    key?: unknown;
+    host?: unknown;
+    vaultId?: unknown;
+};
+
+export type ObsidianCorePluginRegistry = {
+    getPluginById?: (id: string) => { enabled?: boolean; instance?: CorePluginInstanceLike } | undefined;
+};
+
 export type ObsidianAppWithInternals = App & {
     plugins: ObsidianPluginRegistry;
     setting: AppSettingsLike;
+    internalPlugins?: ObsidianCorePluginRegistry;
     i18n?: {
         locale?: string;
         lang?: string;

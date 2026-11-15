@@ -13,6 +13,7 @@ class NativeModal extends NativeBase {
     open() { openedModals.push(this); }
 }
 const obsidian = { normalizePath: path => path, Platform: { isMobileApp: false, isTablet: false },
+    requireApiVersion: () => true, getLanguage: () => 'en',
     Plugin: NativeBase, Modal: NativeModal, SuggestModal: NativeBase, PluginSettingTab: NativeBase,
     Notice: class { constructor(message) { notices.push(message); } } };
 async function load(entry) {
@@ -129,6 +130,68 @@ test('automatic saves never recreate a previously established file that is tempo
         assert.deepEqual(f.disk(), missing);
         assert.equal(manager.hasUnsavedSettings, true, 'the attempted edit remains pending');
     }
+});
+
+test('a manually reinstalled plugin with no data.json opens the resolver instead of a dead-end notice', async () => {
+    const f = await localFixture(null, new Map([[CONFIG_MODE_STORAGE_KEY, 'off'], [CONFIG_LOCAL_ESTABLISHED_STORAGE_KEY, 'yes']]));
+    const { manager } = f;
+    const modalsBefore = openedModals.length, noticesBefore = notices.length;
+    assert.equal(manager.localSettingsMissing, true);
+    assert.equal(manager.localSettingsFresh, false, 'a stale install marker still blocks automatic recreation');
+    manager.settings.CENTER = true;
+    await manager.saveSettings({ captureDevice: false });
+    const writesBefore = f.writes.length;
+    assert.equal(await manager.savePendingSettings(), false);
+    assert.equal(f.writes.length, writesBefore, 'the failed save must not write');
+    assert.equal(openedModals.length, modalsBefore + 1, 'the failed save opens the resolver');
+    assert.equal(notices.length, noticesBefore, 'no dead-end notice is shown');
+    assert.equal(await manager.createLocalSettingsFile(), true);
+    assert.equal(f.disk().CENTER, true);
+    assert.equal(manager.localSettingsMissing, false);
+    assert.equal(manager.localSettingsFresh, false);
+});
+
+test('an empty data.json opens the resolver and can be overwritten with the draft', async () => {
+    const f = await localFixture({}), { manager } = f;
+    manager.settings.RECENT_INSTALL_DAYS = 12;
+    await manager.saveSettings({ captureDevice: false });
+    assert.equal(await manager.savePendingSettings(), false);
+    assert.equal(manager.localSettingsMissing, true, 'an empty file is not a usable configuration');
+    assert.equal(await manager.createLocalSettingsFile(), true);
+    assert.equal(f.disk().RECENT_INSTALL_DAYS, 12);
+});
+
+test('recheck keeps the resolver open while unusable and finishes the pending save when the file arrives', async () => {
+    const f = await localFixture(null, new Map([[CONFIG_MODE_STORAGE_KEY, 'off'], [CONFIG_LOCAL_ESTABLISHED_STORAGE_KEY, 'yes']]));
+    const { manager } = f;
+    assert.equal(await manager.refreshMissingLocalSettings(), false, 'still missing: the resolver stays open');
+    manager.settings.CENTER = true;
+    await manager.saveSettings({ captureDevice: false });
+    await manager.savePendingSettings();
+    f.replaceDisk(disk({ RECENT_INSTALL_DAYS: 44 }));
+    assert.equal(await manager.refreshMissingLocalSettings(), true, 'the delivered file completes the interrupted save');
+    assert.equal(f.disk().RECENT_INSTALL_DAYS, 44, 'the synced value is merged, not overwritten');
+    assert.equal(f.disk().CENTER, true, 'the pending draft is saved');
+    assert.equal(manager.hasUnsavedSettings, false);
+});
+
+test('recheck adopts a delivered file when no draft is pending', async () => {
+    const f = await localFixture(null), { manager } = f;
+    assert.equal(await manager.refreshMissingLocalSettings(), false);
+    f.replaceDisk(disk({ RECENT_INSTALL_DAYS: 44 }));
+    assert.equal(await manager.refreshMissingLocalSettings(), true);
+    assert.equal(manager.settings.RECENT_INSTALL_DAYS, 44);
+});
+
+test('unconfigured core Sync is not treated as an active sync service', async () => {
+    const f = await localFixture(), { manager } = f;
+    assert.equal(manager.coreSyncActive(false), false, 'a disabled core plugin is never active');
+    manager.app.internalPlugins = { getPluginById: () => ({ enabled: true, instance: { userId: -1, key: null, host: null, vaultId: null } }) };
+    assert.equal(manager.coreSyncActive(true), false, 'enabled but signed out syncs nothing');
+    manager.app.internalPlugins = { getPluginById: () => ({ enabled: true, instance: { userId: 1, key: 'k', host: 'h', vaultId: 'v' } }) };
+    assert.equal(manager.coreSyncActive(true), true, 'configured Sync stays active');
+    manager.app.internalPlugins = undefined;
+    assert.equal(manager.coreSyncActive(true), true, 'unreadable internals are treated conservatively');
 });
 
 test('an automatic startup save does not create a new data.json, but an explicit first save can', async () => {

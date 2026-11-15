@@ -12,6 +12,7 @@ import { protectionText } from './settings/protection-text';
 import { SyncWarningModal } from './settings/sync-warning';
 import { ConfigConflictModal } from './settings/conflict-view';
 import { ConfigBundleModal } from './settings/config-bundle-modal';
+import { LocalSettingsModal } from './settings/local-settings-modal';
 import { PluginIcons } from './icons/plugin-icons';
 import { pluginStorage } from './storage/plugin-storage';
 import { LocalStateStore } from './storage/local-state';
@@ -32,7 +33,7 @@ import { NoteTipFeature } from './note-tip';
 import Commands from './command';
 import Agreement from 'src/agreement';
 import { RepoResolver, ensureBpmTagExists, BPM_TAG_ID } from './repo-resolver';
-import { Notice, Platform, requestUrl } from 'obsidian';
+import { getLanguage, Notice, Platform, requestUrl, requireApiVersion } from 'obsidian';
 import { BetaSource, ManagerPlugin, BPM_IGNORE_TAG, EONDR_PLUGIN_TAG_ID } from './data/types';
 import { runMigrations } from './migrations';
 import { migrateLegacyRibbonSettings } from './ribbon-migration';
@@ -137,6 +138,8 @@ export default class Manager extends Plugin {
     private lastPublishedSettings?: Record<string, unknown>;
     /** 只允许首次安装创建共享文件；同步中的临时缺失不能授权重建。 */
     private localSettingsFresh = false;
+    /** 本设备确认 data.json 不存在（非空文件也视为存在）；用于首次安装建立与缺失处理。 */
+    private localSettingsMissing = false;
     private localAdoptionEpoch = 0;
     private localSettingsState?: LocalStateStore;
     private syncServiceDetected = false;
@@ -154,6 +157,7 @@ export default class Manager extends Plugin {
     private syncWarningModal?: SyncWarningModal;
     private configConflictModal?: ConfigConflictModal;
     private configBundleModal?: ConfigBundleModal;
+    private localSettingsModal?: LocalSettingsModal;
     private readonly settingsEditors = new Set<object>();
     private settingsEditorEpoch = 0;
     private noteTip!: NoteTipFeature;
@@ -322,6 +326,17 @@ export default class Manager extends Plugin {
         if (pluginsChanged) markSettingsDirty();
         Commands(this.app, this);
 
+        // 全新安装（本机确认 data.json 从未建立）且没有同步服务等待文件时，立即创建配置文件；
+        // 同步库中的缺失可能只是尚未送达，自动写入会覆盖其他设备的配置，必须交由显式保存。
+        // 已建立过的文件也从不自动重建，缺失或为空时由用户在处理窗口确认。
+        // A genuine first install with no sync service creates data.json immediately. A missing
+        // file on a synced vault, or any established file, is never recreated automatically.
+        if (this.localSettingsFresh && this.localSettingsMissing
+            && !this.syncServiceDetected && !this.syncServiceDetectionFailed) {
+            await this.createLocalSettingsFile();
+            if (this.isUnloaded) return;
+        }
+
         if (settingsDirty) {
             // 迁移/登记只落共享设置，不触碰设备预设；Startup migrations must not capture device state.
             await this.saveSettings({ captureDevice: false, automatic: true });
@@ -335,8 +350,11 @@ export default class Manager extends Plugin {
                 this.refreshConfigConflict();
                 // 已保留两个版本时直接打开解决窗口；同步提醒不应盖在冲突之上。
                 // Open the existing conflict directly; the sync warning must not cover it.
-                if (this.configProtection?.protection.paused) this.openConfigConflict();
-                else await this.showSyncWarning();
+                if (this.configProtection?.protection.paused) { this.openConfigConflict(); return; }
+                // 配置文件缺失（未自动创建）时立即给出处理窗口，避免新手只看到“未保存”。
+                // Surface a missing configuration to the user instead of leaving only “unsaved”.
+                if (!this.configProtection && this.localSettingsMissing) { this.openLocalSettingsModal(); return; }
+                await this.showSyncWarning();
             }, 200);
             this.scheduleStartupTask("release highlights", () => this.showReleaseHighlights(), 500);
             this.scheduleStartupTask("plugin updates", () => this.startupCheckForUpdates(), 3000);
@@ -413,6 +431,7 @@ export default class Manager extends Plugin {
         this.syncWarningModal?.close();
         this.configConflictModal?.close();
         this.configBundleModal?.close();
+        this.localSettingsModal?.close();
         this.pluginIcons.dispose();
         this.updates.dispose();
         this.managerModal?.close();
@@ -1006,7 +1025,10 @@ export default class Manager extends Plugin {
             const knownEstablished = established === true || established === 'yes'
                 || raw !== null && raw !== undefined || fileExists === true;
             const canConfirmMissing = fileExists === false;
-            this.localSettingsFresh = !knownEstablished && canConfirmMissing && (raw === null || raw === undefined);
+            // 文件缺失，或存在但没有可用记录（空文件、空对象）时，都需要首次建立或由用户处理。
+            const unusableRecord = fileExists === true && !this.hasLocalSettingsRecord(raw);
+            this.localSettingsMissing = canConfirmMissing && (raw === null || raw === undefined) || unusableRecord;
+            this.localSettingsFresh = !knownEstablished && this.localSettingsMissing;
             if (knownEstablished && established !== 'yes') storage.saveLocalStorage(CONFIG_LOCAL_ESTABLISHED_STORAGE_KEY, 'yes');
             this.settings = this.normalizeSettings(raw) as unknown as ManagerSettings;
             this.pendingSettingsSnapshot = undefined;
@@ -1129,6 +1151,16 @@ export default class Manager extends Plugin {
         modal.open();
     }
 
+    /** data.json 缺失的处理窗口；只在显式保存失败或用户触发时打开。 */
+    public openLocalSettingsModal(): void {
+        if (this.isUnloaded || this.configProtection || this.localSettingsModal) return;
+        const modal = new LocalSettingsModal(this, () => {
+            if (this.localSettingsModal === modal) this.localSettingsModal = undefined;
+        });
+        this.localSettingsModal = modal;
+        modal.open();
+    }
+
     private showIncompleteConfigNotice(): void {
         const fragment = createFragment();
         fragment.createDiv({ text: protectionText(this, 'bundleNotice') });
@@ -1147,11 +1179,7 @@ export default class Manager extends Plugin {
     }
 
     private async showSyncWarning(): Promise<void> {
-        const adapter = this.app.vault.adapter;
-        const path = `${this.app.vault.configDir}/core-plugins.json`;
-        const core: unknown = await adapter.exists(path) ? JSON.parse(await adapter.read(path)) : [];
-        const official = Array.isArray(core) ? core.includes('sync') : core !== null && typeof core === 'object'
-            && Reflect.get(core, 'sync') === true;
+        const official = this.coreSyncActive(await this.coreSyncEnabled());
         const detected = detectSyncPlugins(this.appPlugins.enabledPlugins, official);
         this.syncServiceDetected = detected.length > 0;
         this.syncServiceDetectionFailed = false;
@@ -1166,12 +1194,37 @@ export default class Manager extends Plugin {
     }
 
     private async hasEnabledSyncService(): Promise<boolean> {
+        const official = this.coreSyncActive(await this.coreSyncEnabled());
+        return detectSyncPlugins(this.appPlugins.enabledPlugins, official).length > 0;
+    }
+
+    /** 读取 core-plugins.json 里 Obsidian Sync 的启用状态。 */
+    private async coreSyncEnabled(): Promise<boolean> {
         const adapter = this.app.vault.adapter;
         const path = normalizePath(`${this.app.vault.configDir}/core-plugins.json`);
         const core: unknown = await adapter.exists(path) ? JSON.parse(await adapter.read(path)) : [];
-        const official = Array.isArray(core) ? core.includes('sync') : core !== null && typeof core === 'object'
+        return Array.isArray(core) ? core.includes('sync') : core !== null && typeof core === 'object'
             && Reflect.get(core, 'sync') === true;
-        return detectSyncPlugins(this.appPlugins.enabledPlugins, official).length > 0;
+    }
+
+    /**
+     * 核心 Sync 默认开启，但未登录/未配置时不会同步任何文件；
+     * 把它当成活跃同步服务会让全新安装永远无法建立 data.json。
+     *
+     * Core Sync is enabled by default but syncs nothing until configured; treating an
+     * unconfigured instance as active would block a first install from creating data.json.
+     */
+    private coreSyncActive(coreEnabled: boolean): boolean {
+        if (!coreEnabled) return false;
+        const internals = (this.app as ObsidianAppWithInternals).internalPlugins;
+        const instance = internals?.getPluginById?.('sync')?.instance;
+        // 无法读取内部状态时保守按活跃处理，避免误重建同步中的文件。
+        if (!instance || typeof instance !== 'object') return true;
+        const configured = [Reflect.get(instance, 'key'), Reflect.get(instance, 'host'), Reflect.get(instance, 'vaultId')]
+            .some(value => typeof value === 'string' && value.length > 0);
+        const userId = Reflect.get(instance, 'userId');
+        const signedIn = typeof userId === 'number' ? userId >= 0 : typeof userId === 'string' && userId.length > 0;
+        return configured || signedIn;
     }
 
     public showPrivateCacheWarning(): void {
@@ -1404,7 +1457,8 @@ export default class Manager extends Plugin {
             throw new Error('BPM configuration appeared on disk before publication');
         }
         if (remoteFingerprint === undefined && existsFile && await existsFile(path)) {
-            throw new LocalSettingsUnavailable();
+            // 首次安装或用户确认创建时，可以覆盖没有可用内容的空文件。
+            if (!(allowCreate && this.localSettingsFresh && !confirmedHasRemote)) throw new LocalSettingsUnavailable();
         }
         if (remoteFingerprint !== undefined && existsFile && !await existsFile(path)) {
             throw new LocalSettingsUnavailable();
@@ -1423,6 +1477,76 @@ export default class Manager extends Plugin {
     private hasLocalSettingsRecord(value: unknown): value is Record<string, unknown> {
         return value !== null && value !== undefined && typeof value === 'object' && !Array.isArray(value)
             && Object.keys(value).length > 0;
+    }
+
+    /**
+     * 本机模式创建缺失或为空的 data.json；只有用户确认且文件仍不可用时才调用。
+     * Create the missing or unusable local data.json after the user confirmed it.
+     */
+    public async createLocalSettingsFile(): Promise<boolean> {
+        if (this.configProtection || this.isUnloaded) return false;
+        // 写入前复核文件仍不可用，避免把刚被同步送达的配置当成首次安装覆盖。
+        if (await this.localSettingsRecordAvailable()) return false;
+        const value = copySettingsRecord(this.devices?.persistedSettings() ?? this.settings);
+        // 用户已确认：允许本次写入建立文件；失败时恢复原状态，避免后台写入越权重建。
+        const wasFresh = this.localSettingsFresh;
+        this.localSettingsFresh = true;
+        try {
+            const written = await this.writeLocalSettings(value, () => !this.isUnloaded, true);
+            if (!written) { this.localSettingsFresh = wasFresh; return false; }
+            this.localSettingsMissing = false;
+            this.pendingSettingsSnapshot = undefined;
+            this.persistedSettingsJson = JSON.stringify(written);
+            // 若写入时正好收到外部配置，写回的是合并结果，必须同步到内存，否则下次保存会把它覆盖掉。
+            // If an external file arrived mid-write, adopt the merged result exactly like an automatic save.
+            if (settingsFingerprint(written) !== settingsFingerprint(value)) {
+                const latest = copySettingsRecord(this.devices?.persistedSettings() ?? this.settings);
+                this.adoptMergedLocalSettings(applySettingsEdit(value, latest, written));
+            }
+            this.refreshSettingsSaveState();
+            return true;
+        } catch (error) {
+            this.localSettingsFresh = wasFresh;
+            this.reportError('Creating the local settings file failed', error);
+            return false;
+        }
+    }
+
+    /**
+     * data.json 是否存在可用记录；缺失、空文件、空对象或无法解析都视为不可用。
+     * Whether data.json holds a usable record; missing, empty or unreadable files are unusable.
+     */
+    private async localSettingsRecordAvailable(): Promise<boolean> {
+        if (this.configProtection) return true;
+        const adapter = this.app?.vault?.adapter;
+        if (adapter && typeof adapter.exists === 'function') {
+            try {
+                if (!await adapter.exists(this.localDataPath())) { this.localSettingsMissing = true; return false; }
+            } catch (error) {
+                this.reportError('Checking the local settings file failed', error);
+                return !this.localSettingsMissing;
+            }
+        }
+        let raw: unknown;
+        try { raw = await this.loadData(); }
+        catch (error) { this.reportError('Reading the local settings file failed', error); raw = null; }
+        const available = this.hasLocalSettingsRecord(raw);
+        this.localSettingsMissing = !available;
+        return available;
+    }
+
+    /**
+     * 缺失处理窗口重新检查：文件已可用时继续保存（保留草稿并合并），否则保持窗口。
+     * Recheck the resolver: finish the interrupted save when the file is usable again.
+     */
+    public async refreshMissingLocalSettings(): Promise<boolean> {
+        if (this.configProtection || this.isUnloaded) return true;
+        if (!await this.localSettingsRecordAvailable()) return false;
+        // 草稿仍在时走正常保存入口，确保外部值与草稿合并后才关闭窗口。
+        if (this.hasUnsavedSettings) return this.publishPendingSettings();
+        await this.adoptExternalLocalSettings(true);
+        this.refreshSettingsSaveState();
+        return true;
     }
 
     /** 只在外部值上叠加本机改动；文件缺失或为空时不以默认值参与合并。 */
@@ -1654,7 +1778,10 @@ export default class Manager extends Plugin {
             return false;
         } catch (error) {
             if (error instanceof LocalSettingsUnavailable) {
-                new Notice(settingsSaveMessage(this.settings.LANGUAGE, 'incomplete', [{ path: 'data.json', kind: 'missing' }]), 10_000);
+                // 文件缺失或没有可用内容时给出可操作的处理窗口，而不是只有一句提醒。
+                // An absent or unusable file opens a resolver instead of a dead-end notice.
+                if (!await this.localSettingsRecordAvailable()) this.openLocalSettingsModal();
+                else new Notice(settingsSaveMessage(this.settings.LANGUAGE, 'incomplete', [{ path: 'data.json', kind: 'missing' }]), 10_000);
                 return false;
             }
             this.reportError("Saving settings failed", error);
@@ -2558,9 +2685,13 @@ export default class Manager extends Plugin {
 
     // 获取 Obsidian 当前语言（兼容旧版类型定义）
     public getAppLanguage(): string {
-        // 保留最低版本可用的语言状态 / These sources remain available on the minimum supported version.
+        // Obsidian 1.8.7+ 的官方 getLanguage() 返回界面语言；旧版本没有该 API，
+        // 按内部状态与浏览器语言依次回退。
+        // Obsidian 1.8.7+ exposes getLanguage(); older versions fall back through internals.
+        const official = requireApiVersion('1.8.7') ? getLanguage() : undefined;
         const appWithInternals = this.app as ObsidianAppWithInternals;
         const langCandidates: (string | undefined)[] = [
+            official,
             appWithInternals.i18n?.locale,
             appWithInternals.i18n?.lang,
             appWithInternals.i18n?.language,
