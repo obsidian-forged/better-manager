@@ -312,6 +312,7 @@ class ManagerSettingTab extends PluginSettingTab {
         label.createSpan({ cls: 'manager-setting__brand-label', text: navigationLabel });
         this.syncNoticeView = new SyncNoticeView(this.manager, topbar, () => {
             if (this.manager.configProtection?.protection.paused) this.manager.openConfigConflict();
+            else if (this.manager.configProtection?.hasIncompleteBundle) this.manager.openConfigBundleReview();
             else this.manager.showPrivateCacheWarning();
         });
         const refreshButton = new ButtonComponent(topbar).setIcon('refresh-ccw').setTooltip(this.manager.translator.t('管理器_刷新_标题'));

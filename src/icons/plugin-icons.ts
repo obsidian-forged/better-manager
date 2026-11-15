@@ -1,10 +1,9 @@
 import { getIcon, requestUrl, setIcon } from 'obsidian';
 import type Manager from '../main';
 import { pluginStorage } from '../storage/plugin-storage';
+import { ICON_BLOCK_START as START, ICON_BLOCK_END as END, renderIconBlock } from './icon-file';
 
 type IconRecord = { name: string; svg: string; color?: string };
-const START = '/* BPM generated icons: start */';
-const END = '/* BPM generated icons: end */';
 const colors: Record<string, string> = {
     red: '#fb464c', orange: '#e9973f', yellow: '#ffde3b', green: '#44cf6e',
     cyan: '#53dfdd', blue: '#027aff', pink: '#fa99cd', black: '#262626', purple: '#8b5cf6',
@@ -185,11 +184,7 @@ export class PluginIcons {
         if (JSON.stringify(this.records.get(id)) === JSON.stringify(record) || this.disposed || !this.writable) return;
         this.records.set(id, record);
         this.writes = this.writes.then(async () => {
-            const rules = [...this.records].sort(([a], [b]) => a.localeCompare(b)).map(([pluginId, icon]) => {
-                const selector = `[data-bpm-icon="${encodeURIComponent(pluginId)}"]`;
-                return `/* icon:${encodeURIComponent(JSON.stringify({ id: pluginId, ...icon }))} */\n${selector} { --bpm-plugin-icon-svg: url("data:image/svg+xml,${encodeURIComponent(icon.svg)}");${icon.color ? ` --bpm-plugin-icon-color: ${icon.color};` : ''} }`;
-            }).join('\n');
-            const generated = `${START}\n${rules}\n${END}`;
+            const generated = renderIconBlock([...this.records].map(([id, icon]) => ({ id, ...icon })));
             const start = this.source.indexOf(START), end = this.source.indexOf(END);
             const next = start >= 0 && end >= start ? this.source.slice(0, start) + generated + this.source.slice(end + END.length) : `${this.source}\n${generated}\n`;
             await pluginStorage(this.manager).write('data', 'icons.css', next);

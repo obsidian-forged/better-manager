@@ -1,6 +1,23 @@
 import type Manager from '../main';
 
 const messages = {
+    bundleTitle: ['处理配置文件', 'Resolve configuration files'],
+    bundleShort: ['处理文件差异', 'Resolve file differences'],
+    bundleChanged: ['文件又有更新，请重新检查后再选择。当前草稿仍保留。', 'The files changed again. Check again before choosing. Your draft is preserved.'],
+    bundleMainMissing: ['主配置文件暂时不可用。请等待同步完成后重新检查，当前草稿仍保留。', 'The main configuration is temporarily unavailable. Let sync finish, then check again. Your draft is preserved.'],
+    bundleNotice: ['部分相关文件需要确认，草稿已保留。', 'Some related files need your choice. Your draft is preserved.'],
+    bundleOpen: ['查看并处理', 'Review and resolve'],
+    bundleDescription: ['请选择这些文件使用的版本。确认后会保留文件副本并保存当前草稿；其他设置更改仍会保留。', 'Choose which file versions to use. Confirming keeps a recovery copy and saves your current draft, including your other settings edits.'],
+    bundleCurrent: ['使用当前文件并保存', 'Use current files and save'],
+    bundleSaved: ['恢复已保存文件并保存', 'Restore saved files and save'],
+    bundleCheck: ['重新检查', 'Check again'],
+    bundleReady: ['文件已完整，可以继续保存。', 'The files are complete. You can save now.'],
+    bundleSave: ['继续保存', 'Save changes'],
+    bundleNoBackup: ['此文件没有可验证的已保存副本，可保留当前文件或等待同步后重新检查。', 'No verified saved copy is available. Keep the current file or check again after syncing.'],
+    bundleMissing: ['当前文件缺失；选择当前版本将保留删除状态。', 'The current file is missing. Using the current version keeps it deleted.'],
+    bundleDifferent: ['当前文件与已保存记录不同。', 'The current file differs from the saved record.'],
+    bundleSavedLabel: ['已保存版本', 'Saved version'],
+    bundleCurrentLabel: ['当前版本', 'Current version'],
     conflict: ['冲突', 'Conflict'],
     unsavedItem: ['未保存', 'Unsaved'],
     presetDescription: ['此设备预设中的插件、筛选、边栏与外观配置。', 'Plugins, filters, Ribbon and appearance in this device preset.'],

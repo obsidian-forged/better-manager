@@ -44,6 +44,7 @@ export class ProtectedConfigSession {
     get mutationEpoch(): number { return this.editEpoch; }
     get hasPendingUserAction(): boolean { return this.userOperations > 0; }
     get hasPendingChanges(): boolean { return this.protection.hasPendingChanges; }
+    get hasIncompleteBundle(): boolean { return this.pendingBundle || this.files.hasPendingBundle; }
     get conflictChoices(): ConfigConflictChoices | undefined {
         const conflict = this.protection.conflict;
         if (!conflict) { this.selections = undefined; return; }
@@ -268,6 +269,19 @@ export class ProtectedConfigSession {
             this.changed();
         });
         return true;
+    }
+    async resolveIncompleteBundle(id: string, source: 'current' | 'saved'): Promise<void> {
+        const end = this.beginUserAction();
+        try {
+            await this.queue(async () => {
+                const files = await this.files.acceptIncompleteBundle(id, source);
+                for (const [path, text] of Object.entries(files)) {
+                    await this.protection.stageFileDraft(path, text, true);
+                    this.fileEditEpochs.set(path, this.editEpoch);
+                }
+                this.changed();
+            });
+        } finally { end(); }
     }
     async readFile(path: string): Promise<{ value: string | undefined } | undefined> {
         if (!this.loaded || !isManagedConfigFile(path)) return undefined;

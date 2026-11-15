@@ -2,9 +2,9 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {build} from 'esbuild';
-const compiled=await build({stdin:{contents:`export * from './src/settings/config-files';export * from './src/settings/config-protection';export * from './src/settings/config-revision';`,resolveDir:process.cwd(),sourcefile:'config-file-tests.ts',loader:'ts'},bundle:true,platform:'node',format:'cjs',write:false,logLevel:'silent'});
+const compiled=await build({stdin:{contents:`export * from './src/settings/config-files';export * from './src/settings/config-protection';export * from './src/settings/config-revision';export * from './src/icons/icon-file';`,resolveDir:process.cwd(),sourcefile:'config-file-tests.ts',loader:'ts'},bundle:true,platform:'node',format:'cjs',write:false,logLevel:'silent'});
 const module={exports:{}};new Function('module','exports',compiled.outputFiles[0].text)(module,module.exports);
-const {ConfigFiles,ConfigProtection,ConfigEditorReopened,ConfigDiskChanged,IncompleteConfigBundle,createConfigRevision,encodeConfig}=module.exports;
+const {ConfigFiles,ConfigProtection,ConfigEditorReopened,ConfigDiskChanged,IncompleteConfigBundle,createConfigRevision,encodeConfig,renderIconBlock}=module.exports;
 const hash=async text=>createHash('sha256').update(text).digest('hex');
 const root='.obsidian/plugins/bpm';
 function fixture(initial={name:'initial'},icons) {
@@ -584,4 +584,122 @@ test('a conflict whose referenced state is missing is dropped during anchor repa
     const io = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-a', hash, f.local);
     assert.equal(await io.repairMissingAnchor(), true);
     assert.equal(f.anchor().conflict, undefined);
+});
+
+const cachedIcon = id => ({ id, name: 'plug', svg: '<svg><path d="M1 1" /></svg>' });
+const iconFile = ids => `.custom { color: red; }\n${renderIconBlock(ids.map(cachedIcon))}\n`;
+async function driftedIconFixture() {
+    const f = fixture({ name: 'initial' }, iconFile(['one']));
+    const value = await f.store.load(); value.name = 'committed';
+    await f.store.publish(value, f.store.current.files, () => true);
+    f.writes.length = 0;
+    return { ...f, value };
+}
+test('generated icon discovery and device formatting/heartbeats together do not block a real save', async () => {
+    const f = fixture({ name: 'initial' }, iconFile(['one']));
+    f.dirs.add(`${root}/data/devices`);
+    for (const id of ['phone', 'computer', 'tablet']) f.files.set(`${root}/data/devices/${id}.json`, JSON.stringify({ id, name: id, type: id, updatedAt: 1, lastSeen: 1 }, null, 2));
+    const value = await f.store.load(); value.name = 'committed';
+    await f.store.publish(value, f.store.current.files, () => true);
+    const id = f.store.current.id, privateBefore = f.files.get(`${root}/.bpm/device-a/states/${id}.json`);
+    f.files.set(`${root}/data/icons.css`, iconFile(['one', 'remote-discovery']));
+    for (const id of ['phone', 'computer', 'tablet']) f.files.set(`${root}/data/devices/${id}.json`, JSON.stringify({ id, name: id, type: id, updatedAt: 1, lastSeen: id === 'phone' ? 5 : 1 }));
+    f.writes.length = 0;
+    const before = new Map(f.files);
+    assert.equal((await f.store.publish(value, f.store.current.files, () => true)).status, 'noop');
+    assert.deepEqual(f.publicWrites(), []);
+    value.name = 'user edit';
+    assert.equal((await f.store.publish(value, f.store.current.files, () => true)).status, 'saved');
+    assert.deepEqual(f.publicWrites(), [`${root}/data.json`]);
+    for (const path of [devicePath, 'data/devices/computer.json', 'data/devices/tablet.json', 'data/icons.css']) assert.equal(f.files.get(`${root}/${path}`), before.get(`${root}/${path}`));
+    assert.equal(f.files.get(`${root}/.bpm/device-a/states/${id}.json`), privateBefore);
+    const fresh = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'fresh-device', hash, { read: () => undefined, write() {} });
+    assert.equal((await fresh.readShared()).value.name, 'user edit');
+});
+test('local and external generated icon discoveries are both retained by publication', async () => {
+    const f = await driftedIconFixture();
+    f.store.stageFile('data/icons.css', iconFile(['one', 'local-discovery']), false);
+    f.files.set(`${root}/data/icons.css`, iconFile(['one', 'remote-discovery']));
+    f.value.name = 'user edit';
+    assert.equal((await f.store.publish(f.value, f.store.current.files, () => true)).status, 'saved');
+    const saved = f.files.get(`${root}/data/icons.css`);
+    assert.match(saved, /local-discovery/); assert.match(saved, /remote-discovery/);
+    assert.equal((await f.io.readShared()).value.name, 'user edit');
+});
+for (const current of [iconFile(['one']).replace('color: red', 'color: blue'), iconFile(['one']).replace('/* BPM generated icons: end */', '.injected { color: blue; }\n/* BPM generated icons: end */')]) {
+    test('custom CSS and unrecognised generated rules still require an explicit decision', async () => {
+        const f = await driftedIconFixture();
+        f.files.set(`${root}/data/icons.css`, current);
+        await assert.rejects(f.io.readShared(), IncompleteConfigBundle);
+        assert.deepEqual(f.publicWrites(), []);
+    });
+}
+test('a new sync delivery invalidates a file decision before acceptance', async () => {
+    const f = await driftedIconFixture();
+    f.files.set(`${root}/data/icons.css`, '.current {}');
+    const review = await f.io.reviewIncompleteBundle();
+    f.files.set(`${root}/data/icons.css`, '.new remote {}');
+    await assert.rejects(f.io.acceptIncompleteBundle(review.id, 'current'), ConfigDiskChanged);
+    assert.deepEqual(f.publicWrites(), []);
+});
+test('a review uses freshly delivered files instead of the earlier failure list', async () => {
+    const f = await committedDeviceFixture();
+    f.files.set(`${root}/data/icons.css`, '.first incomplete delivery {}');
+    const read = f.adapter.read;
+    let primaryReads = 0;
+    f.adapter.read = async path => {
+        if (path === `${root}/data.json` && ++primaryReads === 2) {
+            f.files.set(`${root}/data/icons.css`, 'icons');
+            f.files.set(`${root}/${devicePath}`, deviceText(1, { name: 'Renamed remotely' }));
+        }
+        return read(path);
+    };
+    const review = await f.io.reviewIncompleteBundle();
+    assert.deepEqual(review.issues.map(issue => issue.path), [devicePath]);
+    assert.match(review.issues[0].current, /Renamed remotely/);
+    assert.deepEqual(f.publicWrites(), []);
+});
+test('a completed sync delivery closes the file review without publishing anything', async () => {
+    const f = await driftedIconFixture();
+    f.files.set(`${root}/data/icons.css`, '.first incomplete delivery {}');
+    const read = f.adapter.read;
+    let primaryReads = 0;
+    f.adapter.read = async path => {
+        if (path === `${root}/data.json` && ++primaryReads === 2) f.files.set(`${root}/data/icons.css`, iconFile(['one']));
+        return read(path);
+    };
+    assert.equal(await f.io.reviewIncompleteBundle(), undefined);
+    assert.equal(f.io.hasPendingBundle, false);
+    assert.deepEqual(f.publicWrites(), []);
+});
+test('a new primary revision invalidates an accepted file decision', async () => {
+    const f = await driftedIconFixture();
+    f.files.set(`${root}/data/icons.css`, '.current {}');
+    const review = await f.io.reviewIncompleteBundle();
+    await f.io.acceptIncompleteBundle(review.id, 'saved');
+    const remote = await createConfigRevision({ name: 'new remote settings' }, 'device-b', [f.store.current],
+        { 'data/icons.css': await hash('.current {}') }, hash);
+    f.files.set(`${root}/data.json`, JSON.stringify(encodeConfig(remote)));
+    assert.equal((await f.io.readShared()).id, remote.id);
+    assert.deepEqual(f.publicWrites(), []);
+});
+test('a new sync delivery after acceptance cannot be overwritten by the reviewed decision', async () => {
+    const f = await driftedIconFixture();
+    f.files.set(`${root}/data/icons.css`, '.current {}');
+    const review = await f.io.reviewIncompleteBundle(), selected = await f.io.acceptIncompleteBundle(review.id, 'saved');
+    for (const [path, text] of Object.entries(selected)) await f.store.stageFileDraft(path, text, true);
+    f.files.set(`${root}/data/icons.css`, '.new remote {}');
+    await assert.rejects(f.store.publish(f.value, f.store.current.files, () => true), IncompleteConfigBundle);
+    assert.equal(f.files.get(`${root}/data/icons.css`), '.new remote {}'); assert.deepEqual(f.publicWrites(), []);
+});
+test('a review never offers a missing private backup as a restorable file', async () => {
+    const f = await driftedIconFixture();
+    const remote = await createConfigRevision({ name: 'remote' }, 'device-b', [f.store.current], { 'data/icons.css': await hash('.remote expected {}') }, hash);
+    f.files.set(`${root}/data.json`, JSON.stringify(encodeConfig(remote)));
+    f.files.set(`${root}/data/icons.css`, '.current {}');
+    const review = await f.io.reviewIncompleteBundle();
+    assert.equal(review.issues[0].saved, undefined);
+    await assert.rejects(f.io.acceptIncompleteBundle(review.id, 'saved'), /unavailable/);
+    const chosen = await f.io.acceptIncompleteBundle(review.id, 'current');
+    assert.equal(chosen['data/icons.css'], '.current {}'); assert.deepEqual(f.publicWrites(), []);
 });

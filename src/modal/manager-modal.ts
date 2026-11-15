@@ -2920,7 +2920,7 @@ export class ManagerModal extends Modal {
         const t = (key: string) => this.manager.translator.t(key);
         this.globalToolsHost = parent;
         this.syncNoticeView?.destroy();
-        this.syncNoticeView = new SyncNoticeView(this.manager, parent, () => { if (this.manager.configProtection?.protection.paused) this.focusConfigConflict(); else this.openSyncNoticeDetail(); });
+        this.syncNoticeView = new SyncNoticeView(this.manager, parent, () => { if (this.manager.configProtection?.protection.paused) this.focusConfigConflict(); else if (this.manager.configProtection?.hasIncompleteBundle) this.manager.openConfigBundleReview(); else this.openSyncNoticeDetail(); });
         this.taskCenterView?.destroy();
         this.taskCenterView = undefined;
         const createIconTool = (icon: string, label: string, onClick: (event: MouseEvent) => void) => {

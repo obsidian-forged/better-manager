@@ -31,7 +31,9 @@ export function preserveDeviceHeartbeat(path: string, selected: string | null, c
 export function mergeDeviceHeartbeat(path: string, selected: string | null, current: string | null): string | undefined {
     const left = deviceRecord(path, selected), right = deviceRecord(path, current);
     if (!left || !right) return;
+    if (settingsFingerprint(left.content) === settingsFingerprint(right.content)) {
+        return right.lastSeen >= left.lastSeen ? current ?? undefined : selected ?? undefined;
+    }
     if (left.lastSeen >= right.lastSeen) return selected ?? undefined;
-    if (settingsFingerprint(left.content) === settingsFingerprint(right.content)) return current ?? undefined;
     return JSON.stringify({ ...left.content, lastSeen: right.lastSeen }, null, 2);
 }

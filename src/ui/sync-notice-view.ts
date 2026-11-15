@@ -16,14 +16,15 @@ export class SyncNoticeView {
     }
     refresh(): void {
         const conflict = Boolean(this.manager.configProtection?.protection.paused);
+        const incomplete = Boolean(this.manager.configProtection?.hasIncompleteBundle);
         const privateCache = Boolean(this.manager.configProtection?.privateCacheModified);
-        const active = conflict || privateCache;
+        const active = conflict || incomplete || privateCache;
         this.notice.toggleClass('is-active', active);
         this.notice.empty();
         this.notice.setAttribute('role', active ? 'button' : 'status');
         if (!active) { this.notice.removeAttribute('tabindex'); this.notice.removeAttribute('aria-label'); return; }
         this.notice.setAttribute('tabindex', '0');
-        const label = protectionText(this.manager, conflict ? 'resolve' : 'privateCacheShort');
+        const label = protectionText(this.manager, conflict ? 'resolve' : incomplete ? 'bundleShort' : 'privateCacheShort');
         this.notice.setAttribute('aria-label', label);
         setIcon(this.notice.createSpan('manager-sync-notice__icon'), conflict ? 'triangle-alert' : 'cloud-alert');
         this.notice.createSpan({ cls: 'manager-sync-notice__text', text: label });

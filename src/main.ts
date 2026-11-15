@@ -11,6 +11,7 @@ import { detectSyncPlugins } from './settings/sync-detector';
 import { protectionText } from './settings/protection-text';
 import { SyncWarningModal } from './settings/sync-warning';
 import { ConfigConflictModal } from './settings/conflict-view';
+import { ConfigBundleModal } from './settings/config-bundle-modal';
 import { PluginIcons } from './icons/plugin-icons';
 import { pluginStorage } from './storage/plugin-storage';
 import { LocalStateStore } from './storage/local-state';
@@ -152,6 +153,7 @@ export default class Manager extends Plugin {
     public configProtection?: ProtectedConfigSession;
     private syncWarningModal?: SyncWarningModal;
     private configConflictModal?: ConfigConflictModal;
+    private configBundleModal?: ConfigBundleModal;
     private readonly settingsEditors = new Set<object>();
     private settingsEditorEpoch = 0;
     private noteTip!: NoteTipFeature;
@@ -410,6 +412,7 @@ export default class Manager extends Plugin {
         this.configProtection?.destroy();
         this.syncWarningModal?.close();
         this.configConflictModal?.close();
+        this.configBundleModal?.close();
         this.pluginIcons.dispose();
         this.updates.dispose();
         this.managerModal?.close();
@@ -1117,6 +1120,23 @@ export default class Manager extends Plugin {
         modal.open();
     }
 
+    public openConfigBundleReview(): void {
+        if (this.isUnloaded || !this.configProtection || this.configBundleModal) return;
+        const modal = new ConfigBundleModal(this, () => {
+            if (this.configBundleModal === modal) this.configBundleModal = undefined;
+        });
+        this.configBundleModal = modal;
+        modal.open();
+    }
+
+    private showIncompleteConfigNotice(): void {
+        const fragment = createFragment();
+        fragment.createDiv({ text: protectionText(this, 'bundleNotice') });
+        const button = fragment.createEl('button', { text: protectionText(this, 'bundleOpen'), cls: 'mod-cta' });
+        const notice = new Notice(fragment, 12_000);
+        button.addEventListener('click', () => { notice.hide(); this.openConfigBundleReview(); });
+    }
+
     public get hasUnsavedSettings(): boolean {
         return Boolean(this.pendingSettingsRequests || this.pendingSettingsSnapshot || this.configProtection?.hasPendingChanges);
     }
@@ -1628,8 +1648,8 @@ export default class Manager extends Plugin {
                 if (notifySuccess) new Notice(settingsSaveMessage(this.settings.LANGUAGE, result.status === 'noop' ? 'unchanged' : 'saved'), 5000);
                 return true;
             }
-            if (notifySuccess || result.status !== 'cancelled') new Notice(settingsSaveMessage(this.settings.LANGUAGE, result.status,
-                result.status === 'incomplete' ? result.issues : undefined), 10_000);
+            if (result.status === 'incomplete') this.showIncompleteConfigNotice();
+            else if (notifySuccess || result.status !== 'cancelled') new Notice(settingsSaveMessage(this.settings.LANGUAGE, result.status), 10_000);
             if (notifySuccess && result.status === 'conflict') this.openConfigConflict();
             return false;
         } catch (error) {

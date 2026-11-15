@@ -3,6 +3,7 @@ import { ConfigRecord, ConfigSnapshot, decodeConfig, DigestText, encodeConfig } 
 import { settingsFingerprint } from './session-store';
 import type { PrivateCacheWrites } from './private-cache-watch';
 import { mergeDeviceHeartbeat, preserveDeviceHeartbeat } from './device-file-content';
+import { compatibleIconCache, mergeIconCache } from '../icons/icon-file';
 
 export interface ConfigFileAdapter {
     exists(path: string): Promise<boolean>;
@@ -22,6 +23,16 @@ export const isManagedConfigFile = (path: string): boolean => /^(?:data\/icons\.
     && !path.includes('..') && !path.includes('\\');
 
 export interface ConfigBundleIssue { path: string; kind: 'missing' | 'different' | 'unexpected'; }
+export interface ConfigBundleReview {
+    id: string;
+    issues: Array<ConfigBundleIssue & { current: string | null; saved?: string | null }>;
+}
+interface ReviewedBundle {
+    review: ConfigBundleReview;
+    text: string;
+    files: Record<string, string | null>;
+    candidate: ConfigSnapshot;
+}
 export class IncompleteConfigBundle extends Error {
     constructor(readonly snapshot: ConfigSnapshot, readonly issues: ConfigBundleIssue[] = []) {
         super('BPM configuration files are missing or do not match the recorded revision');
@@ -42,6 +53,8 @@ export class ConfigFiles implements ConfigProtectionIO {
     private incomplete = false;
     private cacheRecovered = false;
     private sharedEstablished = false;
+    private reviewedBundle?: ReviewedBundle;
+    private acceptedBundle?: ReviewedBundle;
     get hasPendingBundle(): boolean { return this.incomplete; }
     get hasPendingTransaction(): boolean { return Boolean(this.anchor.transactionTarget && this.anchor.transactionBase); }
     get localCacheRebuilt(): boolean { return this.cacheRecovered; }
@@ -190,13 +203,17 @@ export class ConfigFiles implements ConfigProtectionIO {
         }
         return snapshot;
     }
-    private async heartbeatCompatibleState(snapshot: ConfigSnapshot, files: Record<string, string | null>): Promise<StoredState | undefined> {
+    private compatibleFile(path: string, expected: string | null, actual: string | null): boolean {
+        return expected === actual || preserveDeviceHeartbeat(path, expected, actual) !== undefined
+            || path === 'data/icons.css' && compatibleIconCache(expected, actual) !== undefined;
+    }
+    private async compatibleState(snapshot: ConfigSnapshot, files: Record<string, string | null>): Promise<StoredState | undefined> {
         let state = this.states.get(snapshot.id);
         if (!state && await this.adapter.exists(`${this.privateRoot}/states/${snapshot.id}.json`)) state = (await this.readState(snapshot.id)).state;
         if (!state) return;
         for (const path of Object.keys(snapshot.files)) {
             const expected = state.files[path] ?? null, actual = files[path] ?? null;
-            if (expected !== actual && preserveDeviceHeartbeat(path, expected, actual) === undefined) return;
+            if (!this.compatibleFile(path, expected, actual)) return;
         }
         // Never replace the immutable snapshot with drifted bytes under its original id.
         return state;
@@ -233,6 +250,16 @@ export class ConfigFiles implements ConfigProtectionIO {
         const paths = snapshot.revision ? Object.keys(snapshot.files) : await this.managedPaths();
         const files: Record<string, string | null> = {};
         for (const path of paths) files[path] = await this.readManaged(path) ?? null;
+        if (this.acceptedBundle) {
+            const reviewed = this.acceptedBundle;
+            if (text !== reviewed.text || settingsFingerprint(files) !== settingsFingerprint(reviewed.files)) {
+                this.acceptedBundle = undefined;
+            } else {
+                this.incomplete = false;
+                this.observed = reviewed.candidate;
+                return reviewed.candidate;
+            }
+        }
         if (this.anchor.transactionTarget && this.anchor.transactionBase) {
             const { before, after, untracked } = await this.readPreparedTransaction();
             const originalMarker = snapshot.revision ? snapshot.id === before.snapshot.id : snapshot.digest === before.snapshot.digest;
@@ -240,7 +267,7 @@ export class ConfigFiles implements ConfigProtectionIO {
                 let covered = true;
                 for (const path of new Set([...Object.keys(before.state.files), ...Object.keys(after.state.files)])) {
                     const actual = await this.readManaged(path) ?? null;
-                    const matches = (expected: string | null) => actual === expected || preserveDeviceHeartbeat(path, expected, actual) !== undefined;
+                    const matches = (expected: string | null) => this.compatibleFile(path, expected, actual);
                     if (!matches(before.state.files[path] ?? untracked[path] ?? null) && !matches(after.state.files[path] ?? null)) { covered = false; break; }
                 }
                 if (covered) {
@@ -257,7 +284,7 @@ export class ConfigFiles implements ConfigProtectionIO {
         try { complete = await this.snapshotFrom(raw, files); }
         catch (error) {
             if (!(error instanceof IncompleteConfigBundle)) throw error;
-            state = await this.heartbeatCompatibleState(snapshot, files);
+            state = await this.compatibleState(snapshot, files);
             if (state) complete = snapshot;
             else {
                 this.incomplete = true;
@@ -495,13 +522,69 @@ export class ConfigFiles implements ConfigProtectionIO {
         await this.privateJson(`repairs/${id}.json`, { owner: this.owner, key }, true);
         return true;
     }
+    /** Review exact disk bytes without changing either shared files or the user's draft. */
+    async reviewIncompleteBundle(): Promise<ConfigBundleReview | undefined> {
+        let issue: IncompleteConfigBundle | undefined;
+        try { await this.readShared(); this.reviewedBundle = undefined; return; }
+        catch (error) { if (!(error instanceof IncompleteConfigBundle)) throw error; issue = error; }
+        const text = await this.read(`${this.root}/data.json`);
+        if (text === undefined || !text.trim() || issue.issues.some(item => item.path === 'data.json')) {
+            throw new IncompleteConfigBundle(issue.snapshot, [{ path: 'data.json', kind: text === undefined ? 'missing' : 'different' }]);
+        }
+        const raw: unknown = JSON.parse(text), marker = await this.sharedMarker(raw);
+        if (marker.id !== issue.snapshot.id) throw new ConfigDiskChanged();
+        const files: Record<string, string | null> = {};
+        for (const path of Object.keys(marker.files)) files[path] = await this.readManaged(path) ?? null;
+        // Sync may deliver another file between the failed read and opening this review.
+        // Describe the exact bytes being offered, never the earlier error's stale file list.
+        try { await this.snapshotFrom(raw, files); issue = undefined; }
+        catch (error) { if (!(error instanceof IncompleteConfigBundle)) throw error; issue = error; }
+        if (!issue || await this.compatibleState(marker, files)) {
+            await this.readShared(); this.reviewedBundle = undefined; return;
+        }
+        const statePath = `${this.privateRoot}/states/${marker.id}.json`;
+        const saved = this.states.get(marker.id) ?? (await this.adapter.exists(statePath) ? (await this.readState(marker.id)).state : undefined);
+        const review: ConfigBundleReview = {
+            id: await this.hash(settingsFingerprint({ text, files })),
+            issues: issue.issues.filter(item => !saved || !this.compatibleFile(item.path, saved.files[item.path] ?? null, files[item.path] ?? null))
+                .map(item => ({ ...item, current: files[item.path] ?? null,
+                ...(saved && Object.prototype.hasOwnProperty.call(saved.files, item.path) ? { saved: saved.files[item.path] } : {}) })),
+        };
+        const candidate = await this.snapshotFrom(marker.value, files);
+        this.reviewedBundle = { review, text, files, candidate };
+        return review;
+    }
+
+    /** A user decision authorizes only the exact reviewed marker and auxiliary bytes. */
+    async acceptIncompleteBundle(id: string, source: 'current' | 'saved'): Promise<Record<string, string | null>> {
+        const reviewed = this.reviewedBundle;
+        if (!reviewed || reviewed.review.id !== id) throw new ConfigDiskChanged();
+        const selected: Record<string, string | null> = {};
+        for (const issue of reviewed.review.issues) {
+            if (source === 'saved' && issue.saved === undefined) throw new Error('A saved copy is unavailable for this file');
+            selected[issue.path] = source === 'saved' ? issue.saved ?? null : issue.current;
+        }
+        if (await this.read(`${this.root}/data.json`) !== reviewed.text) throw new ConfigDiskChanged();
+        await this.assertFiles(reviewed.files);
+        if (await this.read(`${this.root}/data.json`) !== reviewed.text) throw new ConfigDiskChanged();
+        this.states.set(reviewed.candidate.id, { owner: this.owner, config: encodeConfig(reviewed.candidate), files: reviewed.files });
+        this.acceptedBundle = reviewed;
+        this.reviewedBundle = undefined;
+        return selected;
+    }
     async filesFor(snapshot: ConfigSnapshot): Promise<Record<string, string | null>> {
         const state = this.states.get(snapshot.id) ?? (await this.readState(snapshot.id)).state;
         return { ...state.files };
     }
     async preparePublication(base: ConfigSnapshot, changes: Record<string, string | null>): Promise<ConfigPublicationFiles> {
-        const files = { ...await this.filesFor(base), ...changes };
+        const baseline = await this.filesFor(base);
+        const files = { ...baseline, ...changes };
         for (const [path, text] of Object.entries(files)) {
+            if (path === 'data/icons.css') {
+                const actual = await this.readManaged(path) ?? null;
+                const retained = mergeIconCache(baseline[path] ?? null, text, actual);
+                if (retained !== undefined) files[path] = retained;
+            }
             if (!path.startsWith('data/devices/')) continue;
             const actual = await this.readManaged(path) ?? null;
             const retained = mergeDeviceHeartbeat(path, text, actual);
@@ -512,6 +595,10 @@ export class ConfigFiles implements ConfigProtectionIO {
 
     private async assertMarker(expected: ConfigSnapshot): Promise<void> {
         const actual = await this.read(`${this.root}/data.json`);
+        if (this.acceptedBundle?.candidate.id === expected.id) {
+            if (actual !== this.acceptedBundle.text) throw new ConfigDiskChanged();
+            return;
+        }
         const raw: unknown = actual === undefined ? this.initialShared ?? {} : JSON.parse(actual);
         const marker = await this.sharedMarker(raw);
         if (marker.revision ? marker.id !== expected.id
@@ -552,9 +639,11 @@ export class ConfigFiles implements ConfigProtectionIO {
         for (const path of new Set([...Object.keys(before.state.files), ...Object.keys(after.state.files)])) {
             const actual = await this.readManaged(path) ?? null;
             const original = before.state.files[path] ?? untracked[path] ?? null, prepared = after.state.files[path] ?? null;
-            const matches = (expected: string | null) => actual === expected || preserveDeviceHeartbeat(path, expected, actual) !== undefined;
+            const matches = (expected: string | null) => this.compatibleFile(path, expected, actual);
             if (!matches(original) && !matches(prepared)) throw new ConfigDiskChanged();
-            const retained = mergeDeviceHeartbeat(path, original, actual) ?? original;
+            const retained = path === 'data/icons.css'
+                ? mergeIconCache(prepared, original, actual) ?? original
+                : mergeDeviceHeartbeat(path, original, actual) ?? original;
             await this.writePublicFile(path, retained, actual, marker, current);
             restored[path] = retained;
         }
@@ -584,11 +673,15 @@ export class ConfigFiles implements ConfigProtectionIO {
         const untracked: Record<string, string> = {};
         for (const [path, text] of Object.entries(files)) {
             const actual = await this.readManaged(path) ?? null, original = before.files[path] ?? null;
-            if (actual !== original && actual !== text && preserveDeviceHeartbeat(path, original, actual) === undefined) throw new ConfigDiskChanged();
+            if (actual !== text && !this.compatibleFile(path, original, actual)) throw new ConfigDiskChanged();
             // Re-prepare a revision if a heartbeat advanced after its digests were calculated.
             // Publishing the old digest would strand devices without this private before-image.
             const retained = mergeDeviceHeartbeat(path, text, actual);
             if (retained !== undefined && retained !== text) throw new ConfigDiskChanged();
+            if (path === 'data/icons.css') {
+                const iconCache = mergeIconCache(original, text, actual);
+                if (iconCache !== undefined && iconCache !== text) throw new ConfigDiskChanged();
+            }
             initialFiles[path] = actual;
             // A file outside the old revision can predate this transaction. Its physical
             // before-image must not be confused with a file created by this Save.
