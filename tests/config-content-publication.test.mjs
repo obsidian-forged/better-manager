@@ -293,3 +293,27 @@ test('opening the manager surfaces a synced conflict when a local draft exists',
     assert.equal(f.current.protection.conflict.incoming.value.RECENT_INSTALL_DAYS, 14);
     assert.deepEqual(f.sharedWrites(), []);
 });
+
+for (const source of ['current', 'saved']) {
+    test(`reviewing and choosing ${source} files through the real session saves other pending edits`, async t => {
+        const path = 'data/icons.css', saved = '.custom {color: red}', actual = '.custom {color: blue}';
+        const f = await fixture(t, { LANGUAGE: 'en', RECENT_INSTALL_DAYS: 7 }, { [path]: saved });
+        f.manager.settings.RECENT_INSTALL_DAYS = 14;
+        assert.equal((await f.current.publish(f.manager.settings, () => true)).status, 'saved');
+        f.files[`${root}/${path}`] = actual; f.writes.length = 0;
+        f.manager.settings.RECENT_INSTALL_DAYS = 21; await f.current.save(f.manager.settings);
+        assert.equal((await f.current.publish(f.manager.settings, () => true)).status, 'incomplete');
+        const review = await f.current.files.reviewIncompleteBundle();
+        assert.equal(review.issues[0].saved, saved); assert.equal(review.issues[0].current, actual);
+        assert.deepEqual(f.sharedWrites(), []);
+        await f.current.resolveIncompleteBundle(review.id, source);
+        assert.equal((await f.current.publish(f.manager.settings, () => true)).status, 'saved');
+        assert.equal(f.files[`${root}/${path}`], source === 'saved' ? saved : actual);
+        assert.equal(JSON.parse(f.files[`${root}/data.json`]).RECENT_INSTALL_DAYS, 21);
+        assert.equal(f.current.hasPendingChanges, false);
+        assert.equal(f.current.hasIncompleteBundle, false);
+        assert.ok(Object.entries(f.files).some(([p, text]) => p.includes('/states/') && JSON.parse(text).files[path] === actual), 'current bytes are preserved in the transaction before-image');
+        const restarted = f.session();
+        assert.equal((await restarted.load()).RECENT_INSTALL_DAYS, 21);
+    });
+}
