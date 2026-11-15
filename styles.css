@@ -16062,6 +16062,24 @@ body.is-mobile .modal.mod-settings .vertical-tab-content.manager-setting__root {
 .modal.manager-container.manager-workflow-modal .modal-content .manager-workflow-modal__actions .setting-item-control {
     flex: 1 1 auto;
 }
+/* 配置文件处理窗口：文件列表独立滚动，操作按钮固定在底部。 */
+.modal.manager-container.manager-bundle-modal .modal-content {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+.manager-bundle-modal__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+}
+.modal.manager-container.manager-bundle-modal .manager-bundle-modal__actions {
+    flex: 0 0 auto;
+    margin-top: var(--size-4-3);
+    padding-top: var(--size-4-3);
+    border-top: 1px solid var(--background-modifier-border);
+}
 .modal.manager-workflow-modal :is(pre, table) {
     max-width: 100%;
     overflow-x: auto;

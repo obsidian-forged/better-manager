@@ -25,7 +25,12 @@ export const isManagedConfigFile = (path: string): boolean => /^(?:data\/icons\.
 export interface ConfigBundleIssue { path: string; kind: 'missing' | 'different' | 'unexpected'; }
 export interface ConfigBundleReview {
     id: string;
-    issues: Array<ConfigBundleIssue & { current: string | null; saved?: string | null }>;
+    issues: Array<ConfigBundleIssue & {
+        current: string | null;
+        saved?: string | null;
+        /** 仅生成的图标缓存不同（自定义 CSS 相同），由插件自动合并，不需要用户选择。 */
+        generated?: boolean;
+    }>;
 }
 interface ReviewedBundle {
     review: ConfigBundleReview;
@@ -547,11 +552,27 @@ export class ConfigFiles implements ConfigProtectionIO {
         const review: ConfigBundleReview = {
             id: await this.hash(settingsFingerprint({ text, files })),
             issues: issue.issues.filter(item => !saved || !this.compatibleFile(item.path, saved.files[item.path] ?? null, files[item.path] ?? null))
-                .map(item => ({ ...item, current: files[item.path] ?? null,
-                ...(saved && Object.prototype.hasOwnProperty.call(saved.files, item.path) ? { saved: saved.files[item.path] } : {}) })),
+                .map(item => {
+                    const current = files[item.path] ?? null;
+                    const savedText = saved && Object.prototype.hasOwnProperty.call(saved.files, item.path) ? saved.files[item.path] : undefined;
+                    // data/icons.css 只要包含 BPM 生成的图标块，就属于插件按已装插件生成的派生数据；
+                    // 直接采用当前缓存，不要求用户选择。纯自定义 CSS 文件仍按用户内容处理。
+                    const generated = item.path === 'data/icons.css' && typeof current === 'string'
+                        && compatibleIconCache(current, current) !== undefined;
+                    return { ...item, current, ...(savedText !== undefined ? { saved: savedText } : {}), ...(generated ? { generated } : {}) };
+                }),
         };
         const candidate = await this.snapshotFrom(marker.value, files);
         this.reviewedBundle = { review, text, files, candidate };
+        // 图标缓存由插件自动生成，随已装插件变化；它不是用户设置，不需要用户选择。
+        // 文件尚未送达时仍等待同步，避免用空内容覆盖共享缓存。
+        // The icon cache never asks for a decision, but a file still in transit is left to sync.
+        if (review.issues.every(issue => issue.generated && issue.current !== null)) {
+            await this.acceptIncompleteBundle(review.id, 'current');
+            await this.readShared();
+            this.reviewedBundle = undefined;
+            return;
+        }
         return review;
     }
 
@@ -561,8 +582,10 @@ export class ConfigFiles implements ConfigProtectionIO {
         if (!reviewed || reviewed.review.id !== id) throw new ConfigDiskChanged();
         const selected: Record<string, string | null> = {};
         for (const issue of reviewed.review.issues) {
-            if (source === 'saved' && issue.saved === undefined) throw new Error('A saved copy is unavailable for this file');
-            selected[issue.path] = source === 'saved' ? issue.saved ?? null : issue.current;
+            // 生成块差异始终采用当前缓存，不参与用户选择的可用性判断。
+            const generated = issue.generated === true;
+            if (!generated && source === 'saved' && issue.saved === undefined) throw new Error('A saved copy is unavailable for this file');
+            selected[issue.path] = generated ? issue.current : source === 'saved' ? issue.saved ?? null : issue.current;
         }
         if (await this.read(`${this.root}/data.json`) !== reviewed.text) throw new ConfigDiskChanged();
         await this.assertFiles(reviewed.files);
@@ -673,11 +696,16 @@ export class ConfigFiles implements ConfigProtectionIO {
         const untracked: Record<string, string> = {};
         for (const [path, text] of Object.entries(files)) {
             const actual = await this.readManaged(path) ?? null, original = before.files[path] ?? null;
-            if (actual !== text && !this.compatibleFile(path, original, actual)) throw new ConfigDiskChanged();
+            // 本机记录里还没有的新辅助文件（如其他设备同步来的设备记录）按目标内容比较：
+            // 仅格式或心跳不同不应阻塞保存，真实内容差异仍需处理窗口确认。
+            // A file first delivered by sync has no local before-image; compare it with the
+            // prepared content so formatting/heartbeat differences do not block a save.
+            const deliveredCompatible = original === null && this.compatibleFile(path, text, actual);
+            if (actual !== text && !deliveredCompatible && !this.compatibleFile(path, original, actual)) throw new ConfigDiskChanged();
             // Re-prepare a revision if a heartbeat advanced after its digests were calculated.
             // Publishing the old digest would strand devices without this private before-image.
             const retained = mergeDeviceHeartbeat(path, text, actual);
-            if (retained !== undefined && retained !== text) throw new ConfigDiskChanged();
+            if (retained !== undefined && retained !== text && !deliveredCompatible) throw new ConfigDiskChanged();
             if (path === 'data/icons.css') {
                 const iconCache = mergeIconCache(original, text, actual);
                 if (iconCache !== undefined && iconCache !== text) throw new ConfigDiskChanged();

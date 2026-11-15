@@ -235,14 +235,22 @@ export class ProtectedConfigSession {
             const fileDigests = { ...this.protection.current.files,
                 ...await this.files.fileDigests(this.protection.pendingFiles) };
             try {
-                let result: ConfigPublication;
-                try { result = await this.protection.publish(copy, fileDigests, current); }
-                catch (error) {
-                    // A foreign writer may win the final marker comparison. Refresh that exact
-                    // state once within this explicit action so the user can review the conflict.
-                    if (!(error instanceof ConfigDiskChanged)) throw error;
-                    result = await this.protection.publish(copy, fileDigests, current);
+                let result: ConfigPublication | undefined;
+                for (let attempt = 0; attempt < 2 && !result; attempt++) {
+                    try { result = await this.protection.publish(copy, fileDigests, current); }
+                    catch (error) {
+                        if (error instanceof IncompleteConfigBundle) {
+                            // 生成文件（如图标缓存）会被 review 自动采用；只有真实差异才交给用户。
+                            const review = await this.files.reviewIncompleteBundle();
+                            if (review) throw error;
+                            continue;
+                        }
+                        // A foreign writer may win the final marker comparison. Refresh that exact
+                        // state once within this explicit action so the user can review the conflict.
+                        if (!(error instanceof ConfigDiskChanged) || attempt > 0) throw error;
+                    }
                 }
+                if (!result) throw new Error('Configuration publication did not complete');
                 this.pendingBundle = false;
                 if (result.status === 'saved' || result.status === 'noop' || result.status === 'saved-pending') this.resolvedBaseline = undefined;
                 this.observed = this.fingerprint(this.protection.current.value);

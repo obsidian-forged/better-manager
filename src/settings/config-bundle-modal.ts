@@ -27,9 +27,12 @@ export class ConfigBundleModal extends Modal {
     }
     private check(): void {
         if (this.busy) return;
+        // 保护会话可能已结束；不能让 busy 卡在 true 使所有按钮永久禁用。
+        const files = this.manager.configProtection?.files;
+        if (!files) { this.busy = false; this.error = this.t('error'); this.render(); return; }
         const generation = ++this.generation;
         this.busy = true; this.error = ''; this.review = undefined; this.render();
-        void this.manager.configProtection?.files.reviewIncompleteBundle().then(review => {
+        void files.reviewIncompleteBundle().then(review => {
             if (!this.opened || generation !== this.generation) return;
             this.review = review;
         }).catch((error: unknown) => {
@@ -57,29 +60,40 @@ export class ConfigBundleModal extends Modal {
     }
     private render(): void {
         this.contentEl.empty();
-        this.contentEl.createEl('p', { cls: 'setting-item-description', text: this.t('bundleDescription') });
-        if (this.error) this.contentEl.createEl('p', { cls: 'setting-item-description', text: this.error });
+        // 列表单独滚动，操作按钮固定在底部，避免文件较多时按钮被挤出可视区域。
+        // Scroll the file list separately and pin the actions so they are always reachable.
+        const body = this.contentEl.createDiv('manager-bundle-modal__body');
+        body.createEl('p', { cls: 'setting-item-description', text: this.t('bundleDescription') });
+        if (this.error) body.createEl('p', { cls: 'setting-item-description', text: this.error });
         if (this.review) {
-            const list = this.contentEl.createDiv('manager-workflow-modal__list');
+            const list = body.createDiv('manager-workflow-modal__list');
             for (const issue of this.review.issues) {
+                // 仅图标生成块差异由插件自动合并，不列为用户需要选择的文件。
+                if (issue.generated) continue;
                 const card = list.createDiv('manager-source-card manager-workflow-modal__card');
                 new Setting(card).setClass('manager-workflow-modal__card-heading')
                     .setName(issue.path === 'data/icons.css' ? this.t('icons') : this.summary(issue.current ?? issue.saved))
                     .setDesc(issue.current === null ? this.t('bundleMissing') : this.t('bundleDifferent'));
                 if (issue.current !== null) new Setting(card).setName(this.t('bundleCurrentLabel')).setDesc(this.summary(issue.current));
-                new Setting(card).setName(this.t('bundleSavedLabel')).setDesc(this.summary(issue.saved));
+                // 没有已保存副本时不显示“已保存版本”空行，只用一句说明可选择的方向。
+                if (issue.saved === undefined) card.createEl('p', { cls: 'setting-item-description', text: this.t('bundleNoBackup') });
+                else new Setting(card).setName(this.t('bundleSavedLabel')).setDesc(this.summary(issue.saved));
                 const details = card.createEl('details');
                 details.createEl('summary', { text: this.t('file') });
                 details.createEl('code', { text: issue.path });
             }
-        } else if (!this.busy && !this.error) this.contentEl.createEl('p', { text: this.t('bundleReady') });
-        const actions = new Setting(this.contentEl).setClass('manager-workflow-modal__actions').controlEl;
+        } else if (!this.busy && !this.error) body.createEl('p', { text: this.t('bundleReady') });
+        const actionSetting = new Setting(this.contentEl).setClass('manager-workflow-modal__actions');
+        actionSetting.settingEl.addClass('manager-bundle-modal__actions');
+        const actions = actionSetting.controlEl;
         new ButtonComponent(actions).setIcon('refresh-ccw').setButtonText(this.t('bundleCheck'))
             .setDisabled(this.busy).onClick(() => this.check());
         if (this.review) {
-            new ButtonComponent(actions).setButtonText(this.t('bundleSaved'))
-                .setDisabled(this.busy || this.review.issues.some(issue => issue.saved === undefined))
-                .onClick(() => this.save('saved'));
+            // 只有所有文件都有可验证副本时才提供“恢复”，避免出现永远点不动的按钮。
+            if (this.review.issues.every(issue => issue.generated || issue.saved !== undefined)) {
+                new ButtonComponent(actions).setButtonText(this.t('bundleSaved'))
+                    .setDisabled(this.busy).onClick(() => this.save('saved'));
+            }
             new ButtonComponent(actions).setButtonText(this.t('bundleCurrent')).setCta()
                 .setDisabled(this.busy).onClick(() => this.save('current'));
         } else if (!this.error) new ButtonComponent(actions).setButtonText(this.t('bundleSave')).setCta()

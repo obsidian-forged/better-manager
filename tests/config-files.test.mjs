@@ -94,6 +94,23 @@ test('a trusted device heartbeat drift is a no-op without rewriting files or the
     assert.equal((await reopened.readShared()).id, id);
     assert.equal((await reopened.readHead()).id, id);
 });
+test('a device file first delivered by sync is published despite formatting-only differences', async () => {
+    const f = await committedDeviceFixture();
+    const newPath = 'data/devices/new-device.json';
+    const values = { id: 'new-device', name: 'Phone 2', type: 'phone', platform: 'android', updatedAt: 1, lastSeen: 7 };
+    const diskText = JSON.stringify(values), prepared = JSON.stringify(values, null, 2);
+    f.files.set(`${root}/${newPath}`, diskText);
+    f.store.stageFile(newPath, prepared, true);
+    f.value.name = 'edited';
+    const digests = { ...f.store.current.files, ...await f.io.fileDigests(f.store.pendingFiles) };
+    assert.equal((await f.store.publish(f.value, digests, () => true)).status, 'saved');
+    const published = f.files.get(`${root}/${newPath}`);
+    assert.deepEqual(JSON.parse(published), values, 'the delivered device record is kept');
+    assert.equal(f.store.current.files[newPath], await hash(published));
+    const reopened = new ConfigFiles(f.adapter, '.obsidian', 'bpm', 'device-a', hash, f.local);
+    assert.equal((await reopened.readShared()).value.name, 'edited');
+});
+
 test('a real Save incorporates the latest heartbeat without rewriting its file and remains portable', async () => {
     const f = await committedDeviceFixture();
     f.files.set(`${root}/${devicePath}`, deviceText(5)); f.value.name = 'edited';
@@ -626,6 +643,19 @@ test('local and external generated icon discoveries are both retained by publica
     assert.match(saved, /local-discovery/); assert.match(saved, /remote-discovery/);
     assert.equal((await f.io.readShared()).value.name, 'user edit');
 });
+test('a generated icon-cache delivery never asks the user to choose a file', async () => {
+    const f = await driftedIconFixture();
+    const id = f.store.current.id;
+    f.io.states.delete(id);
+    f.files.delete(`${root}/.bpm/device-a/states/${id}.json`);
+    f.files.set(`${root}/data/icons.css`, iconFile(['one', 'remote-discovery']));
+    // The private copy is gone, but the delivered file is still a generated cache: no dialog.
+    assert.equal(await f.io.reviewIncompleteBundle(), undefined);
+    assert.equal(f.io.hasPendingBundle, false);
+    assert.equal(f.files.get(`${root}/data/icons.css`), iconFile(['one', 'remote-discovery']));
+    assert.deepEqual(f.publicWrites(), []);
+});
+
 for (const current of [iconFile(['one']).replace('color: red', 'color: blue'), iconFile(['one']).replace('/* BPM generated icons: end */', '.injected { color: blue; }\n/* BPM generated icons: end */')]) {
     test('custom CSS and unrecognised generated rules still require an explicit decision', async () => {
         const f = await driftedIconFixture();
