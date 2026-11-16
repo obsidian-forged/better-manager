@@ -1,4 +1,4 @@
-export interface FileChangeAdapter { onFileChange?: (path: string, ...args: unknown[]) => unknown; }
+export interface FileChangeAdapter { onFileChange?: (path: string | null, ...args: unknown[]) => unknown; }
 interface Listener { changed(path: string): void; failed(error: unknown): void; }
 interface Hook { original?: FileChangeAdapter['onFileChange']; wrapped: NonNullable<FileChangeAdapter['onFileChange']>; listeners: Set<Listener>; }
 const hooks = new WeakMap<FileChangeAdapter, Hook>();
@@ -12,11 +12,16 @@ export function subscribeFileChanges(adapter: FileChangeAdapter, changed: Listen
     let hook = hooks.get(adapter);
     if (!hook) {
         const original = adapter.onFileChange, listeners = new Set<Listener>();
-        const wrapped = function (this: FileChangeAdapter, path: string, ...args: unknown[]): unknown {
+        const wrapped = function (this: FileChangeAdapter, path: string | null, ...args: unknown[]): unknown {
             try { return original?.call(this, path, ...args); }
             finally {
-                for (const listener of [...listeners]) {
-                    try { listener.changed(path); } catch (error) { listener.failed(error); }
+                // Obsidian 在目录级变更或外部工具（如 rsync）改写时可能给出 null 路径；
+                // 只有字符串路径才可能命中 BPM 管理的文件。
+                // Directory-level or external-tool events can carry a null path; only strings can match.
+                if (typeof path === 'string' && path.length > 0) {
+                    for (const listener of [...listeners]) {
+                        try { listener.changed(path); } catch (error) { listener.failed(error); }
+                    }
                 }
             }
         };

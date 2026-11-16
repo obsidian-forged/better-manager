@@ -17,6 +17,19 @@ function fixture(){
     const watch=new PrivateCacheWatch(root,reader,hash,()=>{notices++;},error=>errors.push(error));
     return{files,folders,reader,watch,errors,notices:()=>notices,reads:()=>reads};
 }
+test('file-change notifications without a usable path are ignored',()=>{
+    const seen=[],failures=[];let original=0;
+    const adapter={onFileChange:path=>{original++;return path;}};
+    const unsubscribe=subscribeFileChanges(adapter,path=>seen.push(path),error=>failures.push(error));
+    adapter.onFileChange(null);adapter.onFileChange(undefined);adapter.onFileChange('');
+    adapter.onFileChange(draft);
+    unsubscribe();
+    assert.deepEqual(seen,[draft]);
+    assert.deepEqual(failures,[]);
+    assert.equal(original,4,'the original adapter handler still receives every event');
+    assert.equal(hasFileChangeNotifications(adapter),true);
+});
+
 test('private saves and delayed file echoes stay quiet without a persistent index',async()=>{
     const f=fixture();await f.watch.write(draft,'local draft',async()=>{f.watch.observe(draft);await Promise.resolve();f.files.set(draft,'local draft');});
     await f.watch.settled();f.watch.observe(draft);await f.watch.settled();
