@@ -1,4 +1,5 @@
 import { settingsFingerprint } from './session-store';
+import { isFileChangePath } from '../storage/file-change-listener';
 
 interface ConfigReader {
     exists(path: string): Promise<boolean>;
@@ -48,7 +49,8 @@ export class SharedConfigWatch {
         private readonly enabled: () => boolean, private readonly notify: (path: string) => void,
         private readonly failed: (error: unknown) => void, private readonly time: ConfigWatchClock = clock) {}
 
-    includes(path: string): boolean {
+    includes(path: unknown): path is string {
+        if (!isFileChangePath(path)) return false;
         return path === `${this.root}/data.json` || path === `${this.root}/data/icons.css`
             || path.startsWith(`${this.root}/data/devices/`) && /^[^/]+\.json$/.test(path.slice(`${this.root}/data/devices/`.length));
     }
@@ -91,7 +93,7 @@ export class SharedConfigWatch {
     async remove(path: string, action: () => Promise<void>): Promise<void> {
         await this.mutate(path, sharedConfigFingerprint(path, null), action);
     }
-    observe(path: string): void {
+    observe(path: unknown): void {
         if (!this.includes(path) || this.closed) return;
         if (this.timers.has(path)) return;
         // Bound each coalescing window from its first event. A continuous stream must not

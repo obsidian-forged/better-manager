@@ -1539,7 +1539,13 @@ test('device file changes are merged from adapter events without polling', async
     let calls = 0;
     const original = devices.mergeDeviceRecords.bind(devices);
     devices.mergeDeviceRecords = async () => { calls++; return false; };
+    const failures = [];
+    devices.report = error => failures.push(error);
     try {
+        for (const path of [null, undefined, '', new Uint8Array([1])]) adapter.onFileChange(path);
+        await new Promise(resolve => setTimeout(resolve, 10));
+        assert.equal(calls, 0);
+        assert.deepEqual(failures, []);
         adapter.onFileChange(`${DEVICES_DIR}probe.json`);
         await new Promise(resolve => setTimeout(resolve, 250));
         assert.equal(calls, 1);

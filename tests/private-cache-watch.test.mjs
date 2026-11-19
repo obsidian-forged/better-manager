@@ -35,6 +35,21 @@ test('private saves and delayed file echoes stay quiet without a persistent inde
     await f.watch.settled();f.watch.observe(draft);await f.watch.settled();
     assert.equal(f.notices(),0);assert.equal(f.watch.modified,false);assert.deepEqual([...f.files],[[draft,'local draft']]);
 });
+test('recovery observation ignores pathless events and still detects the next real change', async () => {
+    const f = fixture();
+    f.files.set(draft, 'original draft');
+    await f.watch.prime();
+
+    for (const path of [null, undefined, '', new Uint8Array([1])]) f.watch.observe(path);
+    await f.watch.settled();
+    assert.equal(f.notices(), 0);
+    assert.deepEqual(f.errors, []);
+
+    f.files.set(draft, 'changed draft');
+    f.watch.observe(draft);
+    await f.watch.settled();
+    assert.equal(f.notices(), 1);
+});
 test('existing recovery files ignore unchanged metadata events after a read-only startup baseline',async()=>{
     const f=fixture();f.files.set(draft,'saved in a previous session');
     await f.watch.prime();

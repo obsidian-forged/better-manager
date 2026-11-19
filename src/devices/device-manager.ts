@@ -3,7 +3,7 @@ import type Manager from '../main';
 import { featureEnabled } from '../features';
 import { pluginStorage } from '../storage/plugin-storage';
 import { LocalStateStore } from '../storage/local-state';
-import { FileChangeAdapter, hasFileChangeNotifications, subscribeFileChanges } from '../storage/file-change-listener';
+import { FileChangeAdapter, hasFileChangeNotifications, isFileChangePath, subscribeFileChanges } from '../storage/file-change-listener';
 import { mergeSettings, settingsFingerprint } from '../settings/session-store';
 import { toText } from '../shared/text';
 import type { RibbonGroup, RibbonItem } from '../data/types';
@@ -149,8 +149,8 @@ export class DeviceManager {
                     .catch(error => this.report(error));
             }, 150);
         };
-        const isDeviceFile = (path: string): boolean =>
-            path.startsWith(prefix) || path.startsWith(`${configDir}/better-plugins-manager-device-`);
+        const isDeviceFile = (path: unknown): boolean => isFileChangePath(path)
+            && (path.startsWith(prefix) || path.startsWith(`${configDir}/better-plugins-manager-device-`));
         const hasFileChangeEvent = hasFileChangeNotifications(adapter);
         const unregister = subscribeFileChanges(adapter, path => { if (isDeviceFile(path)) schedule(); }, error => this.report(error));
         const win = window;

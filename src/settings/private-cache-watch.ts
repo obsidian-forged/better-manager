@@ -1,4 +1,5 @@
 import type { DigestText } from './config-revision';
+import { isFileChangePath } from '../storage/file-change-listener';
 
 export interface PrivateCacheReader {
     read(path: string): Promise<string>;
@@ -25,7 +26,9 @@ export class PrivateCacheWatch implements PrivateCacheWrites {
     constructor(readonly root: string, private readonly reader: PrivateCacheReader, private readonly hash: DigestText,
         private readonly notify: () => void, private readonly failed: (error: unknown) => void) {}
 
-    private includes(path: string): boolean { return path === this.root || path.startsWith(`${this.root}/`); }
+    private includes(path: unknown): path is string {
+        return isFileChangePath(path) && (path === this.root || path.startsWith(`${this.root}/`));
+    }
     /** Existing snapshots also need an in-memory baseline: a metadata-only notification
      * must not be mistaken for an unknown external file. Never persist this index. */
     async prime(): Promise<void> {
@@ -74,7 +77,7 @@ export class PrivateCacheWatch implements PrivateCacheWrites {
         await this.mutate(path, await this.hash(text), action);
     }
     async remove(path: string, action: () => Promise<void>): Promise<void> { await this.mutate(path, null, action); }
-    observe(path: string): void {
+    observe(path: unknown): void {
         if (!this.includes(path) || this.closed || this.changed) return;
         this.pending.add(path);
         if (this.scheduled) return;

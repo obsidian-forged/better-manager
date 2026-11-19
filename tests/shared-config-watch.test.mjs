@@ -28,6 +28,8 @@ async function fixture() {
 
 test('three content changes to the same file within three seconds warn without writing or adopting settings', async () => {
     const f = await fixture();
+    for (const path of [null, undefined, '', new Uint8Array([1])]) f.watch.observe(path);
+    assert.equal(f.timers.size, 0);
     await f.change(data, '{"value":1}'); await f.change(data, '{"value":2}');
     assert.deepEqual(f.notices, []);
     await f.change(data, '{"value":3}');
