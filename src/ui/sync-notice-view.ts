@@ -1,6 +1,7 @@
 import { setIcon } from 'obsidian';
 import type Manager from '../main';
 import { protectionText } from '../settings/protection-text';
+import { areSyncAdvisoriesSuppressed } from '../settings/sync-exclusion-state';
 
 /** Shared notification slot; configuration choices take priority over recovery folder advice. */
 export class SyncNoticeView {
@@ -17,7 +18,8 @@ export class SyncNoticeView {
     refresh(): void {
         const conflict = Boolean(this.manager.configProtection?.protection.paused);
         const incomplete = Boolean(this.manager.configProtection?.hasIncompleteBundle);
-        const privateCache = Boolean(this.manager.configProtection?.privateCacheModified);
+        const privateCache = Boolean(this.manager.configProtection?.privateCacheModified)
+            && !areSyncAdvisoriesSuppressed(this.manager);
         const active = conflict || incomplete || privateCache;
         this.notice.toggleClass('is-active', active);
         this.notice.empty();

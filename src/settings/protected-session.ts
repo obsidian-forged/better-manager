@@ -1,3 +1,4 @@
+import { areSyncAdvisoriesSuppressed } from './sync-exclusion-state';
 import type Manager from '../main';
 import { Notice } from 'obsidian';
 import { ConfigBundleIssue, ConfigDiskChanged, ConfigFiles, IncompleteConfigBundle, isManagedConfigFile } from './config-files';
@@ -66,12 +67,13 @@ export class ProtectedConfigSession {
         this.privateCache = new PrivateCacheWatch(`${manager.app.vault.configDir}/plugins/${manager.manifest.id}/.bpm`, adapter, hash,
             () => this.privateCacheChanged(), error => this.privateCacheFailed(error));
         this.sharedChanges = new SharedConfigWatch(`${manager.app.vault.configDir}/plugins/${manager.manifest.id}`, adapter,
-            () => manager.settings?.SYNC_CHANGE_WARNINGS !== false,
+            () => manager.settings?.SYNC_CHANGE_WARNINGS !== false && !areSyncAdvisoriesSuppressed(manager),
             path => new Notice(`${protectionText(manager, 'frequentExternalChanges')}\n${path.slice(this.files.root.length + 1)}`, 10_000),
             error => this.sharedChangesFailed(error));
         this.files = new ConfigFiles(manager.app.vault.adapter, manager.app.vault.configDir, manager.manifest.id, owner, hash,
             { read: () => storage.loadLocalStorage(key), write: value => storage.saveLocalStorage(key, value) }, this.privateCache, this.sharedChanges);
         this.protection = new ConfigProtection({
+            backupDraft: value => this.files.backupDraft(value),
             readShared: () => this.files.readShared(this.initializing), readHead: () => this.files.readHead(),
             writeHead: value => this.files.writeHead(value), readDraft: () => this.files.readDraft(),
             writeDraft: value => this.files.writeDraft(value), removeDraft: () => this.files.removeDraft(),
@@ -98,7 +100,7 @@ export class ProtectedConfigSession {
             writeShared: (value, files, closed) => this.files.writeShared(value, files, closed),
             preparePublication: (base, files) => this.files.preparePublication(base, files),
             needsPublication: () => this.files.hasPendingTransaction,
-        }, owner, hash, changed);
+        }, owner, hash, changed, () => manager.settings?.AUTO_KEEP_NEWEST_CONFIG !== false);
     }
 
     private queue<T>(task: () => Promise<T>): Promise<T> {
@@ -107,7 +109,7 @@ export class ProtectedConfigSession {
         return result;
     }
     private current(): ConfigRecord { return configRecord(this.manager.devices?.persistedSettings() ?? this.manager.settings); }
-    normalized(value: ConfigRecord): ConfigRecord { return configRecord(this.normalize(value)); }
+    normalized(value: ConfigRecord): ConfigRecord { const copy = configRecord(this.normalize(value)); delete copy._bpmEditedAt; return copy; }
     /** 当前内存中的有效配置；The effective in-memory configuration for pending item marks. */
     currentValue(): ConfigRecord { return this.normalized(this.current()); }
     private fingerprint(value: unknown): string {
@@ -150,14 +152,14 @@ export class ProtectedConfigSession {
     private privateCacheChanged(): void {
         if (this.closed) return;
         this.changed();
-        if (this.privateWarningShown) return;
+        if (this.privateWarningShown || areSyncAdvisoriesSuppressed(this.manager)) return;
         this.privateWarningShown = true;
         const path = `${this.files.root}/.bpm/`;
         new Notice(`${protectionText(this.manager, 'privateCacheChanged')}\n${path}`, 12_000);
     }
     private privateCacheFailed(error: unknown): void {
         if (this.manager.settings?.DEBUG) console.error('[BPM] Recovery folder observation failed', error);
-        if (this.closed || this.privateErrorShown) return;
+        if (this.closed || this.privateErrorShown || areSyncAdvisoriesSuppressed(this.manager)) return;
         this.privateErrorShown = true;
         new Notice(protectionText(this.manager, 'privateCacheError'), 10_000);
     }
@@ -216,7 +218,8 @@ export class ProtectedConfigSession {
     }
     hasExternalChange(value: object): boolean { return this.fingerprint(value) !== this.observed; }
     async activateCache(value: object): Promise<void> { await this.save(value); }
-    async save(value: object, automatic = false): Promise<void> {
+    async save(value: object, automatic = false, capturedAt = Date.now()): Promise<void> {
+        const candidate = automatic ? undefined : this.protection.captureEditTime(capturedAt);
         const copy = configRecord(value);
         await this.queue(async () => {
             const selected = this.protection.confirmedSelection;
@@ -225,7 +228,7 @@ export class ProtectedConfigSession {
                 this.protection.choose(applySettingsEdit(this.resolvedBaseline, copy, selected.value), selected.files);
                 this.resolvedBaseline = configRecord(copy);
             }
-            await this.protection.stage(copy, automatic);
+            await this.protection.stage(copy, automatic, candidate);
             this.changed();
         });
     }
@@ -264,6 +267,7 @@ export class ProtectedConfigSession {
         });
     }
     async stageFile(path: string, text: string | null): Promise<boolean> {
+        const capturedAt = Date.now();
         if (!this.loaded || !isManagedConfigFile(path)) return false;
         const userEdited = this.userOperations > 0;
         if (userEdited) this.noteUserMutation();
@@ -272,7 +276,7 @@ export class ProtectedConfigSession {
             const existing = this.protection.stagedFile(path);
             const baseline = existing ? existing.value : (await this.files.filesFor(this.protection.current))[path] ?? null;
             if (baseline === text) return;
-            await this.protection.stageFileDraft(path, text, userEdited);
+            await this.protection.stageFileDraft(path, text, userEdited, capturedAt);
             if (userEdited) this.fileEditEpochs.set(path, epoch);
             this.changed();
         });

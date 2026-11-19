@@ -29,7 +29,7 @@ const generatedSettings = new Set<string>([
     'FILTER_TAG', 'FILTER_TAG_VALUES', 'FILTER_TAG_OPERATOR',
     'FILTER_DELAY', 'FILTER_DELAY_VALUES', 'FILTER_DELAY_OPERATOR',
 ]);
-const settingsMetadata = new Set<string>(['_bpmRevision', ...CONFIG_STATE_KEYS, ...generatedSettings]);
+const settingsMetadata = new Set<string>(['_bpmRevision', '_bpmEditedAt', ...CONFIG_STATE_KEYS, ...generatedSettings]);
 
 /** Only known bookkeeping fields are non-editable; similarly named user/source fields remain significant. */
 export function configurationContent(value: unknown, path: string[] = []): unknown {

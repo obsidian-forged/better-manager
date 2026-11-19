@@ -11,7 +11,8 @@ test('simultaneous generation numbers never decide which configuration wins', as
     const base = await decodeConfig({name:'base'},hash);
     const left = await createConfigRevision({name:'left'},'device-a',[base],{},hash);
     const right = await createConfigRevision({name:'right'},'device-b',[base],{},hash);
-    assert.equal(left.revision.generation,right.revision.generation);
+    assert.equal(Object.hasOwn(left.revision,'generation'),false);
+    assert.equal(Object.hasOwn(right.revision,'generation'),false);
     assert.equal(compareConfig(left,right),'conflict');
     assert.equal(compareConfig(left,base),'ancestor');
     assert.equal(compareConfig(base,left),'descendant');
@@ -55,4 +56,18 @@ test('auxiliary configuration digests participate in identity and reject unsafe 
     const right = await createConfigRevision(base.value,'device-b',[base],{'data/icons.css':await hash('b')},hash);
     assert.equal(compareConfig(left,right),'conflict');
     await assert.rejects(createConfigRevision(base.value,'device-a',[base],{'../secret':await hash('a')},hash),/does not match/);
+});
+
+test('same legacy generation uses edit times, never generation ordering',async()=>{
+    const base=await decodeConfig({name:'base'},hash);
+    const left=await createConfigRevision({name:'left'},'device-a',[base],{},hash,1000);
+    const right=await createConfigRevision({name:'right'},'device-b',[base],{},hash,2000);
+    const fingerprint = value => value && typeof value === 'object' ? (Array.isArray(value) ? '['+value.map(fingerprint).join(',')+']' : '{'+Object.keys(value).sort().map(k=>JSON.stringify(k)+':'+fingerprint(value[k])).join(',')+'}') : JSON.stringify(value);
+    async function legacy(snapshot) { const {id,...body}=snapshot.revision;body.generation=7;return decodeConfig({...snapshot.value,_bpmRevision:{...body,id:await hash(fingerprint(body))}},hash); }
+    const legacyLeft=await legacy(left), legacyRight=await legacy(right);
+    assert.equal(legacyLeft.revision.generation,legacyRight.revision.generation);
+    assert.equal(compareConfig(legacyLeft,legacyRight),'descendant');
+    assert.equal(compareConfig(left,right),'descendant');
+    assert.equal(compareConfig(right,left),'ancestor');
+    assert.equal((await decodeConfig(encodeConfig(right),hash)).revision.editedAt,2000);
 });

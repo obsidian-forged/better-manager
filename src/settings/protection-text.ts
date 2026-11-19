@@ -1,6 +1,9 @@
 import type Manager from '../main';
 
 const messages = {
+    syncGuideOpen: ['同步排除设置说明', 'Sync exclusion setup guide'],
+    newestPolicyName: ['自动保留最新配置', 'Automatically keep the newest configuration'],
+    newestPolicyDesc: ['默认开启，按用户实际编辑时间选择更新配置。关闭后，即使传入配置更新，也由你手动检查并选择版本。', 'On by default: choose the newer configuration by the time of actual user edits. Turn off to review and choose manually even when incoming configuration is newer.'],
     bundleTitle: ['处理配置文件', 'Resolve configuration files'],
     bundleShort: ['处理文件差异', 'Resolve file differences'],
     bundleChanged: ['文件又有更新，请重新检查后再选择。当前草稿仍保留。', 'The files changed again. Check again before choosing. Your draft is preserved.'],
@@ -45,7 +48,7 @@ const messages = {
     manualSaveName: ['仅手动保存配置', 'Save settings manually'],
     manualSaveDescription: ['用于兼容实时同步。开启后，持久更改先保留在本机草稿，点击“保存更改”或关闭时选择“保存并关闭”才写入共享配置。关闭此选项后，在最后一个 BPM 编辑窗口关闭时检查并保存。保存时有冲突会保留两份并提示选择；“仅本次会话”更改始终不保存。', 'For realtime sync compatibility. When enabled, persistent changes remain in a local draft until you select Save changes or Save and close in the closing prompt. When disabled, BPM checks and saves them when the last BPM editor closes. Conflicts preserve both versions for review. Current-session changes are never saved.'],
     syncProtectionName: ['启用配置实时同步保护', 'Enable configuration realtime sync protection'],
-    syncProtectionDescription: ['仅在使用 Obsidian Sync、iCloud、Syncthing 等工具于多台设备间实时同步本库时需要开启。同一同步库中的所有设备都应统一开启；混用保护与单机模式会因设备记录表示不同而产生误冲突。开启后 BPM 会保存未保存草稿与冲突副本，并在保存中断后恢复，同时创建 .bpm 恢复目录；请把该目录排除在同步范围外。本机没有未保存编辑时，会自动采用其他设备同步来的最新版本；只有本机也有编辑时才显示冲突。关闭时只读写 data.json：识别到支持实时同步的服务时，后台自动写入会保留为待保存状态；显式保存前会把本机改动合并到当时磁盘上的配置，但不会保留冲突副本或中断恢复。修改后需重启 Obsidian 生效。', 'Turn this on only when Obsidian Sync, iCloud, Syncthing or a similar tool syncs this vault in real time across devices. Enable it on every device using the same synced vault; mixing protected and single-file modes can create false conflicts because device records are represented differently. BPM then keeps unsaved drafts, conflict copies and interrupted-save recovery, and creates a .bpm recovery folder; exclude that folder from sync. When this device has no unsaved edits, a newer revision from another device is adopted automatically; a conflict appears only when both sides have edits. When off, only data.json is read and written: background automatic writes stay pending while a recognized realtime-capable sync service is enabled, and explicit Save merges local edits with the file currently on disk, but conflict copies and interrupted-save recovery are unavailable. Restart Obsidian after changing this option.'],
+    syncProtectionDescription: ['多设备实时同步时请在所有设备上统一开启。默认按用户实际编辑时间采用最新配置；关闭自动采用最新配置后手动检查并选择。请排除 .bpm 恢复目录的同步。修改保护模式后需重启 Obsidian。', 'Enable consistently on all devices syncing this vault in real time. By default, actual user edit time determines the newest configuration. Disable automatic newest selection to review and choose manually. Exclude the .bpm recovery directory from sync. Restart Obsidian after changing protection mode.'],
     syncProtectionDefaultOff: ['默认关闭', 'Off by default'],
     syncProtectionEnableWarning: ['开启后将在插件目录创建 .bpm 恢复目录，用于保存草稿、冲突副本和中断恢复。同一同步库中的所有设备都应统一开启，并先将该目录加入同步工具的排除列表，然后重启 Obsidian 生效。', 'Enabling creates a .bpm recovery folder for drafts, conflict copies and interrupted-save recovery. Enable protection on every device using the same synced vault, exclude this folder from sync, then restart Obsidian to apply.'],
     syncProtectionDisableWarning: ['关闭后将只读写 data.json：不再保存草稿与冲突副本，也无法在保存中断后恢复；保存前仍会合并其他设备的最新修改。重启 Obsidian 后生效；勾选删除缓存时，缓存会在下次以单机模式启动后删除。', 'Turning this off keeps only data.json: drafts, conflict copies and interrupted-save recovery stop, but the latest changes from other devices are still merged before saving. Restart Obsidian to apply; when cache deletion is selected, the cache is removed after the next start in single-machine mode.'],
@@ -117,6 +120,7 @@ const settingLabels: Record<string, [string, string]> = {
     DEBUG: ['调试日志', 'Debug logging'],
     PERSISTENCE: ['持久化筛选', 'Persist filters'],
     MANUAL_CONFIG_SAVE: ['仅手动保存配置', 'Save settings manually'],
+    AUTO_KEEP_NEWEST_CONFIG: ['自动保留最新配置', 'Automatically keep the newest configuration'],
     SYNC_CHANGE_WARNINGS: ['频繁外部修改提醒', 'Warn about frequent external changes'],
     RECENT_INSTALL_DAYS: ['最近安装天数', 'Recently installed window'],
     CENTER: ['管理器居中', 'Center the manager'],

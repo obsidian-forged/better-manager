@@ -474,7 +474,11 @@ export class ConfigFiles implements ConfigProtectionIO {
                 || new Set(raw.userFiles).size !== raw.userFiles.length) throw new Error('Invalid BPM recovery draft file ownership');
             userFiles = raw.userFiles;
         }
-        return { base: raw.base, value: raw.value, userEdited: raw.userEdited, files, ...(userFiles ? { userFiles } : {}) };
+        return { ...(typeof raw.editedAt === 'number' ? { editedAt: raw.editedAt } : {}), base: raw.base, value: raw.value, userEdited: raw.userEdited, files, ...(userFiles ? { userFiles } : {}) };
+    }
+    async backupDraft(value: ConfigDraft): Promise<void> {
+        const id = await this.hash(settingsFingerprint(value));
+        await this.privateJson(`overwritten/${id}.json`, { owner: this.owner, ...value }, true);
     }
     async writeDraft(value: ConfigDraft): Promise<void> { await this.privateJson('draft.json', { owner: this.owner, ...value }); }
     async removeDraft(): Promise<void> {

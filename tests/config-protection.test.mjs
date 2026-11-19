@@ -16,7 +16,7 @@ async function fixture(options={}) {
         preserveConflict:async value=>{state.conflicts.push(copy(value));state.conflict=copy(value);},
         readConflict:async()=>copy(state.conflict),clearConflict:async()=>{state.conflict=undefined;},
         writeShared:async(value,files,current)=>{assert.equal(current(),true);if(state.failWrite)throw Error('disk busy');state.writes++;state.shared=copy(value);}};
-    const store=new ConfigProtection(io,'device-a',hash);
+    const store=new ConfigProtection(io,'device-a',hash,()=>{},()=>options.autoKeepNewest ?? true);
     return{initial,state,io,store,value:await store.load()};
 }
 const publish=f=>f.store.publish(f.value,{},()=>true);
@@ -28,7 +28,7 @@ test('explicit Save publishes while the editor remains open and an identical ret
     const f=await fixture();f.store.begin(f.value);f.value.name='edited';await f.store.stage(f.value);await f.store.stage(f.value);
     assert.equal(f.state.writes,0);assert.equal(f.state.draftWrites,1);assert.equal(f.store.hasPendingChanges,true);
     assert.equal((await publish(f)).status,'saved');assert.equal(f.state.writes,1);assert.equal(f.store.hasOpenEditor,true);
-    assert.equal(f.store.hasPendingChanges,false);assert.equal(f.state.draft,undefined);assert.equal(f.state.head.revision.generation,1);
+    assert.equal(f.store.hasPendingChanges,false);assert.equal(f.state.draft,undefined);assert.equal(f.state.head.revision.generation,undefined);
     assert.equal((await publish(f)).status,'noop');assert.equal(f.state.writes,1);
 });
 test('an automatic save outside an editor never marks the device as user-edited',async()=>{
@@ -71,7 +71,7 @@ test('reverting an edit before Save is a no-op',async()=>{
 test('only explicit Save repairs an old replay and keeps the existing revision',async()=>{
     const f=await fixture();f.store.begin(f.value);f.value.name='latest';await publish(f);const latest=copy(f.state.shared);
     f.state.shared=copy(f.initial);f.store.end();assert.equal(f.state.writes,1);
-    assert.equal((await publish(f)).status,'saved');assert.equal(f.state.shared.id,latest.id);assert.equal(f.state.shared.revision.generation,1);
+    assert.equal((await publish(f)).status,'saved');assert.equal(f.state.shared.id,latest.id);assert.equal(f.state.shared.revision.generation,undefined);
     f.state.shared=copy(f.initial);await publish(f);assert.equal(f.state.shared.id,latest.id);assert.equal(f.store.paused,false);
 });
 test('Save discovers concurrent changes and unresolved retries preserve both versions',async()=>{
@@ -263,4 +263,73 @@ test('discard retains later file edits atomically if its replacement draft canno
     f.io.writeDraft = write; await f.store.discardDraft({ 'data/icons.css': 'new action' });
     assert.equal(f.state.draft.value.name, 'initial'); assert.equal(f.state.draft.files['data/icons.css'], 'new action');
     assert.equal(f.store.hasPendingChanges, true); assert.equal(f.state.writes, 0);
+});
+
+// Timestamp policy fixtures use the production default behavior explicitly.
+for (const delta of [-100, 0, 100]) test('timestamp Save whole-config disk authority delta '+delta, async()=>{
+    const f=await fixture({autoKeepNewest:true}); f.store.begin(f.value); f.value.name='local'; await f.store.stage(f.value);
+    const stamp=f.state.draft.editedAt;
+    f.state.shared=await createConfigRevision({name:'remote',layout:'remote'},'device-b',[f.initial],{},hash,stamp+delta);
+    const result=await publish(f);
+    assert.equal(result.status,delta<0?'saved':'noop');
+    assert.equal(f.state.shared.value.name,delta<0?'local':'remote');
+    assert.equal(f.state.draft,undefined);
+    if(delta>=0) assert.equal(f.state.conflicts.length,1,'losing local draft was preserved');
+    const reloaded=new ConfigProtection(f.io,'device-a',hash);
+    assert.equal((await reloaded.load()).name,delta<0?'local':'remote');
+});
+test('explicit edit time persists through repeat stages, automatic work and publication',async()=>{
+    const f=await fixture({autoKeepNewest:true});f.value.name='edit';await f.store.stage(f.value);
+    const time=f.state.draft.editedAt;assert.ok(Number.isSafeInteger(time));
+    await f.store.stage(f.value);assert.equal(f.state.draft.editedAt,time);
+    f.value.layout='background';await f.store.stage(f.value,true);assert.equal(f.state.draft.editedAt,time);
+    await publish(f);assert.equal(f.state.shared.revision.editedAt,time);
+    assert.equal(Object.hasOwn(f.state.shared.revision,'generation'),false);
+    await publish(f);assert.equal(f.state.shared.revision.editedAt,time);
+});
+test('newer timestamp still pauses when automatic latest is disabled',async()=>{
+    const f=await fixture({autoKeepNewest:false});f.value.name='local';await f.store.stage(f.value);
+    f.state.shared=await createConfigRevision({name:'remote'},'device-b',[f.initial],{},hash,f.state.draft.editedAt+100);
+    assert.equal((await publish(f)).status,'conflict');assert.equal(f.state.writes,0);
+});
+test('startup restores newer draft and older replay never replaces it',async()=>{
+    const initial=await decodeConfig({name:'base'},hash);const time=Date.now();
+    const head=await createConfigRevision(initial.value,'device-a',[initial],{},hash,time-100);
+    const shared=await createConfigRevision({name:'remote'},'device-b',[initial],{},hash,time-50);
+    const f=await fixture({autoKeepNewest:true,head,shared,draft:{base:head.id,value:{name:'draft'},files:{},userEdited:true,editedAt:time}});
+    assert.equal(f.value.name,'draft');assert.equal(await f.store.observeShared(shared,f.value),'same');
+    assert.equal((await publish(f)).status,'saved');assert.equal(f.state.shared.revision.editedAt,time);
+});
+
+test('a newer draft arriving during commit keeps its time and survives completion',async()=>{
+    const f=await fixture({autoKeepNewest:true});f.value.name='first';await f.store.stage(f.value);
+    const original=f.io.writeShared;let current=true;
+    f.io.writeShared=async(...args)=>{await original(...args);current=false;await f.store.stage({...f.value,name:'later'});};
+    const result=await f.store.publish(f.value,{},()=>current);
+    assert.equal(result.status,'saved-pending');assert.equal(f.state.draft.value.name,'later');
+    assert.ok(f.state.draft.editedAt>f.state.shared.revision.editedAt);
+});
+test('invalid timestamps retain the manual safety fallback',async()=>{
+    const f=await fixture({autoKeepNewest:true});f.value.name='local';await f.store.stage(f.value);
+    f.state.shared=await createConfigRevision({name:'remote'},'device-b',[f.initial],{},hash,Number.MAX_SAFE_INTEGER);
+    assert.equal(f.state.shared.revision.editedAt,undefined);
+    assert.equal((await publish(f)).status,'conflict');
+});
+
+test('automatic file maintenance preserves the time of an existing user draft',async()=>{
+    const f=await fixture();f.value.name='user';await f.store.stage(f.value,false,1000);
+    const time=f.state.draft.editedAt;await f.store.stageFileDraft('data/icons.css','generated',false,2000);
+    assert.equal(f.state.draft.editedAt,time);assert.equal(f.state.draft.userEdited,true);
+});
+test('opt-out creates a manual conflict at startup without a user draft',async()=>{
+    const initial=await decodeConfig({name:'base'},hash);
+    const head=await createConfigRevision(initial.value,'device-a',[initial],{},hash,1000);
+    const shared=await createConfigRevision({name:'remote'},'device-b',[initial],{},hash,2000);
+    const f=await fixture({head,shared,autoKeepNewest:false});assert.equal(f.value.name,'base');assert.equal(f.store.paused,true);
+});
+test('captured edit time cannot overtake a later remote edit while waiting in a queue',async()=>{
+    const f=await fixture({autoKeepNewest:true});f.value.name='queued';await f.store.stage(f.value,false,1000);
+    assert.equal(f.state.draft.editedAt,1000);
+    f.state.shared=await createConfigRevision({name:'remote later'},'device-b',[f.initial],{},hash,2000);
+    assert.equal((await publish(f)).status,'noop');assert.equal(f.state.shared.value.name,'remote later');
 });

@@ -6,10 +6,12 @@ import { settingsFingerprint } from './settings/session-store';
 import { ProtectedConfigSession } from './settings/protected-session';
 import { applySettingsEdit, copySettingsRecord, queueSettingsSave, reconcileSettingsRecord, settingsSaveMessage } from './settings/save-request';
 import { CONFIG_CLEANUP_STORAGE_KEY, CONFIG_LOCAL_ESTABLISHED_STORAGE_KEY, CONFIG_MODE_STORAGE_KEY, resolveConfigSyncProtection } from './settings/config-mode';
+import { ConfigEditClock, editTime, sameEditedContent, timestampOrder } from './settings/config-timestamp';
 import { mergeLocalSettings } from './settings/local-settings-merge';
 import { detectSyncPlugins } from './settings/sync-detector';
 import { protectionText } from './settings/protection-text';
 import { SyncWarningModal } from './settings/sync-warning';
+import { areSyncAdvisoriesSuppressed } from './settings/sync-exclusion-state';
 import { ConfigConflictModal } from './settings/conflict-view';
 import { ConfigBundleModal } from './settings/config-bundle-modal';
 import { LocalSettingsModal } from './settings/local-settings-modal';
@@ -325,6 +327,11 @@ export default class Manager extends Plugin {
             : this.disableDelay({ save: false });
         if (pluginsChanged) markSettingsDirty();
         Commands(this.app, this);
+        this.addCommand({
+            id: 'sync-exclusion-guide',
+            name: protectionText(this, 'syncGuideOpen'),
+            callback: () => this.showSyncSetupGuide(),
+        });
 
         // 全新安装（本机确认 data.json 从未建立）且没有同步服务等待文件时，立即创建配置文件；
         // 同步库中的缺失可能只是尚未送达，自动写入会覆盖其他设备的配置，必须交由显式保存。
@@ -1066,6 +1073,8 @@ export default class Manager extends Plugin {
         return this.protectionPreference !== this.configSyncProtectionEnabled;
     }
 
+    private readonly configEditClock = new ConfigEditClock();
+
     private normalizeSettings(value: unknown): Record<string, unknown> {
         if (value !== null && value !== undefined && (typeof value !== 'object' || Array.isArray(value))) throw new Error('Invalid BPM settings file');
         // Both defaults and external records must be detached; normalization never mutates its input.
@@ -1183,14 +1192,30 @@ export default class Manager extends Plugin {
         const detected = detectSyncPlugins(this.appPlugins.enabledPlugins, official);
         this.syncServiceDetected = detected.length > 0;
         this.syncServiceDetectionFailed = false;
-        if (!detected.length || this.isUnloaded) return;
+        if (!detected.length || this.isUnloaded || areSyncAdvisoriesSuppressed(this)) return;
         // 未开启保护时不展示 .bpm 排除提示，改为建议开启保护。
         if (!this.configSyncProtectionEnabled) {
-            new Notice(protectionText(this, 'syncProtectionAmbientWarning'), 12_000);
+            const fragment = createFragment();
+            fragment.createDiv({ text: protectionText(this, 'syncProtectionAmbientWarning') });
+            const open = fragment.createEl('button', { text: protectionText(this, 'syncGuideOpen'), attr: { type: 'button' } });
+            const notice = new Notice(fragment, 12_000);
+            open.addEventListener('click', () => { notice.hide(); this.showSyncSetupGuide(); });
             return;
         }
         this.syncWarningModal = new SyncWarningModal(this, detected);
         this.syncWarningModal.open();
+    }
+
+    /** 用户可随时从设置或命令面板重新打开指引；Manual guidance remains available after acknowledgement. */
+    public showSyncSetupGuide(): void {
+        void (async () => {
+            const official = this.coreSyncActive(await this.coreSyncEnabled());
+            if (this.isUnloaded) return;
+            const detected = detectSyncPlugins(this.appPlugins.enabledPlugins, official);
+            this.syncWarningModal?.close();
+            this.syncWarningModal = new SyncWarningModal(this, detected);
+            this.syncWarningModal.open();
+        })().catch(error => this.reportError('Opening sync guidance failed', error, true));
     }
 
     private async hasEnabledSyncService(): Promise<boolean> {
@@ -1272,6 +1297,7 @@ export default class Manager extends Plugin {
     }
 
     private async adoptExternalLocalSettings(force = false): Promise<void> {
+        if (!force && this.settings.AUTO_KEEP_NEWEST_CONFIG === false) return;
         if (this.isUnloaded || this.isSavingSettings || this.hasUnsavedSettings) return;
         if (!force && this.settingsEditors.size > 0) return;
         const attempt = ++this.localAdoptionEpoch;
@@ -1285,6 +1311,8 @@ export default class Manager extends Plugin {
         if (raw === null || raw === undefined || typeof raw !== 'object' || Array.isArray(raw) || !Object.keys(raw).length) return;
         const remote = this.normalizeSettings(raw);
         if (settingsFingerprint(remote) === this.lastPublishedFingerprint) return;
+        if (this.settings.AUTO_KEEP_NEWEST_CONFIG !== false && this.lastPublishedSettings
+            && timestampOrder(editTime(this.lastPublishedSettings), editTime(remote)) === 1) return;
         const management = remote.DEVICE_MANAGEMENT;
         const devices = management !== null && typeof management === 'object' && !Array.isArray(management)
             ? (management as Record<string, unknown>).devices : undefined;
@@ -1315,6 +1343,8 @@ export default class Manager extends Plugin {
     }
 
     public async saveSettings(options: { captureDevice?: boolean; automatic?: boolean } = {}) {
+        const editRequestedAt = Date.now();
+        const editBaseTime = editTime(this.pendingSettingsSnapshot ?? this.lastPublishedSettings ?? {});
         if (!options.automatic) this.settingsEditEpoch++;
         if (options.captureDevice !== false) this.devices?.capture();
         this.pendingSettingsRequests++;
@@ -1331,8 +1361,14 @@ export default class Manager extends Plugin {
             // 投影其他设备时，data.json 只写本机真实值；外域值留在 DEVICE_MANAGEMENT。
             // A request captured while Discard was waiting still contains the old UI values.
             // Preserve only its newer edits against the restored, committed baseline.
-            const value = discard?.restored ? applySettingsEdit(discard.before, request.value, discard.restored) : request.value;
-            const serialized = discard?.restored ? JSON.stringify(value) : request.serialized;
+            let value = discard?.restored ? applySettingsEdit(discard.before, request.value, discard.restored) : request.value;
+            if (!this.configProtection && !request.automatic) {
+                const prior = this.pendingSettingsSnapshot ?? this.lastPublishedSettings;
+                if (prior && !sameEditedContent(value, prior)) {
+                    value = { ...value, _bpmEditedAt: this.configEditClock.next(editBaseTime, editRequestedAt) };
+                } else if (prior && editTime(prior) !== undefined) value = { ...value, _bpmEditedAt: editTime(prior) };
+            }
+            const serialized = JSON.stringify(value);
             if (serialized === this.persistedSettingsJson && request.automatic) return;
             if (!this.configProtection && request.automatic && !this.syncServiceDetected && !this.syncServiceDetectionFailed) {
                 try { this.syncServiceDetected = await this.hasEnabledSyncService(); }
@@ -1346,7 +1382,7 @@ export default class Manager extends Plugin {
                 this.persistedSettingsJson = serialized;
                 return;
             }
-            if (this.configProtection) await this.configProtection.save(value, request.automatic);
+            if (this.configProtection) await this.configProtection.save(value, request.automatic, editRequestedAt);
             else if (request.automatic) {
                 // 编辑期间不提前写盘；本机模式的启动迁移等显式保存时再落盘。
                 // View-state saves never publish early; local-mode startup changes wait for explicit Save.
@@ -1387,6 +1423,23 @@ export default class Manager extends Plugin {
         const hasRemote = previous !== null && previous !== undefined
             && typeof previous === 'object' && !Array.isArray(previous) && Object.keys(previous).length > 0;
         const target = this.localMergeTarget(previous, value, allowCreate);
+        if (target && this.settings.AUTO_KEEP_NEWEST_CONFIG !== false
+            && timestampOrder(editTime(value), editTime(target)) !== undefined
+            && (timestampOrder(editTime(value), editTime(target)) ?? 1) <= 0
+            && previous !== null && typeof previous === 'object'
+            && editTime(previous as Record<string, unknown>) !== undefined
+            && sameEditedContent(target, this.normalizeSettings(previous))
+            && !sameEditedContent(value, target)) {
+            const backup = normalizePath(`${this.app.vault.configDir}/plugins/${this.manifest.id}/.bpm/overwritten-local-${editTime(value)}-${window.crypto.randomUUID()}.json`);
+            const adapter = this.app.vault.adapter;
+            const folder = backup.slice(0, backup.lastIndexOf('/'));
+            const segments = folder.split('/');
+            for (let i = 1; i <= segments.length; i++) {
+                const directory = segments.slice(0, i).join('/');
+                if (!await adapter.exists(directory)) await adapter.mkdir(directory);
+            }
+            if (!await adapter.exists(backup)) await adapter.write(backup, JSON.stringify(value));
+        }
         if (!target) {
             if (allowCreate) throw new LocalSettingsUnavailable();
             return;
@@ -1561,7 +1614,7 @@ export default class Manager extends Plugin {
         const remoteFingerprint = settingsFingerprint(remote);
         return hasRemote && this.lastPublishedSettings && this.lastPublishedFingerprint
             && remoteFingerprint !== this.lastPublishedFingerprint
-            ? mergeLocalSettings(this.lastPublishedSettings, value, remote)
+            ? mergeLocalSettings(this.lastPublishedSettings, value, remote, this.settings.AUTO_KEEP_NEWEST_CONFIG !== false)
             : value;
     }
 
@@ -1734,7 +1787,8 @@ export default class Manager extends Plugin {
             const result = await this.queueSettingsOperation(async () => {
                 if (!current()) return { status: 'cancelled' as const };
                 if (protection) return protection.publish(value, current);
-                const written = await this.writeLocalSettings(value, current, true);
+                const stagedValue = this.pendingSettingsSnapshot ?? value;
+                const written = await this.writeLocalSettings(stagedValue, current, true);
                 if (!written) return { status: 'cancelled' as const };
                 if (settingsFingerprint(written) !== settingsFingerprint(value)) {
                     new Notice(protectionText(this, 'syncProtectionMerged'), 7_000);

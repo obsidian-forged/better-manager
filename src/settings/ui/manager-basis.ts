@@ -93,6 +93,17 @@ export default class ManagerBasis extends BaseSetting {
 
         heading("设置_基础设置_分组_常规");
 
+        new Setting(this.containerEl)
+            .setName(protectionText(this.manager, 'newestPolicyName'))
+            .setDesc(protectionText(this.manager, 'newestPolicyDesc'))
+            .addToggle(toggle => toggle.setValue(this.settings.AUTO_KEEP_NEWEST_CONFIG).onChange(this.action(async value => {
+                this.settings.AUTO_KEEP_NEWEST_CONFIG = value;
+                await this.manager.saveSettings({ captureDevice: false });
+            })));
+        new Setting(this.containerEl).setName(protectionText(this.manager, 'syncGuideOpen'))
+            .addButton(button => button.setButtonText(protectionText(this.manager, 'syncGuideOpen'))
+                .onClick(() => this.manager.showSyncSetupGuide()));
+
         const languageBar = new Setting(this.containerEl)
             .setName(this.manager.translator.t("设置_基础设置_语言_标题"))
             .setDesc(this.manager.translator.t("设置_基础设置_语言_描述"));

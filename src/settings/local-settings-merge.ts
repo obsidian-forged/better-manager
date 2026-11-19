@@ -1,3 +1,4 @@
+import { editTime, timestampOrder } from './config-timestamp';
 import { applySettingsEdit } from './save-request';
 
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -13,7 +14,9 @@ const record = (value: unknown): value is Record<string, unknown> =>
  * - 两侧都修改同一字段时本机优先，单机模式没有更细的冲突界面；Local wins on the same field.
  */
 export function mergeLocalSettings(base: Record<string, unknown>, edited: Record<string, unknown>,
-    remote: Record<string, unknown>): Record<string, unknown> {
+    remote: Record<string, unknown>, autoKeepNewest = true): Record<string, unknown> {
+    const order = autoKeepNewest ? timestampOrder(editTime(edited), editTime(remote)) : undefined;
+    if (order !== undefined) return { ...(order > 0 ? edited : remote) };
     const merged = applySettingsEdit(base, edited, remote);
     const management = merged.DEVICE_MANAGEMENT;
     const localDevices = (edited.DEVICE_MANAGEMENT as Record<string, unknown> | undefined)?.devices;

@@ -8,6 +8,16 @@ globalThis.window = { addEventListener() {}, removeEventListener() {}, crypto: w
 const nativeRequire = createRequire(import.meta.url);
 class NativeBase {}
 const notices = [];
+globalThis.createFragment = () => ({
+    textContent: '', buttons: [],
+    createDiv({ text }) { this.textContent += text; },
+    createEl(tag, { text }) {
+        const events = new Map();
+        const button = { textContent: text, addEventListener: (name, callback) => events.set(name, callback), click: () => events.get('click')?.() };
+        this.buttons.push(button);
+        return button;
+    },
+});
 const openedModals = [];
 class NativeModal extends NativeBase {
     open() { openedModals.push(this); }
@@ -15,7 +25,7 @@ class NativeModal extends NativeBase {
 const obsidian = { normalizePath: path => path, Platform: { isMobileApp: false, isTablet: false },
     requireApiVersion: () => true, getLanguage: () => 'en',
     Plugin: NativeBase, Modal: NativeModal, SuggestModal: NativeBase, PluginSettingTab: NativeBase,
-    Notice: class { constructor(message) { notices.push(message); } } };
+    Notice: class { constructor(message) { notices.push(message); } hide() {} } };
 async function load(entry) {
     const result = await build({ entryPoints: [entry], bundle: true, platform: 'node', format: 'cjs', write: false,
         external: ['obsidian', 'electron'], loader: { '.webp': 'dataurl' }, logLevel: 'silent' });
@@ -275,8 +285,8 @@ test('startup with protection off recommends protection without recovery-folder 
         await manager.showSyncWarning();
         assert.equal(manager.syncServiceDetected, true);
         assert.equal(notices.length, noticeCount + 1);
-        assert.match(notices[noticeCount], /配置实时同步保护|configuration realtime sync protection/);
-        assert.doesNotMatch(notices[noticeCount], /\.bpm/i);
+        assert.match(notices[noticeCount].textContent, /配置实时同步保护|configuration realtime sync protection/);
+        assert.doesNotMatch(notices[noticeCount].textContent, /\.bpm/i);
         assert.equal(openedModals.length, modalCount);
     }
 });
@@ -317,7 +327,11 @@ test('enabling protection pending restart keeps the startup warning in the live 
     const noticeCount = notices.length, modalCount = openedModals.length;
     await manager.showSyncWarning();
     assert.equal(notices.length, noticeCount + 1);
-    assert.doesNotMatch(notices[noticeCount], /\.bpm/i);
+    assert.doesNotMatch(notices[noticeCount].textContent, /\.bpm/i);
+    let guideOpened = false;
+    manager.showSyncSetupGuide = () => { guideOpened = true; };
+    notices[noticeCount].buttons[0].click();
+    assert.equal(guideOpened, true, 'the warning opens the copyable setup guide');
     assert.equal(openedModals.length, modalCount);
 });
 
@@ -504,4 +518,41 @@ test('disabling protection defers cache deletion to the next local start', async
     assert.deepEqual(removedLater, [['.obsidian/plugins/self/.bpm/device-owner-1', true]]);
     assert.equal(locals.get(CONFIG_CLEANUP_STORAGE_KEY), false);
     assert.equal(next.configProtection, undefined);
+});
+
+test('single-file edit timestamp reaches disk and a no-op Save preserves it',async()=>{
+    const f=await localFixture();f.manager.settings.SEARCH='timestamp edit';
+    await f.manager.saveSettings({captureDevice:false});const staged=f.manager.pendingSettingsSnapshot._bpmEditedAt;
+    assert.ok(Number.isSafeInteger(staged));assert.equal(await f.manager.savePendingSettings(),true);
+    assert.equal(f.disk()._bpmEditedAt,staged);assert.equal(f.disk()._bpmRevision,undefined);
+    assert.equal(await f.manager.savePendingSettings(),true);assert.equal(f.disk()._bpmEditedAt,staged);
+});
+
+test('single-file opt-out blocks idle adoption but explicit refresh can adopt',async()=>{
+    const f=await localFixture(disk({AUTO_KEEP_NEWEST_CONFIG:false,_bpmEditedAt:1000}));
+    f.replaceDisk(disk({AUTO_KEEP_NEWEST_CONFIG:false,_bpmEditedAt:2000,SEARCH:'remote'}));
+    await f.manager.adoptExternalLocalSettings();assert.notEqual(f.manager.settings.SEARCH,'remote');
+    await f.manager.adoptExternalLocalSettings(true);assert.equal(f.manager.settings.SEARCH,'remote');assert.equal(f.writes.length,0);
+});
+for(const time of [1000,3000]) test('single-file timestamp whole-config selection '+time,async()=>{
+    const f=await localFixture(disk({_bpmEditedAt:2000}));
+    const local={...disk({_bpmEditedAt:2000}),SEARCH:'local'};
+    const remote=disk({_bpmEditedAt:time,SEARCH:'remote',RECENT_INSTALL_DAYS:44});
+    const chosen=f.manager.localMergeTarget(remote,local);
+    assert.equal(chosen.SEARCH,time>2000?'remote':'local');
+    assert.equal(chosen.RECENT_INSTALL_DAYS,time>2000?44:local.RECENT_INSTALL_DAYS);
+    f.manager.settings.AUTO_KEEP_NEWEST_CONFIG=false;
+    assert.equal(f.manager.localMergeTarget(remote,local).SEARCH,'local');
+});
+
+test('a blocked local save queue preserves request time instead of queue execution time',async()=>{
+    const f=await localFixture(disk({_bpmEditedAt:500}));
+    const backups=[];f.manager.app.vault.adapter.mkdir=async()=>{};f.manager.app.vault.adapter.write=async(path,text)=>{backups.push({path,text});};
+    let release;const blocked=new Promise(resolve=>{release=resolve;});f.manager.settingsSaveQueue=blocked;
+    const native=Date.now;let pending;
+    try{Date.now=()=>1000;f.manager.settings.SEARCH='early local';pending=f.manager.saveSettings({captureDevice:false});
+        f.replaceDisk(disk({_bpmEditedAt:2000,SEARCH:'later remote'}));Date.now=()=>3000;release();await pending;
+        assert.equal(f.manager.pendingSettingsSnapshot._bpmEditedAt,1000);
+        assert.equal(await f.manager.savePendingSettings(),true);assert.equal(f.disk().SEARCH,'later remote');assert.equal(JSON.parse(backups[0].text)._bpmEditedAt,1000);
+    }finally{Date.now=native;release();await pending;}
 });

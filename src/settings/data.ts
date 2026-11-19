@@ -114,6 +114,7 @@ export interface ManagerSettings {
     /** 是否持久化管理页筛选状态；关闭时筛选只在当前弹窗生命周期内生效。 */
     PERSISTENCE: boolean;
     /** Keep shared configuration publication explicit; opt out to save when the last editor closes. */
+    AUTO_KEEP_NEWEST_CONFIG: boolean;
     MANUAL_CONFIG_SAVE: boolean;
     /** Warn after three effective external changes to one configuration file within three seconds. */
     SYNC_CHANGE_WARNINGS: boolean;
@@ -309,6 +310,7 @@ export const DEFAULT_SETTINGS: ManagerSettings = {
 
     // 基础设置页
     PERSISTENCE: false,
+    AUTO_KEEP_NEWEST_CONFIG: true,
     MANUAL_CONFIG_SAVE: true,
     SYNC_CHANGE_WARNINGS: true,
     RECENT_INSTALL_DAYS: 7,

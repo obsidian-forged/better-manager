@@ -27,6 +27,7 @@ export function sharedConfigFingerprint(path: string, text: string | null): stri
         parsed = { ...parsed };
         if (record(parsed)) {
             delete parsed._bpmRevision;
+            delete parsed._bpmEditedAt;
             if (/\/data\/devices\/[^/]+\.json$/.test(path)) delete parsed.lastSeen;
         }
     }

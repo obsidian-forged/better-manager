@@ -47,7 +47,7 @@ test('different files and changes outside the rolling window cannot combine to t
 test('JSON format, key order, revision metadata, device heartbeat and repeated identical events do not count', async () => {
     const f = await fixture();
     for (let index = 0; index < 5; index++) {
-        await f.change(data, JSON.stringify({ _bpmRevision: { generation: index }, value: 0 }, null, index));
+        await f.change(data, JSON.stringify({ _bpmRevision: { generation: index }, _bpmEditedAt: 1000 + index, value: 0 }, null, index));
         await f.change(device, JSON.stringify({ lastSeen: index, name: 'Phone' }));
         f.watch.observe(icons); await f.advance(250);
     }

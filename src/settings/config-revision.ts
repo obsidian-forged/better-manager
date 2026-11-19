@@ -1,3 +1,4 @@
+import { editTime, timestampOrder, validEditTime } from './config-timestamp';
 import { settingsFingerprint } from './session-store';
 
 export type ConfigRecord = Record<string, unknown>;
@@ -6,7 +7,8 @@ export const CONFIG_REVISION_KEY = '_bpmRevision';
 export interface ConfigRevision {
     schema: 1;
     id: string;
-    generation: number;
+    generation?: number;
+    editedAt?: number;
     device: string;
     parents: string[];
     ancestors: string[];
@@ -30,8 +32,8 @@ const safeFile = (path: string): boolean => /^(?:data\/icons\.css|data\/devices\
     && !path.includes('..') && !path.includes('\\');
 
 function revisionOf(value: unknown): ConfigRevision | undefined {
-    if (!record(value) || value.schema !== 1 || !identifier(value.id) || !Number.isSafeInteger(value.generation)
-        || typeof value.generation !== 'number' || value.generation < 1 || typeof value.device !== 'string'
+    if (!record(value) || value.schema !== 1 || !identifier(value.id) || value.generation !== undefined && (typeof value.generation !== 'number' || !Number.isSafeInteger(value.generation) || value.generation < 1)
+        || value.editedAt !== undefined && (typeof value.editedAt !== 'number' || !Number.isFinite(value.editedAt)) || typeof value.device !== 'string'
         || !/^[a-z0-9-]{8,80}$/.test(value.device) || !ids(value.parents, 16) || !ids(value.ancestors, 256)
         || typeof value.digest !== 'string' || !digestPattern.test(value.digest) || !record(value.files)) return undefined;
     const files: Record<string, string | null> = {};
@@ -39,11 +41,12 @@ function revisionOf(value: unknown): ConfigRevision | undefined {
         if (!safeFile(path) || digest !== null && (typeof digest !== 'string' || !digestPattern.test(digest))) return undefined;
         files[path] = digest;
     }
-    return { schema: 1, id: value.id, generation: value.generation, device: value.device,
+    return { schema: 1, id: value.id, ...(value.generation !== undefined ? { generation: value.generation } : {}),
+        ...(value.editedAt !== undefined ? { editedAt: value.editedAt } : {}), device: value.device,
         parents: value.parents, ancestors: value.ancestors, digest: value.digest, files };
 }
 
-/** A revision identifies semantic content and ancestry, never wall-clock time or mtime. */
+/** Integrity identifies content and ancestry; editedAt alone supplies logical edit ordering. */
 export async function decodeConfig(value: unknown, hash: DigestText): Promise<ConfigSnapshot> {
     if (!record(value)) throw new Error('Invalid BPM configuration');
     // Hash the JSON representation that can actually reach disk, and detach mutable UI references.
@@ -66,6 +69,9 @@ export async function decodeConfig(value: unknown, hash: DigestText): Promise<Co
 
 export function compareConfig(local: ConfigSnapshot, incoming: ConfigSnapshot): RevisionRelation {
     if (local.id === incoming.id) return 'same';
+    const order = timestampOrder(local.revision?.editedAt, incoming.revision?.editedAt);
+    if (order !== undefined && order !== 0) return order > 0 ? 'ancestor' : 'descendant';
+    if (order === 0 && !sameConfigContent(local, incoming)) return 'descendant';
     if (local.revision?.ancestors.includes(incoming.id)) return 'ancestor';
     if (incoming.revision?.ancestors.includes(local.id)) return 'descendant';
     if (sameConfigContent(local, incoming)) return 'same';
@@ -77,12 +83,15 @@ export function sameConfigContent(local: ConfigSnapshot, incoming: ConfigSnapsho
 }
 
 export async function createConfigRevision(value: ConfigRecord, device: string, parents: ConfigSnapshot[],
-    files: Record<string, string | null>, hash: DigestText): Promise<ConfigSnapshot> {
+    files: Record<string, string | null>, hash: DigestText, editedAt?: number): Promise<ConfigSnapshot> {
     if (!parents.length || parents.length > 16) throw new Error('A configuration commit requires a known parent');
-    const normalized = await decodeConfig(value, hash);
+    const payload = { ...value };
+    const logicalTime = editedAt ?? editTime(payload);
+    delete payload._bpmEditedAt;
+    const normalized = await decodeConfig(payload, hash);
     const digest = normalized.digest;
     const ancestors = [...new Set([...parents.map(parent => parent.id), ...parents.flatMap(parent => parent.revision?.ancestors ?? [])])].slice(0, 256);
-    const body = { schema: 1 as const, generation: Math.max(...parents.map(parent => parent.revision?.generation ?? 0)) + 1,
+    const body = { schema: 1 as const, ...(validEditTime(logicalTime) ? { editedAt: logicalTime } : {}),
         device, parents: [...new Set(parents.map(parent => parent.id))], ancestors, digest, files };
     const revision = { ...body, id: await hash(settingsFingerprint(body)) };
     // Validate our output through the same boundary used for synced files.

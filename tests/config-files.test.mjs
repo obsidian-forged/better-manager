@@ -33,7 +33,7 @@ test('editing commits a primary revision once and leaves unchanged auxiliary fil
     await f.store.publish(value,f.store.current.files,()=>true);
     assert.deepEqual(f.publicWrites(),[`${root}/data.json`]);
     assert.equal(f.anchor().sharedEstablished,true);
-    const raw=JSON.parse(f.files.get(`${root}/data.json`));assert.equal(raw._bpmRevision.generation,1);
+    const raw=JSON.parse(f.files.get(`${root}/data.json`));assert.equal(raw._bpmRevision.generation,undefined);
     const count=f.writes.length,anchors=f.anchorWrites();await f.io.writeHead(f.store.current);
     assert.equal(f.writes.length,count);assert.equal(f.anchorWrites(),anchors);
 });
@@ -250,7 +250,7 @@ test('a private transaction keeps enough information to finish after a primary w
     await assert.rejects(f.store.publish(value,digests,()=>true),/disk busy/);
     assert.equal(f.files.get(`${root}/data/icons.css`),'new icons');assert.equal(JSON.parse(f.files.get(`${root}/data.json`)).name,'initial');assert.ok(f.anchor().transaction);
     f.adapter.write=realWrite;await f.store.publish(value,digests,()=>true);
-    assert.equal(JSON.parse(f.files.get(`${root}/data.json`)).name,'edited');assert.equal(f.store.current.revision.generation,1);assert.equal(f.anchor().transaction,undefined);
+    assert.equal(JSON.parse(f.files.get(`${root}/data.json`)).name,'edited');assert.equal(f.store.current.revision.generation,undefined);assert.equal(f.anchor().transaction,undefined);
 });
 test('a sync JSON merge with an unchanged marker preserves the input and creates a selectable conflict',async()=>{
     const f=fixture();const value=await f.store.load();f.store.begin(value);value.name='accepted';await f.store.publish(value,{},()=>true);

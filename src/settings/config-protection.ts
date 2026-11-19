@@ -1,3 +1,4 @@
+import { ConfigEditClock, editTime, timestampOrder, validEditTime } from './config-timestamp';
 import { compareConfig, ConfigRecord, ConfigSnapshot, createConfigRevision, DigestText, sameConfigContent } from './config-revision';
 import { settingsFingerprint } from './session-store';
 
@@ -6,6 +7,7 @@ export interface ConfigDraft {
     value: ConfigRecord;
     files: Record<string, string | null>;
     userEdited: boolean;
+    editedAt?: number;
 }
 export interface ConfigConflict {
     id: string;
@@ -25,6 +27,7 @@ export interface ConfigPublicationFiles {
     digests: Record<string, string | null>;
 }
 export interface ConfigProtectionIO {
+    backupDraft?(value: ConfigDraft): Promise<void>;
     readShared(): Promise<ConfigSnapshot>;
     readHead(): Promise<ConfigSnapshot | undefined>;
     writeHead(value: ConfigSnapshot): Promise<void>;
@@ -66,6 +69,7 @@ export class ConfigEditorReopened extends Error {
 
 /** Shared files change only through a save action, never directly from a file event. */
 export class ConfigProtection {
+    private readonly clock = new ConfigEditClock();
     private head!: ConfigSnapshot;
     private draft?: ConfigDraft;
     private baseline?: ConfigRecord;
@@ -96,7 +100,7 @@ export class ConfigProtection {
     }
 
     constructor(private readonly io: ConfigProtectionIO, private readonly device: string, private readonly hash: DigestText,
-        private readonly changed: () => void = () => {}) {}
+        private readonly changed: () => void = () => {}, private readonly autoKeepNewest: () => boolean = () => true) {}
 
     private async sameContent(value: ConfigRecord, files: Record<string, string | null>, base: ConfigSnapshot,
         incoming: ConfigSnapshot, purpose: ConfigComparisonPurpose = 'conflict'): Promise<boolean> {
@@ -113,6 +117,20 @@ export class ConfigProtection {
         this.baseline = clone(this.head.value);
         this.draft = await this.io.readDraft();
         this.conflictValue = await this.io.readConflict?.();
+        const ordered = this.autoKeepNewest() ? timestampOrder(this.draft?.userEdited ? this.draft.editedAt : (this.head.revision?.editedAt ?? editTime(this.head.value)), (disk.revision?.editedAt ?? editTime(disk.value))) : undefined;
+        if (ordered !== undefined && ordered <= 0 && (disk.id !== this.head.id || this.draft?.userEdited)) {
+            await this.adoptShared(disk); return clone(this.head.value);
+        }
+        if (ordered !== undefined && ordered > 0) {
+            if (this.draft) { Object.assign(this.stagedFiles, this.draft.files); this.recoveredEdits = this.draft.userEdited; }
+            await this.io.writeHead(this.head); return clone(this.draft?.value ?? this.head.value);
+        }
+        if (!this.autoKeepNewest() && disk.id !== this.head.id
+            && !await this.sameContent(this.draft?.value ?? this.head.value, this.draft?.files ?? {}, this.head, disk)) {
+            const local = clone(this.draft?.value ?? this.head.value);
+            await this.pause(disk, local, 'concurrent', this.draft?.files ?? {});
+            return local;
+        }
         // Old builds could preserve a raw-only conflict which the normalized editor cannot show.
         // Clear only its private marker; receiving a synced file never authorizes a shared write.
         if (this.conflictValue && await this.sameContent(this.conflictValue.local, this.conflictValue.localFiles,
@@ -122,7 +140,7 @@ export class ConfigProtection {
         }
         // 旧版本可能在“本机只是基线、没有用户编辑”时也留下冲突；这种冲突在启动时直接跟随最新远端。
         // Older builds could pause even when the local side was merely the base; follow the newest remote.
-        if (this.conflictValue && disk.revision && disk.id !== this.head.id) {
+        if (this.autoKeepNewest() && this.conflictValue && disk.revision && disk.id !== this.head.id) {
             const conflict = this.conflictValue;
             if (await this.sameContent(conflict.local, conflict.localFiles, conflict.base, conflict.base)
                 && ['descendant', 'conflict'].includes(compareConfig(this.head, disk))) {
@@ -133,7 +151,7 @@ export class ConfigProtection {
         // 同步系统带来更新版本时，本机若没有需要保护的编辑就直接采用；普通用户期望最新配置生效。
         // When a sync service delivered a newer revision and this device has no user edits, follow it.
         // A legacy (unverifiable) incoming file keeps the explicit conflict path.
-        if (!this.conflictValue && !this.draft?.userEdited && disk.revision && disk.id !== this.head.id) {
+        if (this.autoKeepNewest() && !this.conflictValue && !this.draft?.userEdited && disk.revision && disk.id !== this.head.id) {
             const relation = compareConfig(this.head, disk);
             if (relation === 'descendant' || relation === 'conflict') {
                 await this.adoptShared(disk);
@@ -211,7 +229,10 @@ export class ConfigProtection {
         this.editing = false;
     }
 
-    async stage(value: ConfigRecord, automatic = false): Promise<void> {
+    captureEditTime(requestedAt = Date.now()): number { return this.clock.next(this.draft?.editedAt, requestedAt); }
+
+    async stage(value: ConfigRecord, automatic = false, capturedAt?: number): Promise<void> {
+        const candidate = automatic ? undefined : capturedAt ?? this.captureEditTime();
         if (this.resolution) value = this.resolution.value;
         if (automatic && !this.resolution && this.baseline) {
             const rebased = rebaseBackground(this.baseline, this.draft?.value ?? this.baseline, value);
@@ -234,7 +255,9 @@ export class ConfigProtection {
             && equal(this.stagedFiles, this.draft.files));
         const userEdited = Boolean(this.recoveredEdits || fileEdits
             || (automatic || sameDraft ? this.draft?.userEdited : !equal(value, baseline)));
-        const draft = { base: this.openingHead?.id ?? this.head.id, value: clone(value), files: clone(this.resolution?.files ?? this.stagedFiles), userEdited };
+        const editedAt = !automatic && !sameDraft && userEdited
+            ? candidate : this.draft?.editedAt;
+        const draft = { ...(validEditTime(editedAt) ? { editedAt } : {}), base: this.openingHead?.id ?? this.head.id, value: clone(value), files: clone(this.resolution?.files ?? this.stagedFiles), userEdited };
         if (equal(value, this.head.value) && !Object.keys(this.stagedFiles).length && !this.draft) return;
         const fingerprint = settingsFingerprint(draft);
         if (fingerprint !== this.lastDraft) { await this.io.writeDraft(draft); this.lastDraft = fingerprint; this.changed(); }
@@ -254,14 +277,15 @@ export class ConfigProtection {
         if (this.resolution) this.resolution.files[path] = text;
         if (userEdited) { this.editedFiles.add(path); this.fileEdits = true; }
     }
-    async persistFileDraft(): Promise<void> { await this.stage(this.draft?.value ?? this.baseline ?? this.head.value); }
+    async persistFileDraft(userEdited = true, capturedAt = Date.now()): Promise<void> { await this.stage(this.draft?.value ?? this.baseline ?? this.head.value, !userEdited, capturedAt); }
     /** A failed private write must not leave a file edit available to a later Save. */
-    async stageFileDraft(path: string, text: string | null, userEdited: boolean): Promise<void> {
+    async stageFileDraft(path: string, text: string | null, userEdited: boolean, capturedAt = Date.now()): Promise<void> {
+        const candidate = userEdited ? this.captureEditTime(capturedAt) : capturedAt;
         const previous = { files: clone(this.stagedFiles), edited: [...this.editedFiles], fileEdits: this.fileEdits,
             draft: this.draft && clone(this.draft), lastDraft: this.lastDraft, resolution: this.resolution && clone(this.resolution),
             conflict: this.conflictValue && clone(this.conflictValue), incoming: this.incoming, recovered: this.recoveredEdits };
         this.stageFile(path, text, userEdited);
-        try { await this.persistFileDraft(); }
+        try { await this.persistFileDraft(userEdited, candidate); }
         catch (error) {
             for (const key of Object.keys(this.stagedFiles)) delete this.stagedFiles[key];
             Object.assign(this.stagedFiles, previous.files);
@@ -286,12 +310,19 @@ export class ConfigProtection {
     /** 采用共享文件中的最新版本，并清掉基于旧版本的自动草稿。
      * Adopt a newer shared snapshot and drop automatic state derived from the old head. */
     private async adoptShared(disk: ConfigSnapshot): Promise<void> {
-        this.head = disk;
-        this.openingHead = disk;
-        this.baseline = clone(disk.value);
+        const previousHead = this.head;
+        if (this.draft?.userEdited) {
+            if (this.io.backupDraft) await this.io.backupDraft(clone(this.draft));
+            else {
+                const id = await this.hash(settingsFingerprint(this.draft));
+                await this.io.preserveConflict({ id, reason: 'concurrent', base: previousHead, local: clone(this.draft.value), incoming: disk, localFiles: clone(this.draft.files) });
+                await this.io.clearConflict?.();
+            }
+        }
         await this.io.writeHead(disk);
         if (this.conflictValue) await this.io.clearConflict?.();
-        if (this.draft && !this.draft.userEdited) await this.io.removeDraft();
+        if (this.draft) await this.io.removeDraft();
+        this.head = disk; this.openingHead = disk; this.baseline = clone(disk.value);
         this.draft = undefined;
         this.lastDraft = '';
         this.fileEdits = false;
@@ -312,6 +343,11 @@ export class ConfigProtection {
      */
     async observeShared(disk: ConfigSnapshot, local: ConfigRecord): Promise<'same' | 'adopted' | 'conflict'> {
         if (disk.id === this.head.id) return 'same';
+        const ordered = this.autoKeepNewest() ? timestampOrder(this.draft?.userEdited ? this.draft.editedAt : (this.head.revision?.editedAt ?? editTime(this.head.value)), (disk.revision?.editedAt ?? editTime(disk.value))) : undefined;
+        if (ordered !== undefined) {
+            if (ordered > 0) return 'same';
+            await this.adoptShared(disk); return 'adopted';
+        }
         const relation = compareConfig(this.head, disk);
         // 旧版本回放不追回；下一次显式保存会修复。A stale replay never rolls the head back.
         if (relation === 'same' || relation === 'ancestor') return 'same';
@@ -336,6 +372,7 @@ export class ConfigProtection {
             await this.pause(disk, local, 'concurrent');
             return 'conflict';
         }
+        if (!this.autoKeepNewest()) { await this.pause(disk, local, 'concurrent'); return 'conflict'; }
         await this.adoptShared(disk);
         return 'adopted';
     }
@@ -368,6 +405,7 @@ export class ConfigProtection {
     choose(value: ConfigRecord, files: Record<string, string | null>): void {
         if (!this.conflictValue) throw new Error('No BPM configuration conflict to resolve');
         this.resolution = { value: clone(value), files: clone(files) };
+        if (this.draft) this.draft.editedAt = this.clock.next(this.draft.editedAt);
         this.recoveredEdits = true;
         this.changed();
     }
@@ -383,6 +421,10 @@ export class ConfigProtection {
         // previously incomplete sync and recognizes a result already published by another device.
         const disk = await this.io.readShared();
         if (!current()) return { status: 'cancelled' };
+        const ordered = this.autoKeepNewest() ? timestampOrder(this.draft?.userEdited ? this.draft.editedAt : (this.head.revision?.editedAt ?? editTime(this.head.value)), (disk.revision?.editedAt ?? editTime(disk.value))) : undefined;
+        if (ordered !== undefined && ordered <= 0 && (disk.id !== this.head.id || this.draft?.userEdited)) {
+            await this.adoptShared(disk); return { status: current() ? 'noop' : 'saved-pending', value: clone(disk.value) };
+        }
         const selected = clone(this.resolution?.value ?? value), files = this.pendingFiles;
         const sameEffective = await this.sameContent(selected, files, this.head, disk);
         if (sameEffective && !this.io.needsPublication?.() && await this.sameContent(selected, files, this.head, disk, 'publication')) {
@@ -396,9 +438,12 @@ export class ConfigProtection {
         // 本机没有用户编辑时，让共享文件的最新版本直接生效；保存不应把纯粹的同步变化变成冲突。
         // With nothing local to protect, the synced revision takes effect instead of asking the user
         // to resolve a conflict that only the sync service created.
-        if (!sameEffective && relation !== 'ancestor' && disk.id !== this.head.id && disk.revision && !this.hasLocalEdits) {
+        if (!sameEffective && relation !== 'ancestor' && disk.id !== this.head.id && disk.revision && !this.hasLocalEdits && this.autoKeepNewest() && ordered !== 1) {
             await this.adoptShared(disk);
             return { status: 'noop', value: clone(disk.value) };
+        }
+        if (ordered !== undefined && ordered > 0) {
+            await this.io.clearConflict?.(); this.conflictValue = undefined; this.resolution = undefined;
         }
         if (this.conflictValue && !sameEffective) {
             const reviewed = compareConfig(this.conflictValue.incoming, disk) === 'same' || relation === 'same'
@@ -410,7 +455,7 @@ export class ConfigProtection {
                 return { status: 'conflict' };
             }
             if (!this.resolution) return { status: 'conflict' };
-        } else if (!sameEffective && !sameBase && relation !== 'ancestor') {
+        } else if (ordered === undefined && !sameEffective && !sameBase && relation !== 'ancestor') {
             await this.pause(disk, selected, 'concurrent', files);
             return { status: 'conflict' };
         }
@@ -420,7 +465,7 @@ export class ConfigProtection {
         // Preserve newer heartbeat bytes only when a real Save is needed. A metadata-only
         // no-op above must not create a revision or touch any shared file.
         const prepared = await this.io.preparePublication?.(this.head, files);
-        const next = await createConfigRevision(selected, this.device, parents, prepared?.digests ?? fileDigests, this.hash);
+        const next = await createConfigRevision(selected, this.device, parents, prepared?.digests ?? fileDigests, this.hash, this.draft?.editedAt ?? (this.head.revision?.editedAt ?? editTime(this.head.value)));
         // Re-saving an unchanged local version after an old sync replay restores its existing
         // revision. Repeated explicit clicks are authorized; there is no automatic repair loop.
         const target = !this.resolution && sameConfigContent(next, this.head) ? this.head : next;
@@ -478,13 +523,15 @@ export class ConfigProtection {
             this.draft = undefined;
             this.lastDraft = '';
         }
-        this.fileEdits = false;
-        this.editedFiles.clear();
-        this.recoveredEdits = false;
         this.conflictValue = undefined;
         this.resolution = undefined;
         this.incoming = undefined;
-        for (const key of Object.keys(this.stagedFiles)) delete this.stagedFiles[key];
+        if (current()) {
+            this.fileEdits = false;
+            this.editedFiles.clear();
+            this.recoveredEdits = false;
+            for (const key of Object.keys(this.stagedFiles)) delete this.stagedFiles[key];
+        }
         this.changed();
         return { status: current() ? status : 'saved-pending', value: clone(snapshot.value) };
     }
