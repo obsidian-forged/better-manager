@@ -3036,8 +3036,7 @@ export class ManagerModal extends Modal {
             // 让 UI 先渲染提示再进行重操作
             await new Promise((r) => window.setTimeout(r, 50));
             try {
-                await this.appPlugins.loadManifests();
-                this.invalidatePluginCaches();
+                await this.manager.refreshPluginManifests();
                 // 同步新发现的插件到 BPM 管理列表
                 this.manager.synchronizePlugins(
                     Object.values(this.appPlugins.manifests).filter(
@@ -3534,8 +3533,7 @@ export class ManagerModal extends Modal {
         moreBtn.addEventListener("click", (ev) => {
             const menu = new Menu();
             menu.addItem((item) => item.setTitle(t("管理器_重载插件_描述")).setIcon("refresh-ccw").onClick(this.action(async () => {
-                await this.appPlugins.loadManifests();
-                this.invalidatePluginCaches();
+                await this.manager.refreshPluginManifests();
                 await this.reloadShowData();
             })));
             menu.addItem((item) => item.setTitle(t("菜单_隐藏插件_标题")).setIcon("eye-off").onClick(this.action(async () => {
@@ -5041,13 +5039,14 @@ export class ManagerModal extends Modal {
         return plugins;
     }
 
-    private invalidatePluginCaches() {
+    public invalidatePluginCaches() {
         this.pluginManifestCache = undefined;
         this.searchIndex.clear();
     }
 
     private getPluginSearchText(plugin: ManagerPlugin, manifest: PluginManifest): string {
-        const key = `${plugin.name}\n${plugin.desc}\n${manifest.author || ""}`;
+        // 同时检索自定义文案与磁盘清单，名称修改无需递增版本；Search custom labels and manifest metadata independently of version.
+        const key = `${plugin.name}\n${plugin.desc}\n${manifest.name}\n${manifest.description}\n${manifest.author || ""}`;
         const cached = this.searchIndex.get(plugin.id);
         if (cached?.key === key) return cached.text;
         const text = key.toLowerCase();
@@ -8728,6 +8727,7 @@ export class ManagerModal extends Modal {
     }
 
     public async reloadShowData() {
+        this.invalidatePluginCaches();
         this.appearanceNavigation?.close(); this.appearanceNavigation = undefined;
         this.overviewToolbarLayout?.destroy();
         this.overviewToolbarLayout = undefined;

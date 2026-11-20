@@ -18,6 +18,7 @@ import { LocalSettingsModal } from './settings/local-settings-modal';
 import { PluginIcons } from './icons/plugin-icons';
 import { pluginStorage } from './storage/plugin-storage';
 import { LocalStateStore } from './storage/local-state';
+import { FileChangeAdapter, subscribeFileChanges } from './storage/file-change-listener';
 import { applyTagStyle } from './ui/tag-style';
 import { BackgroundTaskCenter, BackgroundTaskHandle } from './tasks/task-center';
 import { DeviceManager } from './devices/device-manager';
@@ -190,6 +191,8 @@ export default class Manager extends Plugin {
     /** 卸载后禁止一切延迟回调再动 ribbon（避免在已卸载的插件上复活） */
     private isUnloaded = false;
     private initialization: Promise<void> | null = null;
+    private manifestRefresh?: Promise<boolean>;
+    private manifestRefreshTimer?: number;
     /** Background startup work must never execute inside onload, even on a hot reload. */
     private startupTimers = new Set<number>();
     /** 延迟启动倒计时提示（默认关闭） / Optional delayed-start countdown notice. */
@@ -306,6 +309,7 @@ export default class Manager extends Plugin {
         this.devices = new DeviceManager(this);
         await this.devices.initialize();
         if (this.isUnloaded) { this.devices.dispose(); return; }
+        this.startPluginManifestWatch();
         markSettingsDirty();
 
         // 一次性清理旧版本留下的 inline 覆盖（旧机制在元素上写 display/order，
@@ -1329,6 +1333,48 @@ export default class Manager extends Plugin {
         this.refreshSettingsSaveState();
     }
 
+    /** 合并清单读取，兼容 Obsidian 原地更新注册表；Coalesce reads and invalidate derived metadata caches. */
+    public async refreshPluginManifests(): Promise<boolean> {
+        if (this.isUnloaded) return false;
+        if (this.manifestRefresh) return this.manifestRefresh;
+        const work = (async () => {
+            const before = JSON.stringify(this.appPlugins.manifests);
+            await this.appPlugins.loadManifests();
+            if (this.isUnloaded) return false;
+            this.managerModal?.invalidatePluginCaches();
+            return before !== JSON.stringify(this.appPlugins.manifests);
+        })();
+        this.manifestRefresh = work;
+        try { return await work; }
+        finally { if (this.manifestRefresh === work) this.manifestRefresh = undefined; }
+    }
+
+    /** 只观察插件清单，不采纳设置；Watch manifest metadata independently of configuration sync. */
+    private startPluginManifestWatch(): void {
+        const root = normalizePath(this.app.vault.configDir + '/plugins') + '/';
+        this.register(subscribeFileChanges(this.app.vault.adapter as FileChangeAdapter, path => {
+            const normalized = normalizePath(path);
+            if (this.isUnloaded || !normalized.startsWith(root)
+                || !/^[^/]+\/manifest\.json$/.test(normalized.slice(root.length)) || this.manifestRefreshTimer !== undefined) return;
+            this.manifestRefreshTimer = window.setTimeout(() => {
+                this.manifestRefreshTimer = undefined;
+                void this.refreshChangedPluginManifests().catch(error => this.reportError('Refreshing plugin manifests failed', error));
+            }, 250);
+        }, error => this.reportError('Observing plugin manifests failed', error)));
+        this.register(() => {
+            if (this.manifestRefreshTimer !== undefined) window.clearTimeout(this.manifestRefreshTimer);
+            this.manifestRefreshTimer = undefined;
+        });
+    }
+
+    private async refreshChangedPluginManifests(): Promise<void> {
+        // 等待较早的读取后再读，避免漏掉读取期间的下一次修改；Read again after any earlier in-flight read.
+        await this.manifestRefresh;
+        if (await this.refreshPluginManifests() && !this.isUnloaded && this.managerModal?.modalEl.isConnected) {
+            await this.managerModal.reloadShowData();
+        }
+    }
+
     /** 手动刷新：采纳外部设置、同步插件记录并重绘当前界面。
      * Manual refresh: adopt external settings, resync plugin records and redraw the current view. */
     public async refreshFromDisk(): Promise<void> {
@@ -1336,6 +1382,8 @@ export default class Manager extends Plugin {
         if (this.configProtection) {
             await this.configProtection.refreshShared().catch(error => this.reportError('Following the synced configuration failed', error));
         } else await this.adoptExternalLocalSettings(true).catch(error => this.reportError('Adopting external settings failed', error));
+        await this.refreshPluginManifests();
+        if (this.isUnloaded) return;
         this.synchronizePlugins(Object.values(this.appPlugins.manifests).filter(manifest => manifest.id !== this.manifest.id), { save: false });
         await this.managerModal?.reloadShowData();
         this.refreshConfigConflict();
