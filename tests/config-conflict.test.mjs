@@ -30,6 +30,19 @@ test('readable values redact secrets recursively instead of dumping credentials'
     const text=conflictValueText({apiKey:'secret-value',enabled:true},[],word);
     assert.equal(text.includes('secret-value'),false);assert.ok(text.includes('on'));
 });
+test('manifest source markers never create a configuration conflict',()=>{
+    const local={Plugins:[{id:'custom',name:'Alias',desc:'Custom',group:'work',manifestName:'Old name',manifestDescription:'Old description'}]};
+    const remote={Plugins:[{id:'custom',name:'Alias',desc:'Custom',group:'work',manifestName:'New name',manifestDescription:'New description'}]};
+    assert.deepEqual(conflictSections(local,remote,{},{}),[]);
+});
+test('on-demand choices are user configuration and remain selectable',()=>{
+    const local={ON_DEMAND:{plugins:['a'],ribbon:true,views:true,menus:true}};
+    const remote={ON_DEMAND:{plugins:['b'],ribbon:false,views:true,menus:true}};
+    const sections=conflictSections(local,remote,{}, {});
+    assert.equal(sections.length,1);
+    assert.ok(sections[0].differences.some(item=>item.path.join('.')==='ON_DEMAND.plugins'));
+    assert.ok(sections[0].differences.some(item=>item.path.join('.')==='ON_DEMAND.ribbon'));
+});
 test('realtime sync detection keeps supported registered IDs and excludes batch sync plugins',()=>{
     const ids=new Set(['sync-engine','easy-sync','remotely-save','nutstore-sync','fast-note-sync','obsidian-livesync']);
     assert.deepEqual(detectSyncPlugins(ids,true).map(item=>item.id),['sync-engine','nutstore-sync','fast-note-sync','obsidian-livesync','sync']);
@@ -266,4 +279,13 @@ test('preset additions and removals have one source section and all-source selec
         choices.selectAll('incoming');assert.deepEqual(choices.result().value,b);
         choices.selectAll('local');assert.deepEqual(choices.result().value,a);
     }
+});
+test('on-demand choices resolve as one setting row without touching plugin records',()=>{
+    const local={ON_DEMAND:{plugins:['a'],ribbon:true,views:true,menus:true},Plugins:[{id:'a',enabled:true}]};
+    const remote={ON_DEMAND:{plugins:['b'],ribbon:false,views:true,menus:true},Plugins:[{id:'a',enabled:true}]};
+    const choices=new ConfigConflictChoices('conflict',local,remote);choices.setFiles({},{});
+    choices.selectItem({kind:'field',id:'ON_DEMAND'},'incoming');
+    const value=choices.result().value;
+    assert.deepEqual(value.ON_DEMAND,remote.ON_DEMAND);
+    assert.deepEqual(value.Plugins,local.Plugins);
 });

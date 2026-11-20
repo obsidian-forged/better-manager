@@ -4,7 +4,8 @@ import { build } from 'esbuild';
 import { createRequire } from 'node:module';
 import { randomUUID, webcrypto } from 'node:crypto';
 
-globalThis.window = { addEventListener() {}, removeEventListener() {}, crypto: webcrypto };
+globalThis.window = { addEventListener() {}, removeEventListener() {}, crypto: webcrypto, setTimeout, clearTimeout,
+    setInterval: () => 0, clearInterval() {} };
 const nativeRequire = createRequire(import.meta.url);
 class NativeBase {}
 const notices = [];
@@ -25,6 +26,7 @@ class NativeModal extends NativeBase {
 const obsidian = { normalizePath: path => path, Platform: { isMobileApp: false, isTablet: false },
     requireApiVersion: () => true, getLanguage: () => 'en',
     Plugin: NativeBase, Modal: NativeModal, SuggestModal: NativeBase, PluginSettingTab: NativeBase,
+    ItemView: NativeBase, ButtonComponent: NativeBase, Menu: NativeBase, Setting: NativeBase, DropdownComponent: NativeBase, ToggleComponent: NativeBase,
     Notice: class { constructor(message) { notices.push(message); } hide() {} } };
 async function load(entry) {
     const result = await build({ entryPoints: [entry], bundle: true, platform: 'node', format: 'cjs', write: false,

@@ -4747,6 +4747,9 @@ export class ManagerModal extends Modal {
                     if (!ManagerPlugin) return; // Fix TS2532
                     ManagerPlugin.name = plugin.name;
                     ManagerPlugin.desc = plugin.description;
+                    // 还原后重新以清单为来源；Reset the source markers after restoring.
+                    ManagerPlugin.manifestName = plugin.name;
+                    ManagerPlugin.manifestDescription = plugin.description;
                     ManagerPlugin.group = "";
                     await this.manager.overview.setPluginState(plugin.id, { delay: '' });
                     ManagerPlugin.tags = [];

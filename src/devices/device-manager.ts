@@ -82,7 +82,9 @@ export class DeviceManager {
         const legacy = settings.DEVICE_MANAGEMENT;
         // 旧版非延迟模式以原生启用表为准；Migrate the actual non-delayed enabled state.
         if (!legacy && !settings.DELAY) {
-            settings.Plugins.forEach(plugin => { plugin.enabled = this.manager.appPlugins.enabledPlugins.has(plugin.id); });
+            settings.Plugins.forEach(plugin => {
+                if (!this.manager.onDemand?.configured(plugin.id)) plugin.enabled = this.manager.appPlugins.enabledPlugins.has(plugin.id);
+            });
         }
         settings.DEVICE_MANAGEMENT = normalizeDeviceManagement(legacy,
             snapshotPreset(settings, { appearance: this.readLiveAppearance() }));

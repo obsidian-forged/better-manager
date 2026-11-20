@@ -93,15 +93,19 @@ function syncTakeoverPluginRecords(manager: Manager, pluginIds: string[]): boole
         const manifest = manifests[id];
         if (!manifest) continue;
 
+        const name = manifest.name || id;
+        const desc = manifest.description || '';
         manager.settings.Plugins.push({
             id,
-            name: manifest.name || id,
-            desc: manifest.description || '',
+            name,
+            desc,
             group: '',
             tags: [],
             enabled: true,
             delay: 'default',
             note: '',
+            manifestName: name,
+            manifestDescription: desc,
         });
         changed = true;
     }

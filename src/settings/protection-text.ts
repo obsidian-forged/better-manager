@@ -125,6 +125,7 @@ const settingLabels: Record<string, [string, string]> = {
     RECENT_INSTALL_DAYS: ['最近安装天数', 'Recently installed window'],
     CENTER: ['管理器居中', 'Center the manager'],
     DELAY: ['延迟启动', 'Delayed startup'],
+    ON_DEMAND: ['按需加载', 'On-demand loading'],
     DELAY_WAIT_MESSAGE: ['延迟启动倒计时', 'Delayed startup countdown'],
     DELAY_WAIT_MESSAGE_TEXT: ['倒计时提示文字', 'Countdown message'],
     DELAY_WAIT_MESSAGE_EXTRA_SECONDS: ['倒计时额外等待', 'Extra countdown seconds'],
@@ -192,7 +193,7 @@ const settingLabels: Record<string, [string, string]> = {
 };
 const fieldLabels: Record<string, [string, string]> = {
     name: ['名称', 'Name'], configured: ['已配置', 'Configured'], plugins: ['插件', 'Plugins'], enabled: ['启用', 'Enabled'],
-    delay: ['延迟', 'Delay'], filters: ['筛选', 'Filters'], search: ['搜索', 'Search'], status: ['状态', 'Status'],
+    delay: ['延迟', 'Delay'], views: ['侧栏入口', 'Sidebar entry'], menus: ['右键入口', 'Context-menu entry'], filters: ['筛选', 'Filters'], search: ['搜索', 'Search'], status: ['状态', 'Status'],
     group: ['分组', 'Group'], tag: ['标签', 'Tag'], statusOperator: ['状态匹配', 'Status matching'],
     groupOperator: ['分组匹配', 'Group matching'], tagOperator: ['标签匹配', 'Tag matching'], delayOperator: ['延迟匹配', 'Delay matching'],
     ribbon: ['侧边栏', 'Ribbon'], ribbonGroups: ['侧边栏分组', 'Ribbon groups'], ribbonEnabled: ['侧边栏管理', 'Ribbon management'],
@@ -274,6 +275,7 @@ const settingDescriptions: Record<string, [string, string]> = {
     GROUPS_TAGS: ['插件的分组与标签定义。', 'Plugin group and tag definitions.'],
     RIBBON: ['边栏按钮、分组与边栏编排开关。', 'Ribbon buttons, groups and the Ribbon management switch.'],
     DELAYS: ['延迟启动配置与倒计时提示。', 'Delayed startup entries and the countdown prompt.'],
+    ON_DEMAND: ['按需加载的插件与功能区、侧栏、右键入口。', 'Plugins loaded on demand and their Ribbon, sidebar and context-menu entries.'],
     PLUGIN_LAYOUT: ['插件总览中的排序、分隔线与插件排列。', 'Plugin order, separators and layout in the overview.'],
     Plugins: ['插件记录的名称、说明、启用状态、分组、标签与备注。', 'Plugin records: names, descriptions, enabled state, groups, tags and notes.'],
     DEVICE_MANAGEMENT: ['设备名称、类型与默认预设；具体预设见下方各行。', 'Device names, types and default presets; individual presets are listed below.'],

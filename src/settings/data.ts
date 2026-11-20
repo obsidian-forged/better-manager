@@ -28,6 +28,17 @@ export type FilterOperator = "contains" | "not-contains";
 export type TagFilterOperator = FilterOperator;
 export type PluginOverviewLayout = "list" | "two-column";
 
+/** 按需加载的全局选择；随配置同步，设备预设仍决定启用状态。
+ * Global on-demand choices; follow configuration sync while presets control enabling. */
+export interface OnDemandSettings {
+    /** 按需加载的插件 id；其余插件遵循正常／延迟设置。 */
+    plugins: string[];
+    /** 功能区加载按钮、侧栏入口与右键菜单加载项；均为默认开启。 */
+    ribbon: boolean;
+    views: boolean;
+    menus: boolean;
+}
+
 /** 顶栏功能项标签显示模式。 */
 export type ToolbarLabelMode = "always" | "active" | "hidden";
 export type PluginOverviewSort = "layout" | "name-asc" | "name-desc" | "installed-desc" | "installed-asc" | "updated-desc" | "updated-asc"; 
@@ -124,6 +135,8 @@ export interface ManagerSettings {
     CENTER: boolean;
     /** 是否启用 BPM 延迟启动模式；开启后插件启用状态由 BPM 记录驱动。 */
     DELAY: boolean;
+    /** 按需加载插件与界面入口；随配置同步。 */
+    ON_DEMAND: OnDemandSettings;
     /** 延迟启动时是否显示倒计时提示；默认关闭，且延迟启动关闭时不显示。 */
     DELAY_WAIT_MESSAGE: boolean;
     /** 倒计时提示的自定义信息；留空使用默认文案，可写 {seconds}。 */
@@ -316,6 +329,7 @@ export const DEFAULT_SETTINGS: ManagerSettings = {
     RECENT_INSTALL_DAYS: 7,
     CENTER: false,
     DELAY: false,
+    ON_DEMAND: { plugins: [], ribbon: true, views: true, menus: true },
     DELAY_WAIT_MESSAGE: false,
     DELAY_WAIT_MESSAGE_TEXT: "",
     DELAY_WAIT_MESSAGE_EXTRA_SECONDS: 0,

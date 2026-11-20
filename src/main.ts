@@ -23,6 +23,7 @@ import { applyTagStyle } from './ui/tag-style';
 import { BackgroundTaskCenter, BackgroundTaskHandle } from './tasks/task-center';
 import { DeviceManager } from './devices/device-manager';
 import { OverviewState } from './overview-state';
+import { OnDemandRuntime } from './on-demand/runtime';
 import { featureEnabled, toolEnabled } from './features';
 import { DelayWaitNotice } from './delay-wait-notice';
 import { normalizePath, ObsidianProtocolData, Plugin, PluginManifest, Workspace } from 'obsidian';
@@ -223,6 +224,7 @@ export default class Manager extends Plugin {
     public lastDelayStartReport: DelayStartResult[] = [];
 
     public readonly overview = new OverviewState(this);
+    public onDemand?: OnDemandRuntime;
 
     public onload(): void {
         if (this.isUnloaded || this.initialization) return;
@@ -306,6 +308,9 @@ export default class Manager extends Plugin {
 
         // 先投影本机预设，再构造延迟队列；Select the device preset before queuing plugins.
         this.synchronizePlugins(Object.values(this.appPlugins.manifests), { save: false });
+        this.onDemand = new OnDemandRuntime(this);
+        await this.onDemand.initialize();
+        if (this.isUnloaded) { this.onDemand.dispose(); return; }
         this.devices = new DeviceManager(this);
         await this.devices.initialize();
         if (this.isUnloaded) { this.devices.dispose(); return; }
@@ -393,7 +398,12 @@ export default class Manager extends Plugin {
                     if (this.settings.DEVICE_MANAGEMENT?.enabled) {
                         // 启动只应用，不把当前运行态回写预设；Opening BPM must not rewrite presets or data.json.
                         await this.devices.apply({ refreshViews: false, persist: false }).catch(error => this.devices.report(error));
-                    } else if (this.settings.DELAY) await this.drainDelayQueue();
+                    } else {
+                        for (const record of this.settings.Plugins) {
+                            if (this.onDemand?.configured(record.id)) await this.onDemand.apply(record.id, record.enabled);
+                        }
+                        if (this.settings.DELAY) await this.drainDelayQueue();
+                    }
                 } catch (error) {
                     this.delayWaitNotice?.stop();
                     throw errorObject(error);
@@ -430,7 +440,7 @@ export default class Manager extends Plugin {
     }
 
     /** 必要诊断统一受开关控制 / Keep diagnostic output behind the debug setting. */
-    private reportError(context: string, error: unknown, notify = false): void {
+    public reportError(context: string, error: unknown, notify = false): void {
         if (this.settings?.DEBUG) console.error(`[BPM] ${context}`, error);
         if (notify && !this.isUnloaded) new Notice(errorMessage(error), 10_000);
     }
@@ -451,6 +461,7 @@ export default class Manager extends Plugin {
         this.releaseHighlightsModal?.close();
         this.releaseHighlightsModal = undefined;
         this.delayWaitNotice?.stop();
+        this.onDemand?.dispose();
         this.devices?.dispose();
         // 卸载前恢复本机预设视图，避免其他预设的投影值留在内存。
         void this.devices?.flushProjection().catch(error => this.reportError('Restoring the device projection during unload failed', error));
@@ -1341,8 +1352,12 @@ export default class Manager extends Plugin {
             const before = JSON.stringify(this.appPlugins.manifests);
             await this.appPlugins.loadManifests();
             if (this.isUnloaded) return false;
+            // 清单读取后立即把名称/描述同步到插件记录，界面与搜索结果保持一致。
+            // Apply the fresh metadata to plugin records so the list matches the search results.
+            const recordsChanged = this.synchronizePlugins(
+                Object.values(this.appPlugins.manifests).filter(manifest => manifest.id !== this.manifest.id));
             this.managerModal?.invalidatePluginCaches();
-            return before !== JSON.stringify(this.appPlugins.manifests);
+            return recordsChanged || before !== JSON.stringify(this.appPlugins.manifests);
         })();
         this.manifestRefresh = work;
         try { return await work; }
@@ -1697,8 +1712,8 @@ export default class Manager extends Plugin {
     public get automaticSavesSuppressed(): boolean { return false; }
 
     /** The only shared settings publication entry point. It is safe to call from a DOM handler. */
-    public async savePendingSettings(): Promise<boolean> {
-        return this.publishPendingSettings();
+    public async savePendingSettings(options: { notify?: boolean } = {}): Promise<boolean> {
+        return this.publishPendingSettings(() => true, options.notify !== false);
     }
 
     /** 用户明确选择不保存后丢弃草稿；Discard the local draft after an explicit decline. */
@@ -1949,7 +1964,9 @@ export default class Manager extends Plugin {
             const persisted = this.appPlugins.enabledPlugins.has(plugin.id);
             const running = Boolean(this.appPlugins.plugins?.[plugin.id]);
             try {
-                if (this.overview.pluginState(plugin.id, this.devices.boundPresetId)) {
+                if (this.onDemand?.configured(plugin.id)) {
+                    await this.onDemand.apply(plugin.id, enabled);
+                } else if (this.overview.pluginState(plugin.id, this.devices.boundPresetId)) {
                     if (enabled && !running) await this.appPlugins.enablePlugin(plugin.id);
                     else if (!enabled && running) await this.appPlugins.disablePlugin(plugin.id);
                 } else if (!enabled) {
@@ -2330,7 +2347,7 @@ export default class Manager extends Plugin {
             changed = true;
         }
         if (!existing) {
-            this.settings.Plugins.push({
+            const record: ManagerPlugin = {
                 id,
                 name: this.manifest.name,
                 desc: this.manifest.description,
@@ -2339,10 +2356,15 @@ export default class Manager extends Plugin {
                 enabled: true,
                 delay: "",
                 note: "",
-            });
+            };
+            this.applyManifestMetadata(record, this.manifest);
+            this.settings.Plugins.push(record);
             if (shouldSave) void this.saveSettings({ automatic: true }).catch(error => this.reportError('Retaining a plugin record failed', error, true));
             return true;
         }
+        const metadataBefore = JSON.stringify(existing);
+        this.applyManifestMetadata(existing, this.manifest);
+        if (JSON.stringify(existing) !== metadataBefore) changed = true;
         if (!existing.name) {
             existing.name = this.manifest.name;
             changed = true;
@@ -2445,6 +2467,7 @@ export default class Manager extends Plugin {
         this.synchronizePlugins(plugins);
 
         for (const plugin of this.getDelayManagedPluginManifests()) {
+            if (this.onDemand?.configured(plugin.id)) continue;
             // 插件状态
             const isEnabled = this.appPlugins.enabledPlugins.has(plugin.id);
             if (isEnabled) {
@@ -2484,6 +2507,7 @@ export default class Manager extends Plugin {
     public async disableDelaysForAllPlugins() {
         const plugins = this.getDelayManagedPluginManifests();
         for (const pm of plugins) {
+            if (this.onDemand?.configured(pm.id)) continue;
             const plugin = this.settings.Plugins.find(p => p.id === pm.id)
             if (plugin) {
                 if (plugin.enabled) {
@@ -2515,7 +2539,7 @@ export default class Manager extends Plugin {
         for (const plugin of this.getDelayManagedPluginManifests()) {
             if (plugin.id === this.manifest.id || (Platform.isMobileApp && plugin.isDesktopOnly)) continue;
             const record = this.settings.Plugins.find(p => p.id === plugin.id);
-            if (!record || !record.enabled) continue;
+            if (!record || !record.enabled || this.onDemand?.configured(plugin.id)) continue;
 
             const delay = this.settings.DELAYS.find(item => item.id === record.delay);
             // delay 为空档或指向不存在的档位时回落 0（与旧行为一致，档位语义归配置层）
@@ -2590,7 +2614,7 @@ export default class Manager extends Plugin {
                 if (this.isUnloaded || this.delayQueue[0] !== item) continue;
                 this.delayQueue.shift();
                 const record = this.settings.Plugins.find(plugin => plugin.id === item.id);
-                if (!record?.enabled || this.isBpmIgnoredPlugin(item.id)) continue;
+                if (!record?.enabled || this.isBpmIgnoredPlugin(item.id) || this.onDemand?.configured(item.id)) continue;
                 const result = await this.startPluginQueued(item.id);
                 this.lastDelayStartReport.push(result);
 
@@ -2718,6 +2742,19 @@ export default class Manager extends Plugin {
     }
 
     // 同步插件到配置文件
+    /** 名称与描述默认跟随清单；用户改过则保留，并把最新清单值记为来源。
+     * Names and descriptions follow the manifest unless the user edited them. */
+    private applyManifestMetadata(record: ManagerPlugin, manifest: PluginManifest): void {
+        const name = manifest.name || manifest.id;
+        const description = manifest.description || '';
+        // 旧记录没有来源标记，无法分辨别名与旧缓存；按清单名优先迁移一次。
+        // Legacy records cannot distinguish an alias from stale cache, so adopt once.
+        if (record.manifestName === undefined || record.name === record.manifestName) record.name = name;
+        record.manifestName = name;
+        if (record.manifestDescription === undefined || record.desc === record.manifestDescription) record.desc = description;
+        record.manifestDescription = description;
+    }
+
     public synchronizePlugins(p1: PluginManifest[], options: { save?: boolean } = {}): boolean {
         const previousStateJson = JSON.stringify({
             Plugins: this.settings.Plugins,
@@ -2748,6 +2785,7 @@ export default class Manager extends Plugin {
                 nextPlugins.push(mp);
                 pluginSettingsById.set(p1Item.id, mp);
             }
+            this.applyManifestMetadata(mp, p1Item);
             if (bpmInstalledIds.has(p1Item.id) && !mp.tags.includes(BPM_TAG_ID)) {
                 mp.tags.push(BPM_TAG_ID);
             }

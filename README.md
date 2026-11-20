@@ -54,7 +54,7 @@ The main tab for day-to-day plugin management.
 | **Batch actions** | Enable, disable, hide or unhide selected plugins, including grouped workflows |
 | **Filters** | Filter by recent installation, enabled state, group, tag, delay setting, and keyword |
 | **Organization** | Add custom names, descriptions, notes, groups and tags; quickly assign a group or add tags from the context menu |
-| **Startup control** | Assign delayed startup presets and keep startup behavior visible from the list |
+| **Startup control** | Assign delayed startup presets, choose plugins that load on demand, and keep startup behavior visible from the list |
 | **Plugin actions** | Check updates, download updates, restart a plugin, temporarily start a plugin, open settings, open folders, copy IDs, open repositories, clear config, hide, or delete |
 | **BPM tags** | Automatically marks BPM-installed plugins with `bpm-install` and supports ignored plugins with `bpm-ignore` |
 
@@ -317,7 +317,7 @@ Open **More → Better Manager settings**. Settings pages have icons and descrip
 
 | Page | What you can configure |
 |------|------------------------|
-| **Basic** | Feature/tool visibility, manual saving, external-change reminders, store Preview opt-in, previous-build retention Preview, language, persistent filters, recent-install window, delayed startup, startup/update behavior, BPM tags, Ribbon management, commands, debug mode and GitHub token |
+| **Basic** | Feature/tool visibility, manual saving, external-change reminders, store Preview opt-in, previous-build retention Preview, language, persistent filters, recent-install window, delayed startup, on-demand loading, startup/update behavior, BPM tags, Ribbon management, commands, debug mode and GitHub token |
 | **Main Page Actions** | Choose which plugin actions appear directly on plugin cards and which stay in the right-click menu |
 | **Style** | Plugin list layout, item display style, group/tag styles, and disabled-plugin fading |
 | **Groups** | Create, rename, recolor, and delete plugin groups |

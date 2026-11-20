@@ -969,6 +969,12 @@ const upsertPluginRecord = (
 		record.delay = plugin.delay || "";
 		record.note = plugin.note || "";
 	}
+	if (manifest) {
+		// 传输包里的清单值作为来源，后续清单改名继续同步。
+		// Record the manifest values as the source for future renames.
+		record.manifestName = manifest.name || record.name;
+		record.manifestDescription = manifest.description || "";
+	}
 	return record;
 };
 

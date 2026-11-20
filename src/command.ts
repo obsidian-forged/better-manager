@@ -83,6 +83,7 @@ class ManagerCommandService {
 
     isPluginEnabled(pluginId: string): boolean {
         const managerPlugin = this.getManagerPlugin(pluginId);
+        if (this.manager.onDemand?.configured(pluginId)) return this.manager.onDemand.authorized(pluginId);
         if (this.manager.settings.DELAY && managerPlugin && !managerPlugin.tags.includes(BPM_IGNORE_TAG)) {
             return managerPlugin.enabled;
         }
@@ -501,7 +502,10 @@ class ManagerCommandService {
             return false;
         }
 
-        if (this.manager.settings.DELAY && managerPlugin && !managerPlugin.tags.includes(BPM_IGNORE_TAG)) {
+        if (this.manager.onDemand?.configured(pluginId)) {
+            await this.manager.onDemand.apply(pluginId, targetEnabled);
+            if (managerPlugin) managerPlugin.enabled = targetEnabled;
+        } else if (this.manager.settings.DELAY && managerPlugin && !managerPlugin.tags.includes(BPM_IGNORE_TAG)) {
             managerPlugin.enabled = targetEnabled;
             if (targetEnabled) await this.manager.appPlugins.enablePlugin(pluginId);
             else await this.manager.appPlugins.disablePlugin(pluginId);
@@ -529,8 +533,14 @@ class ManagerCommandService {
             this.capturePreviousState(this.t("command_snapshot_restart", { name: this.getPluginName(pluginId) }));
             new Notice(this.manager.translator.t("管理器_重启中_提示"));
             const heapBefore = readHeapMB();
-            await this.manager.appPlugins.disablePluginAndSave(pluginId);
-            await this.manager.appPlugins.enablePluginAndSave(pluginId);
+            if (this.manager.onDemand?.configured(pluginId)) {
+                await this.manager.onDemand.apply(pluginId, false);
+                await this.manager.onDemand.apply(pluginId, true);
+                await this.manager.onDemand.loadNow(pluginId);
+            } else {
+                await this.manager.appPlugins.disablePluginAndSave(pluginId);
+                await this.manager.appPlugins.enablePluginAndSave(pluginId);
+            }
             this.refreshAfterStatusChange([pluginId]);
             void this.reportRestartCost(pluginId, heapBefore);
         });

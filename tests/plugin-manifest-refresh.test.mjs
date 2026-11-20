@@ -7,6 +7,7 @@ const nativeRequire = createRequire(import.meta.url);
 class Base {}
 const obsidian = {
     Plugin: Base, Modal: Base, SuggestModal: Base, FuzzySuggestModal: Base, PluginSettingTab: Base,
+    ItemView: Base, ButtonComponent: Base, Menu: Base, Setting: Base, DropdownComponent: Base, ToggleComponent: Base,
     Platform: {}, normalizePath: path => path.replaceAll('\\', '/'),
 };
 async function load(entry) {
@@ -43,6 +44,7 @@ function fixture() {
     manager.app = { vault: { configDir: '.custom-config', adapter: { onFileChange() { calls.push('native-event'); } } } };
     manager.register = callback => cleanup.push(callback);
     manager.reportError = (context, error) => calls.push([context, error.message]);
+    manager.saveSettings = async () => { calls.push('save'); };
     manager.adoptExternalLocalSettings = async () => { calls.push('settings-read'); };
     manager.refreshConfigConflict = () => {};
     manager.refreshSettingsSaveState = () => {};
@@ -68,16 +70,48 @@ test('search finds both custom labels and current manifest metadata after renami
     assert.ok(!after.includes('old name'));
 });
 
-test('manual refresh rereads disk and invalidates an in-place native registry cache, retaining user labels and organization', async () => {
-    const f = fixture(), before = structuredClone(f.record);
+test('legacy records adopt manifest labels once and keep user organization', async () => {
+    const f = fixture();
+    await f.manager.refreshFromDisk();
+    assert.equal(f.record.name, 'Old name');
+    assert.equal(f.record.desc, 'Old description');
+    assert.equal(f.record.manifestName, 'Old name');
+    assert.equal(f.record.manifestDescription, 'Old description');
+    assert.equal(f.record.group, 'work');
+    assert.ok(f.record.tags.includes('favorite'));
+    assert.equal(f.record.note, 'My note');
+});
+
+test('manual refresh rereads disk and shows the renamed plugin card', async () => {
+    const f = fixture();
+    await f.manager.refreshFromDisk();
     assert.equal(f.modal.getUniquePluginManifests()[0].name, 'Old name');
     f.rename('Changed name');
     await f.manager.refreshFromDisk();
     assert.equal(f.modal.getUniquePluginManifests()[0].name, 'Changed name');
     assert.ok(f.modal.getPluginSearchText(f.record, f.registry.manifests.custom).includes('changed name'));
-    assert.deepEqual(f.record, before);
-    assert.equal(f.calls.filter(call => call === 'read').length, 1);
-    assert.equal(f.calls.filter(call => call === 'redraw').length, 1);
+    // 列表标题使用插件记录，必须与搜索结果同步。
+    // The card title uses the plugin record, so it must follow the manifest too.
+    assert.equal(f.record.name, 'Changed name');
+    assert.equal(f.record.desc, 'Changed name description');
+    assert.equal(f.record.manifestName, 'Changed name');
+    assert.equal(f.record.group, 'work');
+    assert.equal(f.record.note, 'My note');
+    assert.equal(f.calls.filter(call => call === 'read').length, 2);
+    assert.equal(f.calls.filter(call => call === 'redraw').length, 2);
+});
+
+test('user-edited labels survive later manifest renames while the source marker advances', async () => {
+    const f = fixture();
+    await f.manager.refreshFromDisk();
+    f.record.name = 'My alias';
+    f.record.desc = 'My description';
+    f.rename('Renamed upstream');
+    await f.manager.refreshFromDisk();
+    assert.equal(f.record.name, 'My alias');
+    assert.equal(f.record.desc, 'My description');
+    assert.equal(f.record.manifestName, 'Renamed upstream');
+    assert.equal(f.record.manifestDescription, 'Renamed upstream description');
 });
 
 test('automatic manifest events coalesce and refresh metadata without reading settings; noise does not redraw', async () => {
@@ -92,6 +126,8 @@ test('automatic manifest events coalesce and refresh metadata without reading se
     assert.equal(f.timers.size, 1);
     await f.tick();
     assert.equal(f.registry.manifests.custom.name, '自动名称');
+    assert.equal(f.record.name, '自动名称');
+    assert.equal(f.record.manifestName, '自动名称');
     assert.equal(f.calls.filter(call => call === 'redraw').length, 1);
     assert.ok(!f.calls.includes('settings-read'));
     adapter.onFileChange('.custom-config/plugins/custom/manifest.json');

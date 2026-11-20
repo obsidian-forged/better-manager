@@ -76,11 +76,15 @@ export async function installPluginFiles(manager: Manager, files: PluginBuildFil
             if (record) {
                 record.name = loaded?.name || manifest.name || manifest.id;
                 record.desc = loaded?.description || manifest.description || record.desc;
+                record.manifestName = record.name;
+                record.manifestDescription = loaded?.description || manifest.description || record.desc;
                 if (!installed) record.enabled = manager.appPlugins.enabledPlugins.has(manifest.id);
                 for (const tag of tags) if (!record.tags.includes(tag)) record.tags.push(tag);
                 manager.applySpecialPluginTags(record);
             } else {
-                const next = { id: manifest.id, name: loaded?.name || manifest.name || manifest.id, desc: loaded?.description || manifest.description || '', group: '', tags, enabled: manager.appPlugins.enabledPlugins.has(manifest.id), delay: '', note: '' };
+                const name = loaded?.name || manifest.name || manifest.id;
+                const desc = loaded?.description || manifest.description || '';
+                const next = { id: manifest.id, name, desc, group: '', tags, enabled: manager.appPlugins.enabledPlugins.has(manifest.id), delay: '', note: '', manifestName: name, manifestDescription: desc };
                 manager.applySpecialPluginTags(next);
                 manager.settings.Plugins.push(next);
             }

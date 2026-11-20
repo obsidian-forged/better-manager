@@ -7,6 +7,12 @@ export interface ManagerPlugin {
 	enabled: boolean;
 	delay: string;
 	note: string;
+	/** 上次应用的清单名称；与 name 不同表示用户自定义名称。
+	 * Last manifest name applied to `name`; a difference marks a user alias. */
+	manifestName?: string;
+	/** 上次应用的清单描述；与 desc 不同表示用户自定义描述。
+	 * Last manifest description applied to `desc`; a difference marks custom text. */
+	manifestDescription?: string;
 }
 
 export interface Type {

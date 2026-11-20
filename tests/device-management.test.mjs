@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { build } from 'esbuild';
 import { createRequire } from 'node:module';
 import { randomUUID, webcrypto, createHash } from 'node:crypto';
-globalThis.window = { addEventListener() {}, removeEventListener() {}, crypto: webcrypto, setTimeout: callback => setTimeout(callback, 0), clearTimeout };
+globalThis.window = { addEventListener() {}, removeEventListener() {}, crypto: webcrypto, setTimeout: callback => setTimeout(callback, 0), clearTimeout, setInterval: () => 0, clearInterval() {} };
 const hash = async text => createHash('sha256').update(text).digest('hex');
 
 // 无浏览器、无个人库副作用；Exercise production modules with a native API test double.
@@ -12,7 +12,8 @@ const platform = { isMobileApp: false, isTablet: false };
 const notices = [];
 class NativeBase {}
 const obsidian = { normalizePath: path => path, Platform: platform, Plugin: NativeBase, Modal: NativeBase, SuggestModal: NativeBase, PluginSettingTab: NativeBase,
-    Notice: class { constructor(message) { notices.push(message); } } };
+    Notice: class { constructor(message) { notices.push(message); } },
+    ItemView: NativeBase, ButtonComponent: NativeBase, Menu: NativeBase, Setting: NativeBase, DropdownComponent: NativeBase, ToggleComponent: NativeBase };
 async function load(entry) {
     const result = await build({ entryPoints: [entry], bundle: true, platform: 'node', format: 'cjs',
         write: false, external: ['obsidian', 'electron'], loader: { '.webp': 'dataurl' }, logLevel: 'silent' });
@@ -1457,7 +1458,7 @@ test('a stale or default snapshot cannot replace a preset configured remotely', 
     adapter.files[path] = JSON.stringify(remote);
 
     const previousWindow = globalThis.window;
-    globalThis.window = { addEventListener() {}, removeEventListener() {}, crypto: webcrypto, setTimeout: callback => setTimeout(callback, 0), clearTimeout };
+    globalThis.window = { addEventListener() {}, removeEventListener() {}, crypto: webcrypto, setTimeout: callback => setTimeout(callback, 0), clearTimeout, setInterval: () => 0, clearInterval() {} };
     try {
         manager.onExternalSettingsChange();
         await manager.settingsSaveQueue;
@@ -1491,7 +1492,7 @@ test('a newer timestamp cannot silently resolve concurrent presets; an explicit 
     adapter.files[path] = JSON.stringify(remote);
 
     const previousWindow = globalThis.window;
-    globalThis.window = { addEventListener() {}, removeEventListener() {}, crypto: webcrypto, setTimeout: callback => setTimeout(callback, 0), clearTimeout };
+    globalThis.window = { addEventListener() {}, removeEventListener() {}, crypto: webcrypto, setTimeout: callback => setTimeout(callback, 0), clearTimeout, setInterval: () => 0, clearInterval() {} };
     try {
         manager.onExternalSettingsChange();
         await manager.settingsSaveQueue;

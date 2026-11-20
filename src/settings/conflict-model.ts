@@ -17,7 +17,8 @@ const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const same = (left: unknown, right: unknown): boolean => settingsFingerprint(left) === settingsFingerprint(right);
 const types = ['computer', 'tablet', 'phone'];
 const pluginMetadata = new Set(['version', 'localVersion', 'latestVersion', 'latestManifestVersion', 'latestPublishedAt',
-    'latestReleaseTag', 'latestReleasePublishedAt', 'latestReleaseIsGithubLatest', 'installedAt', 'lastChecked', 'error']);
+    'latestReleaseTag', 'latestReleasePublishedAt', 'latestReleaseIsGithubLatest', 'installedAt', 'lastChecked', 'error',
+    'manifestName', 'manifestDescription']);
 export const CONFIG_STATE_KEYS = ['MIGRATION_VERSION', 'LANGUAGE_INITIALIZED', 'RELEASE_HIGHLIGHTS_PENDING'] as const;
 // BPM 生成、可重新下载/同步且重复无碍的数据不进入冲突；只比较用户定制内容。
 // BPM-generated data that can be re-downloaded or synced harmlessly never enters conflict resolution.

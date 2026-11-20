@@ -5,6 +5,7 @@ import Commands from "src/command";
 import { githubProxyEnabled } from "src/github-url";
 import { addSettingTags } from '../setting-tags';
 import { protectionText } from '../protection-text';
+import { ondemandText } from '../../on-demand/text';
 import { confirmWithCheckbox, confirmWithModal } from '../../utils';
 // import { GROUP_STYLE, ITEM_STYLE, TAG_STYLE } from "src/data/data";
 
@@ -92,6 +93,15 @@ export default class ManagerBasis extends BaseSetting {
         }
 
         heading("设置_基础设置_分组_常规");
+
+        const onDemandTitle = ondemandText(this.settings.LANGUAGE, 'title');
+        new Setting(this.containerEl).setName(onDemandTitle)
+            .setDesc(ondemandText(this.settings.LANGUAGE, 'scope'))
+            .addButton(button => {
+                button.setButtonText(onDemandTitle);
+                button.buttonEl.setAttribute('aria-label', onDemandTitle);
+                button.onClick(() => this.manager.onDemand?.openSettings());
+            });
 
         new Setting(this.containerEl)
             .setName(protectionText(this.manager, 'newestPolicyName'))

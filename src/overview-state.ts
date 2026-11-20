@@ -93,7 +93,9 @@ export class OverviewState {
                 throw new Error(this.manager.translator.t('提示_移动端不支持'));
             }
             const plugins = this.manager.appPlugins;
-            if (session || this.manager.settings.DELAY) {
+            if (this.manager.onDemand?.configured(id)) {
+                await this.manager.onDemand.apply(id, next.enabled);
+            } else if (session || this.manager.settings.DELAY) {
                 if (next.enabled) await plugins.enablePlugin(id);
                 else await plugins.disablePlugin(id);
             } else if (next.enabled) await plugins.enablePluginAndSave(id);

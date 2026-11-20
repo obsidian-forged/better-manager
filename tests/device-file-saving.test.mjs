@@ -5,11 +5,13 @@ import { createRequire } from 'node:module';
 import { randomUUID, webcrypto } from 'node:crypto';
 
 // Production save/device modules, with no browser or personal-vault access.
-globalThis.window = { addEventListener() {}, removeEventListener() {}, crypto: webcrypto, setTimeout, clearTimeout };
+globalThis.window = { addEventListener() {}, removeEventListener() {}, crypto: webcrypto, setTimeout, clearTimeout,
+    setInterval: () => 0, clearInterval() {} };
 const nativeRequire = createRequire(import.meta.url);
 class NativeBase {}
 const obsidian = { normalizePath: path => path, Platform: { isMobileApp: false, isTablet: false },
-    Plugin: NativeBase, Modal: NativeBase, SuggestModal: NativeBase, PluginSettingTab: NativeBase, Notice: class {} };
+    Plugin: NativeBase, Modal: NativeBase, SuggestModal: NativeBase, PluginSettingTab: NativeBase, Notice: class {},
+    ItemView: NativeBase, ButtonComponent: NativeBase, Menu: NativeBase, Setting: NativeBase, DropdownComponent: NativeBase, ToggleComponent: NativeBase };
 async function load(entry) {
     const result = await build({ entryPoints: [entry], bundle: true, platform: 'node', format: 'cjs', write: false,
         external: ['obsidian', 'electron'], loader: { '.webp': 'dataurl' }, logLevel: 'silent' });
