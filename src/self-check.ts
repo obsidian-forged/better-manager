@@ -29,7 +29,7 @@ const getManifestMap = (manager: Manager): Record<string, ManifestLike | undefin
 };
 
 const isBpmIgnoredPlugin = (manager: Manager, pluginId: string): boolean => {
-    return Boolean(manager.settings.Plugins.find((plugin) => plugin.id === pluginId)?.tags.includes(BPM_IGNORE_TAG));
+    return Boolean(manager.settings.Plugins.find((plugin) => plugin.id === pluginId)?.tags?.includes(BPM_IGNORE_TAG));
 };
 
 const getTakeoverCandidates = (manager: Manager, communityPlugins: string[]): string[] => {

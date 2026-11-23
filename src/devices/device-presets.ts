@@ -418,7 +418,7 @@ export function capturePreset(preset: DevicePreset, settings: ManagerSettings, e
 /** 共享元数据不分叉，仅投影运行设置；Project runtime settings without splitting shared metadata. */
 export function applyPresetToSettings(preset: DevicePreset, settings: ManagerSettings, selfId: string): void {
     for (const plugin of settings.Plugins) {
-        if (plugin.id === selfId || plugin.tags.includes('bpm-ignore')) continue;
+        if (plugin.id === selfId || plugin.tags?.includes('bpm-ignore')) continue;
         const state = Object.prototype.hasOwnProperty.call(preset.plugins, plugin.id) ? preset.plugins[plugin.id] : undefined;
         if (state) { plugin.enabled = state.enabled; plugin.delay = state.delay; }
     }

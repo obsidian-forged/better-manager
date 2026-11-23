@@ -116,7 +116,10 @@ export class DeviceManager {
         this.persistIdentity();
         if (this.data.enabled) {
             this.adoptIfNeeded(this.type, this.boundPresetId);
-            await this.applyEffective();
+            // 预设投影/外观失败必须让设备管理器继续就绪，否则延迟启动整体失效。
+            // A projection or appearance failure must not keep the device manager from becoming ready.
+            try { await this.applyEffective(); }
+            catch (error) { this.report(error); }
         }
         this.ready = true;
         if (!this.sharedDeviceFiles) {
@@ -1328,8 +1331,8 @@ export class DeviceManager {
             await customCss.loadTheme?.();
             await customCss.loadSnippets?.();
         } catch (error) {
+            // 外观失败不能阻断插件启动；Report and continue, never block plugin startup.
             this.report(error);
-            throw error;
         }
     }
 }

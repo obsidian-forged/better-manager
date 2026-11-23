@@ -185,3 +185,31 @@ test('a manifest event during an earlier read performs another read and shows th
     assert.equal(f.calls.filter(call => call === 'redraw').length, 1);
     f.cleanup.forEach(callback => callback());
 });
+
+test('manual refresh repairs partially synced plugin records before projection', async () => {
+    const f = fixture();
+    f.record.name = undefined;
+    f.record.desc = 5;
+    f.record.group = undefined;
+    f.record.delay = undefined;
+    f.record.note = undefined;
+    f.record.tags = undefined;
+    f.record.enabled = undefined;
+    await f.manager.refreshFromDisk();
+    assert.equal(typeof f.record.name, 'string');
+    assert.ok(f.record.name.length > 0);
+    assert.equal(typeof f.record.desc, 'string');
+    assert.equal(f.record.group, '');
+    assert.equal(f.record.delay, '');
+    assert.equal(f.record.note, '');
+    assert.deepEqual(f.record.tags, []);
+    assert.equal(typeof f.record.enabled, 'boolean');
+});
+
+test('a partial manifest list keeps plugin records; only explicit prune removes them', () => {
+    const f = fixture();
+    f.manager.synchronizePlugins([], { save: false });
+    assert.ok(f.manager.settings.Plugins.some(record => record.id === 'custom'));
+    f.manager.synchronizePlugins([], { save: false, prune: true });
+    assert.equal(f.manager.settings.Plugins.some(record => record.id === 'custom'), false);
+});

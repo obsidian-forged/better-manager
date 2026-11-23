@@ -1764,7 +1764,7 @@ export class ManagerModal extends Modal {
             this.invalidatePluginCaches();
             this.action(async () => { await this.reloadShowData(); })();
             Commands(this.app, this.manager);
-            this.manager.synchronizePlugins(Object.values(this.appPlugins.manifests).filter((pm: PluginManifest) => pm.id !== this.manager.manifest.id));
+            this.manager.synchronizePlugins(Object.values(this.appPlugins.manifests).filter((pm: PluginManifest) => pm.id !== this.manager.manifest.id), { prune: true });
             new Notice(this.manager.translator.t("卸载_通知_一"));
         }, { id: plugin.id, name: plugin.name }).open();
     }

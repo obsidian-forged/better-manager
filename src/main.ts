@@ -228,15 +228,78 @@ export default class Manager extends Plugin {
 
     public onload(): void {
         if (this.isUnloaded || this.initialization) return;
-        this.initialization = this.initialize().catch(error => {
+        this.initialization = this.initialize().catch(async error => {
             if (this.isUnloaded) return;
             this.reportError('Initialization failed', error);
+            // 延迟模式把受管插件移出 community-plugins.json；BPM 起不来时必须恢复原生启用，
+            // 否则面板/同步异常会让全部插件停在关闭状态。
+            // Delay mode removes managed plugins from the startup list; restore native startup if BPM cannot initialize.
+            const restored = await this.recoverNativeStartupAfterFailure();
             // 失败时释放已登记的组件与事件；A partial initialization must not leave runtime hooks behind.
             this.unload();
             new Notice(this.settings?.LANGUAGE?.startsWith('zh')
-                ? 'Better Manager 初始化失败，请查看调试日志。'
-                : 'Better Manager could not start. Enable debug logging for details.', 10_000);
+                ? `Better Manager 初始化失败，请查看调试日志。${restored ? '已临时恢复受影响插件的原生启动。' : ''}`
+                : `Better Manager could not start. Enable debug logging for details.${restored ? ' Affected plugins were restored to native startup.' : ''}`, 12_000);
         });
+    }
+
+    /** 绑定预设失效时退回本机类型默认预设；Fall back to the type's default preset. */
+    private boundOrDefaultPreset(): { plugins: Record<string, { enabled?: boolean } | undefined> } | null {
+        if (!this.settings?.DEVICE_MANAGEMENT?.enabled || !this.devices) return null;
+        try { return this.devices.boundPreset() ?? this.devices.defaultPreset(this.devices.type) ?? null; }
+        catch (error) {
+            this.reportError('Reading the device preset failed', error);
+            return null;
+        }
+    }
+
+    /** 初始化失败后的兜底：把延迟模式中“记录为启用”的插件交还 Obsidian。
+     * Failure fallback: hand enabled delayed plugins back to Obsidian. */
+    private async recoverNativeStartupAfterFailure(): Promise<boolean> {
+        if (!this.settings?.DELAY || !featureEnabled(this.settings, 'plugins')) return false;
+        const ids = new Set((this.settings.Plugins || []).filter(record => record.enabled).map(record => record.id));
+        // 若预设尚未投影到记录（初始化早期失败），按绑定预设恢复。
+        // If the preset was not projected yet, recover the bound preset's enabled plugins.
+        const preset = this.boundOrDefaultPreset();
+        for (const [id, state] of Object.entries(preset?.plugins || {})) if (state?.enabled) ids.add(id);
+        return this.restoreNativePlugins([...ids]);
+    }
+
+    /** 把指定插件写回 Obsidian 原生启动列表；Write the given plugins back to native startup. */
+    private async restoreNativePlugins(ids: string[]): Promise<boolean> {
+        if (!this.appPlugins?.manifests) return false;
+        let restored = false;
+        for (const id of new Set(ids)) {
+            if (!id || id === this.manifest.id) continue;
+            const record = this.settings.Plugins?.find(item => item.id === id);
+            if (record?.tags?.includes(BPM_IGNORE_TAG) || this.onDemand?.configured(id)) continue;
+            const manifest = this.appPlugins.manifests[id];
+            if (!manifest || (Platform.isMobileApp && manifest.isDesktopOnly)) continue;
+            try {
+                await this.appPlugins.enablePluginAndSave(id);
+                restored = true;
+            } catch (restoreError) {
+                this.reportError(`Restoring native plugin failed: ${id}`, restoreError);
+            }
+        }
+        return restored;
+    }
+
+    /** 延迟队列结束后仍一个受管插件都没起来时，恢复原生启动，避免全体离线。
+     * Restore native startup when the delay queue settled with no managed plugin running. */
+    private async ensureDelayedPluginsStarted(): Promise<boolean> {
+        if (!this.settings.DELAY || this.delayQueueRunning || !featureEnabled(this.settings, 'plugins') || !this.appPlugins?.manifests) return false;
+        const preset = this.boundOrDefaultPreset();
+        const ids = new Set((this.settings.Plugins || []).filter(record => record.enabled).map(record => record.id));
+        for (const [id, state] of Object.entries(preset?.plugins || {})) if (state?.enabled) ids.add(id);
+        const expected = [...ids].filter(id => id !== this.manifest.id
+            && !(this.settings.Plugins || []).find(record => record.id === id)?.tags?.includes(BPM_IGNORE_TAG)
+            && !this.onDemand?.configured(id)
+            && Boolean(this.appPlugins.manifests[id])
+            && !(Platform.isMobileApp && this.appPlugins.manifests[id].isDesktopOnly));
+        if (!expected.length || expected.some(id => this.appPlugins.plugins?.[id])) return false;
+        this.reportError('No delayed plugin started; restoring native startup', new Error('Delay startup produced no running plugins'), true);
+        return this.restoreNativePlugins(expected);
     }
 
     private async initialize(): Promise<void> {
@@ -309,10 +372,19 @@ export default class Manager extends Plugin {
         // 先投影本机预设，再构造延迟队列；Select the device preset before queuing plugins.
         this.synchronizePlugins(Object.values(this.appPlugins.manifests), { save: false });
         this.onDemand = new OnDemandRuntime(this);
-        await this.onDemand.initialize();
-        if (this.isUnloaded) { this.onDemand.dispose(); return; }
+        // 按需加载是附加能力；它失败不能拖垮延迟启动/BPM 本体。
+        // On-demand is additive; its failure must never block delay startup or BPM itself.
+        try { await this.onDemand.initialize(); }
+        catch (error) {
+            this.reportError('On-demand initialization failed', error, true);
+            try { this.onDemand.dispose(); } catch { /* cleanup is best effort */ }
+            this.onDemand = undefined;
+        }
+        if (this.isUnloaded) { this.onDemand?.dispose(); return; }
         this.devices = new DeviceManager(this);
-        await this.devices.initialize();
+        // 设备管理失败仍允许延迟队列兜底启动插件；A device failure must not leave delay startup dead.
+        try { await this.devices.initialize(); }
+        catch (error) { this.reportError('Device management initialization failed', error, true); }
         if (this.isUnloaded) { this.devices.dispose(); return; }
         this.startPluginManifestWatch();
         markSettingsDirty();
@@ -388,27 +460,7 @@ export default class Manager extends Plugin {
             if (this.isUnloaded) return;
             // Schedule only after the final awaited save: a hot reload may already have a layout.
             // Zero-delay enablePlugin calls must not run while BPM.onload is still awaiting I/O.
-            this.scheduleStartupTask("delayed plugins", async () => {
-                // 只在延迟启动且用户开启提示时显示；默认关闭。
-                if (this.settings.DELAY) {
-                    const base = this.delayWaitSeconds();
-                    if (base > 0) this.showDelayWaitNotice(base + this.delayWaitExtraSeconds(), this.delayWaitMessageInfo(), this.delayWaitTemplate());
-                }
-                try {
-                    if (this.settings.DEVICE_MANAGEMENT?.enabled) {
-                        // 启动只应用，不把当前运行态回写预设；Opening BPM must not rewrite presets or data.json.
-                        await this.devices.apply({ refreshViews: false, persist: false }).catch(error => this.devices.report(error));
-                    } else {
-                        for (const record of this.settings.Plugins) {
-                            if (this.onDemand?.configured(record.id)) await this.onDemand.apply(record.id, record.enabled);
-                        }
-                        if (this.settings.DELAY) await this.drainDelayQueue();
-                    }
-                } catch (error) {
-                    this.delayWaitNotice?.stop();
-                    throw errorObject(error);
-                }
-            });
+            this.scheduleStartupTask("delayed plugins", () => this.runDelayedStartup());
             this.startRibbonRuntimeFeatures();
 
             // 延迟加载的插件可能带来新图标，需要登记进 RIBBON_SETTINGS；
@@ -417,12 +469,66 @@ export default class Manager extends Plugin {
             this.registerEvent(this.app.workspace.on("layout-change", () => {
                 if (this.isRibbonManagerEnabled()) this.scheduleRibbonApply("layout-change");
             }));
-
-            // 延迟启动自检，确保 Obsidian 初始化完成，避免自动接管被覆盖
-            this.scheduleStartupTask("self check", async () => {
-                if (this.settings.DELAY) await performSelfCheck(this);
-            }, 2000);
         });
+    }
+
+    /** 启动期应用预设/按需状态，并保证延迟队列一定尝试排空。
+     * Apply presets and on-demand state, then always attempt the delay queue. */
+    private async runDelayedStartup(): Promise<void> {
+        // 只在延迟启动且用户开启提示时显示；默认关闭。提示失败不能阻断启动。
+        if (this.settings.DELAY) {
+            try {
+                const base = this.delayWaitSeconds();
+                if (base > 0) this.showDelayWaitNotice(base + this.delayWaitExtraSeconds(), this.delayWaitMessageInfo(), this.delayWaitTemplate());
+            } catch (error) {
+                this.reportError('Showing the delay countdown failed', error);
+            }
+        }
+        let startupError: unknown;
+        try {
+            if (this.settings.DEVICE_MANAGEMENT?.enabled) {
+                // 启动只应用，不把当前运行态回写预设；Opening BPM must not rewrite presets or data.json.
+                await this.devices.apply({ refreshViews: false, persist: false });
+            } else {
+                for (const record of this.settings.Plugins) {
+                    if (!this.onDemand?.configured(record.id)) continue;
+                    // 单个按需插件失败不能阻止其余插件与延迟队列启动。
+                    // One on-demand failure must not block the remaining plugins or the delay queue.
+                    try { await this.onDemand.apply(record.id, record.enabled); }
+                    catch (error) { this.reportError(`On-demand startup failed: ${record.id}`, error); }
+                }
+            }
+        } catch (error) {
+            startupError = error;
+            this.reportError('Device preset startup failed', error, true);
+        } finally {
+            // 设备预设或按需步骤失败时，仍要有一次延迟队列兜底；
+            // 延迟模式会把受管插件移出 community-plugins.json，队列不跑就会全体离线。
+            // Keep a fallback drain: delay mode removes managed plugins from the startup list.
+            if (this.settings.DELAY && !this.delayQueueRunning) {
+                try {
+                    this.lastDelayStartReport = [];
+                    this.delayQueue = this.buildDelayQueue(Date.now()).filter(item => !this.appPlugins.plugins?.[item.id]);
+                    await this.drainDelayQueue();
+                } catch (error) {
+                    startupError ??= error;
+                    this.reportError('Fallback delayed startup failed', error, true);
+                }
+            }
+            // 延迟队列结束但一个受管插件都没起来时，恢复原生启动。
+            // Restore native startup if the delay queue settled with nothing running.
+            let recovered = false;
+            try { recovered = await this.ensureDelayedPluginsStarted(); }
+            catch (error) { this.reportError('Native startup recovery failed', error, true); }
+            // 自检会重写 community-plugins.json；只有启动流程正常结束且没有失败项时才允许接管。
+            // The self check rewrites community-plugins.json; only run it after a clean startup.
+            if (!recovered && this.settings.DELAY && !this.delayQueueRunning && !startupError && !this.lastDelayStartReport.some(item => !item.ok)) {
+                try { await performSelfCheck(this); }
+                catch (error) { this.reportError('Startup self check failed', error); }
+            }
+            this.delayWaitNotice?.stop();
+        }
+        if (startupError) throw errorObject(startupError);
     }
 
     /** A macrotask is required: onLayoutReady runs inline when the layout is already ready. */
@@ -1099,6 +1205,11 @@ export default class Manager extends Plugin {
         // Mode switches live in device-local storage now; strip legacy fields from data.json.
         delete settings.CONFIG_SYNC_PROTECTION;
         delete settings.CONFIG_SYNC_CLEANUP_PENDING;
+        // 残缺的同步快照不能把启动流程带崩；核心集合先回落到空数组。
+        // A partial synced snapshot must not break startup; restore core collections first.
+        for (const key of ['Plugins', 'GROUPS', 'TAGS', 'DELAYS', 'HIDES', 'PLUGIN_LAYOUT', 'BPM_INSTALLED']) {
+            if (!Array.isArray(settings[key])) settings[key] = [];
+        }
         return settings;
     }
 
@@ -2268,7 +2379,7 @@ export default class Manager extends Plugin {
         // 确保 BPM 安装的插件拥有标签
         this.settings.BPM_INSTALLED.forEach((id) => {
             const mp = this.settings.Plugins.find(p => p.id === id);
-            if (mp && !mp.tags.includes(BPM_TAG_ID)) mp.tags.push(BPM_TAG_ID);
+            if (mp) { if (!Array.isArray(mp.tags)) mp.tags = []; if (!mp.tags.includes(BPM_TAG_ID)) mp.tags.push(BPM_TAG_ID); }
         });
         this.settings.Plugins.forEach((plugin) => this.applySpecialPluginTags(plugin));
         const nextStateJson = JSON.stringify({
@@ -2440,7 +2551,7 @@ export default class Manager extends Plugin {
 
     // 开启延时 调用
     private isBpmIgnoredPlugin(pluginId: string): boolean {
-        return Boolean(this.settings.Plugins.find(plugin => plugin.id === pluginId)?.tags.includes(BPM_IGNORE_TAG));
+        return Boolean(this.settings.Plugins.find(plugin => plugin.id === pluginId)?.tags?.includes(BPM_IGNORE_TAG));
     }
 
     private getDelayManagedPluginManifests(): PluginManifest[] {
@@ -2755,7 +2866,7 @@ export default class Manager extends Plugin {
         record.manifestDescription = description;
     }
 
-    public synchronizePlugins(p1: PluginManifest[], options: { save?: boolean } = {}): boolean {
+    public synchronizePlugins(p1: PluginManifest[], options: { save?: boolean; prune?: boolean } = {}): boolean {
         const previousStateJson = JSON.stringify({
             Plugins: this.settings.Plugins,
             HIDES: this.settings.HIDES,
@@ -2763,9 +2874,12 @@ export default class Manager extends Plugin {
         const shouldSave = options.save !== false;
         const manifestIds = new Set(p1.map((plugin) => plugin.id));
         const bpmInstalledIds = new Set(this.settings.BPM_INSTALLED || []);
-        const nextPlugins = this.settings.Plugins.filter((plugin) => {
-            return plugin.id === this.manifest.id || manifestIds.has(plugin.id);
-        });
+        // 清单可能只是暂时不完整（移动端同步/目录尚未就绪）；默认保留孤立记录，
+        // 只有显式卸载才裁剪，避免把整张插件配置当作“已卸载”清空。
+        // A manifest list can be temporarily partial; keep orphan records unless explicitly pruning.
+        const nextPlugins = options.prune
+            ? this.settings.Plugins.filter((plugin) => plugin.id === this.manifest.id || manifestIds.has(plugin.id))
+            : [...this.settings.Plugins];
         const pluginSettingsById = new Map(nextPlugins.map((plugin) => [plugin.id, plugin]));
 
         p1.forEach(p1Item => {
@@ -2785,6 +2899,13 @@ export default class Manager extends Plugin {
                 nextPlugins.push(mp);
                 pluginSettingsById.set(p1Item.id, mp);
             }
+            // 同步文件可能只写入了部分字段；补齐后再参与投影与延迟队列。
+            // Partially synced records must be repaired before projection or delay scheduling.
+            if (typeof mp.name !== 'string' || !mp.name) mp.name = p1Item.name || p1Item.id;
+            if (typeof mp.desc !== 'string') mp.desc = p1Item.description || '';
+            for (const key of ['group', 'delay', 'note'] as const) if (typeof mp[key] !== 'string') mp[key] = '';
+            if (!Array.isArray(mp.tags)) mp.tags = [];
+            if (typeof mp.enabled !== 'boolean') mp.enabled = this.appPlugins.enabledPlugins.has(p1Item.id);
             this.applyManifestMetadata(mp, p1Item);
             if (bpmInstalledIds.has(p1Item.id) && !mp.tags.includes(BPM_TAG_ID)) {
                 mp.tags.push(BPM_TAG_ID);

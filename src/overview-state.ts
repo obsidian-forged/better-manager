@@ -81,7 +81,7 @@ export class OverviewState {
     }
     private async applyPluginState(id: string, patch: Partial<DevicePluginState>): Promise<void> {
         const record = this.manager.settings.Plugins.find(plugin => plugin.id === id);
-        if (!record || id === this.manager.manifest.id || record.tags.includes('bpm-ignore')) return;
+        if (!record || id === this.manager.manifest.id || record.tags?.includes('bpm-ignore')) return;
         const scope = this.scope('plugins');
         const session = this.mode('plugins') === 'session';
         const foreign = this.manager.devices.isProjectingForeign('plugins');

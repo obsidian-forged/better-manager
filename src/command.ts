@@ -84,7 +84,7 @@ class ManagerCommandService {
     isPluginEnabled(pluginId: string): boolean {
         const managerPlugin = this.getManagerPlugin(pluginId);
         if (this.manager.onDemand?.configured(pluginId)) return this.manager.onDemand.authorized(pluginId);
-        if (this.manager.settings.DELAY && managerPlugin && !managerPlugin.tags.includes(BPM_IGNORE_TAG)) {
+        if (this.manager.settings.DELAY && managerPlugin && !managerPlugin.tags?.includes(BPM_IGNORE_TAG)) {
             return managerPlugin.enabled;
         }
         return this.manager.appPlugins.enabledPlugins.has(pluginId);
@@ -200,7 +200,7 @@ class ManagerCommandService {
     async applyTag(tagId: string, targetEnabled: boolean) {
         const tag = this.manager.settings.TAGS.find((item) => item.id === tagId);
         const label = tag?.name || tagId;
-        const plugins = this.getActionableManagerPlugins((plugin) => plugin.tags.includes(tagId));
+        const plugins = this.getActionableManagerPlugins((plugin) => plugin.tags?.includes(tagId));
         await this.applyPluginsEnabled(plugins, targetEnabled, this.t("command_snapshot_tag", { name: label }));
     }
 
@@ -505,7 +505,7 @@ class ManagerCommandService {
         if (this.manager.onDemand?.configured(pluginId)) {
             await this.manager.onDemand.apply(pluginId, targetEnabled);
             if (managerPlugin) managerPlugin.enabled = targetEnabled;
-        } else if (this.manager.settings.DELAY && managerPlugin && !managerPlugin.tags.includes(BPM_IGNORE_TAG)) {
+        } else if (this.manager.settings.DELAY && managerPlugin && !managerPlugin.tags?.includes(BPM_IGNORE_TAG)) {
             managerPlugin.enabled = targetEnabled;
             if (targetEnabled) await this.manager.appPlugins.enablePlugin(pluginId);
             else await this.manager.appPlugins.disablePlugin(pluginId);
